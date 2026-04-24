@@ -7,6 +7,7 @@ class AgentState(TypedDict, total=False):
     user_id: str
     thread_id: str
     session_id: str
+    thread_mode: Literal["companion", "knowledge", "test", "crisis"]
     user_mode: Literal["teen", "adult"]
     locale: str
 
@@ -17,23 +18,18 @@ class AgentState(TypedDict, total=False):
 
     messages: list[dict]
     recent_messages: list[dict]
+    last_summary: str
 
     profile: dict
     companion_preferences: dict
     memory_mode: Literal["off", "summary_only", "long_term"]
 
     retrieved_memories: list[dict]
-    retrieved_knowledge: list[dict]
-    retrieved_test_context: dict
-    retrieved_character_context: list[dict]
 
     intent: Literal[
         "vent",
         "soothe",
         "light_counseling",
-        "knowledge_qa",
-        "test_interpretation",
-        "anime_match",
         "daily_checkin",
         "crisis",
         "other",

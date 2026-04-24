@@ -13,16 +13,9 @@ def build_main_graph():
     workflow.add_node("risk_classifier", nodes.risk_classifier)
     workflow.add_node("intent_classifier", nodes.intent_classifier)
 
-    workflow.add_node("knowledge_retrieve", nodes.knowledge_retrieve)
-    workflow.add_node("test_context", nodes.test_context)
-    workflow.add_node("anime_context", nodes.anime_context)
-
     workflow.add_node("companion_response", nodes.companion_response)
     workflow.add_node("soothing_response", nodes.soothing_response)
     workflow.add_node("counseling_response", nodes.counseling_response)
-    workflow.add_node("knowledge_response", nodes.knowledge_response)
-    workflow.add_node("test_response", nodes.test_response)
-    workflow.add_node("anime_response", nodes.anime_response)
     workflow.add_node("crisis_response", nodes.crisis_response)
 
     workflow.add_node("summarize_turn", nodes.summarize_turn)
@@ -47,22 +40,12 @@ def build_main_graph():
         "intent_classifier",
         route_by_intent,
         {
-            "knowledge_retrieve": "knowledge_retrieve",
-            "test_context": "test_context",
-            "anime_context": "anime_context",
             "soothing_response": "soothing_response",
             "counseling_response": "counseling_response",
             "companion_response": "companion_response",
         },
     )
 
-    workflow.add_edge("knowledge_retrieve", "knowledge_response")
-    workflow.add_edge("test_context", "test_response")
-    workflow.add_edge("anime_context", "anime_response")
-
-    workflow.add_edge("knowledge_response", "summarize_turn")
-    workflow.add_edge("test_response", "summarize_turn")
-    workflow.add_edge("anime_response", "summarize_turn")
     workflow.add_edge("companion_response", "summarize_turn")
     workflow.add_edge("soothing_response", "summarize_turn")
     workflow.add_edge("counseling_response", "summarize_turn")

@@ -16,6 +16,12 @@ class GraphRuntime:
         content: str,
         input_type: str = "text",
         user_mode: str = "adult",
+        recent_messages: list[dict] | None = None,
+        last_summary: str | None = None,
+        memory_mode: str = "summary_only",
+        companion_style: str = "gentle",
+        nickname: str | None = None,
+        retrieved_memories: list[dict] | None = None,
     ) -> dict[str, object]:
         input_state = {
             "thread_id": thread_id,
@@ -23,6 +29,18 @@ class GraphRuntime:
             "user_text": content,
             "input_type": input_type,
             "user_mode": user_mode,
+            "recent_messages": recent_messages or [],
+            "last_summary": last_summary or "",
+            "memory_mode": memory_mode,
+            "profile": {
+                "user_mode": user_mode,
+                "nickname": nickname or "user",
+            },
+            "companion_preferences": {
+                "style": companion_style,
+                "question_tolerance": "low" if user_mode == "teen" else "medium",
+            },
+            "retrieved_memories": retrieved_memories or [],
         }
         result = await self.graph.ainvoke(
             input_state,
@@ -38,7 +56,9 @@ class GraphRuntime:
             "assistant_text": result.get("assistant_text", ""),
             "risk_level": result.get("risk_level", "L0"),
             "intent": result.get("intent", "other"),
+            "risk_reasons": result.get("risk_reasons", []),
             "suggested_actions": result.get("suggested_actions", []),
             "session_summary": result.get("session_summary", ""),
+            "memory_candidates": result.get("memory_candidates", []),
             "should_write_memory": result.get("should_write_memory", False),
         }
