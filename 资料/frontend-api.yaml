@@ -1,0 +1,186 @@
+version: 1
+name: counseling-agent-frontend-sdk-contract
+description: |
+  Frontend SDK contract for Sprint 1.
+  This YAML describes frontend-side API wrapper methods and type contracts.
+
+client:
+  className: CounselingApi
+  sourceFile: frontend/src/api/endpoints.ts
+  framework:
+    name: vue
+    version: 3
+    buildTool: vite
+    entry: frontend/src/main.ts
+  transport:
+    protocol: https
+    implementation: fetch
+  auth:
+    type: bearer-token-optional
+    tokenProvider: ApiClient.getAccessToken
+  baseUrl:
+    example: http://localhost:8000
+  basePath: /api/v1
+
+methods:
+  - methodName: startThread
+    summary: 创建会话线程
+    requestType: StartThreadRequest
+    responseType: StartThreadResponse
+    http:
+      method: POST
+      path: /api/v1/chat/threads
+
+  - methodName: sendMessage
+    summary: 发送文本消息并获取助手回复
+    requestType: SendMessageRequest
+    responseType: SendMessageResponse
+    pathParams:
+      - name: threadId
+        mapsTo: thread_id
+        type: string
+    http:
+      method: POST
+      pathTemplate: /api/v1/chat/threads/{thread_id}/messages
+
+  - methodName: listMemories
+    summary: 获取记忆列表
+    requestType: none
+    responseType: ListMemoriesResponse
+    http:
+      method: GET
+      path: /api/v1/memories
+
+  - methodName: getMoodTrend
+    summary: 获取情绪趋势
+    requestType: MoodTrendRequest
+    responseType: MoodTrendResponse
+    query:
+      - name: range
+        type: enum
+        values: [7d, 30d]
+    http:
+      method: GET
+      path: /api/v1/moods/trends
+
+types:
+  UserMode:
+    type: enum
+    values: [teen, adult]
+
+  InputType:
+    type: enum
+    values: [text, voice, test, system]
+
+  StartThreadRequest:
+    type: object
+    fields:
+      mode:
+        type: enum
+        values: [companion, knowledge, test, crisis]
+        required: false
+      title:
+        type: string
+        required: false
+
+  StartThreadResponse:
+    type: object
+    required: [thread_id, langgraph_thread_id, mode, title]
+    fields:
+      thread_id: { type: string }
+      langgraph_thread_id: { type: string }
+      mode: { type: string }
+      title: { type: string }
+
+  SendMessageRequest:
+    type: object
+    required: [user_id, content]
+    fields:
+      user_id: { type: string }
+      content: { type: string }
+      input_type:
+        type: InputType
+        required: false
+      user_mode:
+        type: UserMode
+        required: false
+
+  AssistantMessage:
+    type: object
+    required:
+      - assistant_text
+      - risk_level
+      - intent
+      - suggested_actions
+      - session_summary
+      - should_write_memory
+    fields:
+      assistant_text: { type: string }
+      risk_level:
+        type: enum
+        values: [L0, L1, L2, L3]
+      intent: { type: string }
+      suggested_actions:
+        type: array
+        items: { type: string }
+      session_summary: { type: string }
+      should_write_memory: { type: boolean }
+
+  SendMessageResponse:
+    type: object
+    required: [thread_id, assistant_message]
+    fields:
+      thread_id: { type: string }
+      assistant_message:
+        type: AssistantMessage
+
+  MemoryItem:
+    type: object
+    required: [memory_id, memory_type, content]
+    fields:
+      memory_id: { type: string }
+      memory_type: { type: string }
+      content: { type: string }
+
+  ListMemoriesResponse:
+    type: object
+    required: [items]
+    fields:
+      items:
+        type: array
+        items:
+          type: MemoryItem
+
+  MoodTrendRequest:
+    type: object
+    required: [range]
+    fields:
+      range:
+        type: enum
+        values: [7d, 30d]
+
+  MoodTrendResponse:
+    type: object
+    required: [range, avg_mood_score, top_tags, daily, summary]
+    fields:
+      range: { type: string }
+      avg_mood_score: { type: number }
+      top_tags:
+        type: array
+        items: { type: string }
+      daily:
+        type: array
+        items: { type: object }
+      summary: { type: string }
+
+errorHandling:
+  behavior: throw-on-non-2xx
+  errorShape:
+    type: Error
+    messageTemplate: API {status}: {responseText}
+
+notes:
+  - getMoodTrend 默认 range 为 7d
+  - sendMessage 当前为单次返回，流式接口需单独对接 /api/v1/chat/threads/{thread_id}/stream
+  - 语音 websocket 未纳入当前前端 SDK 封装
+  - 前端技术栈为 Vue + Vite，建议在 composable/service 层包装 CounselingApi

@@ -1,0 +1,853 @@
+openapi: 3.1.0
+info:
+  title: Counseling Agent Backend API
+  version: 0.1.0
+  description: |
+    Sprint 1 backend API contract.
+    This document describes implemented HTTP endpoints and planned websocket channel metadata.
+servers:
+  - url: http://localhost:8000
+tags:
+  - name: health
+  - name: system
+  - name: auth
+  - name: chat
+  - name: memory
+  - name: mood
+  - name: knowledge
+  - name: tests
+  - name: safety
+  - name: voice
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1:
+    get:
+      tags: [system]
+      summary: API root
+      operationId: apiRoot
+      responses:
+        "200":
+          description: API root message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiRootResponse"
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Register
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Registration result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Current user
+      operationId: getCurrentUser
+      responses:
+        "200":
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+
+  /api/v1/chat/threads:
+    post:
+      tags: [chat]
+      summary: Create chat thread
+      operationId: createThread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartThreadRequest"
+      responses:
+        "200":
+          description: Thread created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartThreadResponse"
+
+  /api/v1/chat/threads/{thread_id}/messages:
+    post:
+      tags: [chat]
+      summary: Send chat message
+      operationId: sendMessage
+      parameters:
+        - in: path
+          name: thread_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: Assistant response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendMessageResponse"
+
+  /api/v1/chat/threads/{thread_id}/stream:
+    post:
+      tags: [chat]
+      summary: Send message with SSE stream
+      operationId: streamMessage
+      parameters:
+        - in: path
+          name: thread_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: SSE event stream (graph_update, token, final)
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: graph_update
+                  data: {"node":"risk_classifier","risk_level":"L1"}
+
+                  event: token
+                  data: {"text":"I "}
+
+                  event: final
+                  data: {"assistant_text":"..."}
+
+  /api/v1/memories:
+    get:
+      tags: [memory]
+      summary: List memories
+      operationId: listMemories
+      responses:
+        "200":
+          description: Memory list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListMemoriesResponse"
+    delete:
+      tags: [memory]
+      summary: Clear all memories
+      operationId: clearMemories
+      responses:
+        "200":
+          description: Clear result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /api/v1/memories/{memory_id}:
+    patch:
+      tags: [memory]
+      summary: Update one memory
+      operationId: updateMemory
+      parameters:
+        - in: path
+          name: memory_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMemoryRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryMutationResponse"
+    delete:
+      tags: [memory]
+      summary: Delete one memory
+      operationId: deleteMemory
+      parameters:
+        - in: path
+          name: memory_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryMutationResponse"
+
+  /api/v1/moods:
+    post:
+      tags: [mood]
+      summary: Create mood log
+      operationId: createMoodLog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoodLogRequest"
+      responses:
+        "200":
+          description: Mood log created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodLogResponse"
+
+  /api/v1/moods/trends:
+    get:
+      tags: [mood]
+      summary: Get mood trend
+      operationId: getMoodTrend
+      parameters:
+        - in: query
+          name: range
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d]
+            default: 7d
+      responses:
+        "200":
+          description: Mood trend response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodTrendResponse"
+
+  /api/v1/knowledge/search:
+    get:
+      tags: [knowledge]
+      summary: Search knowledge
+      operationId: searchKnowledge
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResponse"
+
+  /api/v1/knowledge/ask:
+    post:
+      tags: [knowledge]
+      summary: Ask knowledge question
+      operationId: askKnowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskKnowledgeRequest"
+      responses:
+        "200":
+          description: Knowledge answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskKnowledgeResponse"
+
+  /api/v1/tests:
+    get:
+      tags: [tests]
+      summary: List tests
+      operationId: listTests
+      responses:
+        "200":
+          description: Test list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTestsResponse"
+
+  /api/v1/tests/{test_id}/attempts:
+    post:
+      tags: [tests]
+      summary: Start test attempt
+      operationId: startTestAttempt
+      parameters:
+        - in: path
+          name: test_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Attempt created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartAttemptResponse"
+
+  /api/v1/tests/attempts/{attempt_id}/complete:
+    post:
+      tags: [tests]
+      summary: Complete test attempt
+      operationId: completeTestAttempt
+      parameters:
+        - in: path
+          name: attempt_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Completion result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompleteAttemptResponse"
+
+  /api/v1/safety/resources:
+    get:
+      tags: [safety]
+      summary: Get safety resources
+      operationId: getSafetyResources
+      parameters:
+        - in: query
+          name: region
+          required: false
+          schema:
+            type: string
+            default: CN
+        - in: query
+          name: audience
+          required: false
+          schema:
+            type: string
+            default: all
+      responses:
+        "200":
+          description: Safety resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyResourcesResponse"
+
+  /api/v1/safety/crisis-events:
+    post:
+      tags: [safety]
+      summary: Record crisis event
+      operationId: createCrisisEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrisisEventRequest"
+      responses:
+        "200":
+          description: Crisis event recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrisisEventResponse"
+
+  /api/v1/voice/sessions:
+    post:
+      tags: [voice]
+      summary: Create voice session
+      operationId: createVoiceSession
+      parameters:
+        - in: query
+          name: thread_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Voice session result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+
+x-websocket:
+  /api/v1/voice/sessions/{voice_session_id}/ws:
+    description: Bidirectional websocket channel for realtime voice messages
+    client_messages:
+      - type: audio_chunk
+      - type: commit_turn
+      - type: end_session
+    server_messages:
+      - type: session_ready
+      - type: echo
+      - type: session_ended
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    ApiRootResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        age_range:
+          type: string
+      required: [email, password, age_range]
+
+    RegisterResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        user_mode:
+          type: string
+          enum: [teen, adult]
+        onboarding_completed:
+          type: boolean
+      required:
+        [user_id, access_token, refresh_token, user_mode, onboarding_completed]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required: [email, password]
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+      required: [access_token, refresh_token]
+
+    CurrentUserResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        nickname:
+          type: string
+        user_mode:
+          type: string
+      required: [user_id, nickname, user_mode]
+
+    StartThreadRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [companion, knowledge, test, crisis]
+          default: companion
+        title:
+          type: string
+
+    StartThreadResponse:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        langgraph_thread_id:
+          type: string
+        mode:
+          type: string
+        title:
+          type: string
+      required: [thread_id, langgraph_thread_id, mode, title]
+
+    SendMessageRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        content:
+          type: string
+        input_type:
+          type: string
+          enum: [text, voice, test, system]
+          default: text
+        user_mode:
+          type: string
+          enum: [teen, adult]
+          default: adult
+      required: [user_id, content]
+
+    AssistantMessage:
+      type: object
+      properties:
+        assistant_text:
+          type: string
+        risk_level:
+          type: string
+          enum: [L0, L1, L2, L3]
+        intent:
+          type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+        session_summary:
+          type: string
+        should_write_memory:
+          type: boolean
+      required:
+        - assistant_text
+        - risk_level
+        - intent
+        - suggested_actions
+        - session_summary
+        - should_write_memory
+
+    SendMessageResponse:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        assistant_message:
+          $ref: "#/components/schemas/AssistantMessage"
+      required: [thread_id, assistant_message]
+
+    MemoryItem:
+      type: object
+      properties:
+        memory_id:
+          type: string
+        memory_type:
+          type: string
+        content:
+          type: string
+      required: [memory_id, memory_type, content]
+
+    ListMemoriesResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryItem"
+      required: [items]
+
+    UpdateMemoryRequest:
+      type: object
+      properties:
+        content:
+          type: string
+      required: [content]
+
+    MemoryMutationResponse:
+      type: object
+      properties:
+        memory_id:
+          type: string
+        content:
+          type: string
+        status:
+          type: string
+      required: [status]
+
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    MoodLogRequest:
+      type: object
+      properties:
+        mood_score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        anxiety_score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        energy_score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        sleep_quality:
+          type: integer
+          minimum: 1
+          maximum: 5
+        mood_tags:
+          type: array
+          items:
+            type: string
+        note:
+          type: string
+      required: [mood_score]
+
+    MoodLogResponse:
+      type: object
+      properties:
+        log_id:
+          type: string
+        created_at:
+          type: string
+        mood_score:
+          type: integer
+      required: [log_id, created_at, mood_score]
+
+    MoodTrendResponse:
+      type: object
+      properties:
+        range:
+          type: string
+        avg_mood_score:
+          type: number
+        top_tags:
+          type: array
+          items:
+            type: string
+        daily:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        summary:
+          type: string
+      required: [range, avg_mood_score, top_tags, daily, summary]
+
+    KnowledgeSearchItem:
+      type: object
+      properties:
+        article_id:
+          type: string
+        title:
+          type: string
+        summary_30s:
+          type: string
+      required: [article_id, title, summary_30s]
+
+    KnowledgeSearchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSearchItem"
+      required: [items]
+
+    AskKnowledgeRequest:
+      type: object
+      properties:
+        question:
+          type: string
+        use_my_context:
+          type: boolean
+          default: true
+      required: [question]
+
+    AskKnowledgeResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        related_articles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [answer, related_articles]
+
+    TestItem:
+      type: object
+      properties:
+        test_id:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        estimated_minutes:
+          type: integer
+      required: [test_id, code, title, estimated_minutes]
+
+    ListTestsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestItem"
+      required: [items]
+
+    StartAttemptResponse:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        test_id:
+          type: string
+        questions:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [attempt_id, test_id, questions]
+
+    CompleteAttemptResponse:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        result_code:
+          type: string
+        result_title:
+          type: string
+        summary:
+          type: string
+      required: [attempt_id, result_code, result_title, summary]
+
+    SafetyResourceItem:
+      type: object
+      properties:
+        resource_type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+      required: [resource_type, title, description]
+
+    SafetyResourcesResponse:
+      type: object
+      properties:
+        region:
+          type: string
+        audience:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyResourceItem"
+      required: [region, audience, items]
+
+    CrisisEventRequest:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        message_id:
+          type: string
+        risk_level:
+          type: string
+        detected_signals:
+          type: array
+          items:
+            type: string
+        action_taken:
+          type: array
+          items:
+            type: string
+      required: [thread_id, risk_level]
+
+    CrisisEventResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+        thread_id:
+          type: string
+        status:
+          type: string
+      required: [event_id, thread_id, status]
+
+    VoiceSessionResponse:
+      type: object
+      properties:
+        voice_session_id:
+          type: string
+        thread_id:
+          type: string
+        ws_url:
+          type: string
+      required: [voice_session_id, thread_id, ws_url]
