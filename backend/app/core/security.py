@@ -63,12 +63,18 @@ def _sign(message: bytes) -> str:
     return _b64encode(signature)
 
 
-def create_token(subject: str, token_type: str, expires_in_seconds: int) -> str:
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_token(subject: str, token_type: str, expires_in_seconds: int, *, token_id: str | None = None) -> str:
     payload = {
         "sub": subject,
         "type": token_type,
         "exp": int(time.time()) + expires_in_seconds,
     }
+    if token_id is not None:
+        payload["jti"] = token_id
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     payload_part = _b64encode(payload_bytes)
     signature_part = _sign(payload_bytes)
@@ -79,8 +85,8 @@ def create_access_token(subject: str) -> str:
     return create_token(subject, "access", settings.access_token_ttl_seconds)
 
 
-def create_refresh_token(subject: str) -> str:
-    return create_token(subject, "refresh", settings.refresh_token_ttl_seconds)
+def create_refresh_token(subject: str, token_id: str) -> str:
+    return create_token(subject, "refresh", settings.refresh_token_ttl_seconds, token_id=token_id)
 
 
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:

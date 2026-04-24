@@ -1,6 +1,7 @@
 export interface ApiClientConfig {
   baseUrl: string;
   getAccessToken?: () => string | undefined;
+  onUnauthorized?: () => Promise<boolean>;
 }
 
 export type SseEventData = Record<string, unknown>;
@@ -9,10 +10,12 @@ export type SseEventHandler = (event: string, data: SseEventData) => void;
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly getAccessToken?: () => string | undefined;
+  private readonly onUnauthorized?: () => Promise<boolean>;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.getAccessToken = config.getAccessToken;
+    this.onUnauthorized = config.onUnauthorized;
   }
 
   async get<T>(path: string): Promise<T> {
@@ -38,11 +41,24 @@ export class ApiClient {
   }
 
   async streamPost<B = unknown>(path: string, body: B, onEvent: SseEventHandler): Promise<void> {
+    return this.streamPostRequest(path, body, onEvent, true);
+  }
+
+  private async streamPostRequest<B = unknown>(
+    path: string,
+    body: B,
+    onEvent: SseEventHandler,
+    allowAuthRefresh: boolean,
+  ): Promise<void> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
       headers: this.createJsonHeaders(),
     });
+
+    if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {
+      return this.streamPostRequest(path, body, onEvent, false);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -76,11 +92,15 @@ export class ApiClient {
     this.consumeSseBuffer(`${buffer}\n\n`, onEvent);
   }
 
-  private async request<T>(path: string, init: RequestInit): Promise<T> {
+  private async request<T>(path: string, init: RequestInit, allowAuthRefresh = true): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: this.createJsonHeaders(init.headers),
     });
+
+    if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {
+      return this.request<T>(path, init, false);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -92,6 +112,18 @@ export class ApiClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  private async tryRefreshAuth(): Promise<boolean> {
+    if (!this.onUnauthorized) {
+      return false;
+    }
+
+    try {
+      return await this.onUnauthorized();
+    } catch {
+      return false;
+    }
   }
 
   private createJsonHeaders(headers?: HeadersInit): Headers {

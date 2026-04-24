@@ -23,7 +23,7 @@ def _load_env_files() -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            key = key.strip()
+            key = key.strip().lstrip("\ufeff")
             value = value.strip().strip('"').strip("'")
 
             # Keep externally injected env vars as highest priority.

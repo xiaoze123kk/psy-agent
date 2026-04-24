@@ -7,7 +7,8 @@ import type { AgeRange, UserMode } from "./types/api";
 
 type AgeOptionId = "13-15" | "16-17" | "18-24" | "25+";
 type MainTab = "home" | "chat" | "profile";
-type Screen = "ageGate" | "onboarding" | MainTab | "safety";
+type Screen = "auth" | "ageGate" | "onboarding" | MainTab | "safety";
+type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
 type RiskLevel = "L0" | "L1" | "L2" | "L3";
 type SafetyAction = "trusted" | "resources" | "breathing" | null;
@@ -47,6 +48,10 @@ const goalOptions: SelectOption[] = [
 ];
 
 const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const storedAccessToken = localStorage.getItem("counseling_access_token") ?? "";
+const storedRefreshToken = localStorage.getItem("counseling_refresh_token") ?? "";
+const storedUserId = localStorage.getItem("counseling_user_id") ?? "";
 
 const initialMessages: ChatMessage[] = [
   {
@@ -66,34 +71,46 @@ const initialMessages: ChatMessage[] = [
   },
 ];
 
-const currentScreen = ref<Screen>("ageGate");
+const currentScreen = ref<Screen>(storedAccessToken ? "home" : "auth");
 const activeTab = ref<MainTab>("home");
 const lastMainTab = ref<MainTab>("home");
 const selectedAge = ref<AgeOptionId | null>(null);
 const selectedStyle = ref<string | null>(null);
 const selectedGoal = ref<string | null>(null);
+const authMode = ref<AuthMode>("login");
+const authUsername = ref("");
+const authPassword = ref("");
+const authSelectedAge = ref<AgeOptionId>("18-24");
+const captchaId = ref("");
+const captchaImageDataUrl = ref("");
+const captchaCode = ref("");
+const authError = ref("");
+const isAuthenticating = ref(false);
+const isCaptchaLoading = ref(false);
 const composerText = ref("");
 const safetyAction = ref<SafetyAction>(null);
 const quickActions = ref([...defaultQuickActions]);
 const messages = ref<ChatMessage[]>([...initialMessages]);
 const messageSeed = ref(initialMessages.length + 1);
 const messageListRef = ref<HTMLElement | null>(null);
-const accessToken = ref(localStorage.getItem("counseling_access_token") ?? "");
-const refreshToken = ref(localStorage.getItem("counseling_refresh_token") ?? "");
-const currentUserId = ref(localStorage.getItem("counseling_user_id") ?? "");
+const accessToken = ref(storedAccessToken);
+const refreshToken = ref(storedRefreshToken);
+const currentUserId = ref(storedUserId);
+const currentUsername = ref(localStorage.getItem("counseling_username") ?? "");
 const activeThreadId = ref(localStorage.getItem("counseling_thread_id") ?? "");
 const apiError = ref("");
 const isSending = ref(false);
 
 const apiClient = new ApiClient({
-  baseUrl: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000",
+  baseUrl: apiBaseUrl,
   getAccessToken: () => accessToken.value || undefined,
+  onUnauthorized: refreshAccessToken,
 });
 const api = new CounselingApi(apiClient);
 
 const isTeenMode = computed(() => selectedAge.value === "13-15" || selectedAge.value === "16-17");
 const modeLabel = computed(() => (isTeenMode.value ? "青少年模式" : "标准模式"));
-const userName = computed(() => "小林");
+const userName = computed(() => currentUsername.value || "朋友");
 const greeting = computed(() => {
   const hour = new Date().getHours();
 
@@ -141,61 +158,189 @@ watch(
   scrollMessageListToBottom,
 );
 
-onMounted(async () => {
-  if (!accessToken.value) {
-    return;
-  }
-
-  try {
-    const user = await api.getCurrentUser();
-    currentUserId.value = user.user_id;
-    const threads = await api.listThreads();
-    if (!activeThreadId.value && threads.items[0]) {
-      activeThreadId.value = threads.items[0].thread_id;
-      localStorage.setItem("counseling_thread_id", activeThreadId.value);
-    }
-  } catch {
-    accessToken.value = "";
-    refreshToken.value = "";
-    currentUserId.value = "";
-    activeThreadId.value = "";
-    localStorage.removeItem("counseling_access_token");
-    localStorage.removeItem("counseling_refresh_token");
-    localStorage.removeItem("counseling_user_id");
-    localStorage.removeItem("counseling_thread_id");
-  }
+watch(authMode, () => {
+  authError.value = "";
+  captchaCode.value = "";
+  void refreshCaptcha();
 });
 
-function selectedAgeRange(): AgeRange {
-  if (selectedAge.value === "13-15") {
+function persistAuthSession(payload: { user_id: string; access_token: string; refresh_token: string }) {
+  accessToken.value = payload.access_token;
+  refreshToken.value = payload.refresh_token;
+  currentUserId.value = payload.user_id;
+  localStorage.setItem("counseling_access_token", payload.access_token);
+  localStorage.setItem("counseling_refresh_token", payload.refresh_token);
+  localStorage.setItem("counseling_user_id", payload.user_id);
+}
+
+function clearAuthSession() {
+  accessToken.value = "";
+  refreshToken.value = "";
+  currentUserId.value = "";
+  currentUsername.value = "";
+  activeThreadId.value = "";
+  localStorage.removeItem("counseling_access_token");
+  localStorage.removeItem("counseling_refresh_token");
+  localStorage.removeItem("counseling_user_id");
+  localStorage.removeItem("counseling_username");
+  localStorage.removeItem("counseling_thread_id");
+}
+
+function toAgeRange(age: AgeOptionId | null): AgeRange {
+  if (age === "13-15") {
     return "13_15";
   }
 
-  if (selectedAge.value === "16-17") {
+  if (age === "16-17") {
     return "16_17";
   }
 
   return "18_plus";
 }
 
+function applyAgeRange(ageRange: AgeRange) {
+  if (ageRange === "13_15") {
+    selectedAge.value = "13-15";
+  } else if (ageRange === "16_17") {
+    selectedAge.value = "16-17";
+  } else {
+    selectedAge.value = "18-24";
+  }
+}
+
+async function refreshCaptcha() {
+  try {
+    isCaptchaLoading.value = true;
+    const captcha = await api.getCaptcha();
+    captchaId.value = captcha.captcha_id;
+    captchaImageDataUrl.value = captcha.image_data_url;
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : "验证码加载失败，请刷新重试。";
+  } finally {
+    isCaptchaLoading.value = false;
+  }
+}
+
+function setAuthMode(mode: AuthMode) {
+  authMode.value = mode;
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (!refreshToken.value) {
+    clearAuthSession();
+    currentScreen.value = "auth";
+    void refreshCaptcha();
+    return false;
+  }
+
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken.value }),
+  });
+
+  if (!response.ok) {
+    clearAuthSession();
+    currentScreen.value = "auth";
+    void refreshCaptcha();
+    return false;
+  }
+
+  persistAuthSession((await response.json()) as { user_id: string; access_token: string; refresh_token: string });
+  return true;
+}
+
+async function loadAuthenticatedUser(nextScreen: Screen = "home") {
+  const user = await api.getCurrentUser();
+  currentUserId.value = user.user_id;
+  currentUsername.value = user.username;
+  localStorage.setItem("counseling_user_id", user.user_id);
+  localStorage.setItem("counseling_username", user.username);
+  applyAgeRange(user.age_range);
+
+  const threads = await api.listThreads();
+  if (!activeThreadId.value && threads.items[0]) {
+    activeThreadId.value = threads.items[0].thread_id;
+    localStorage.setItem("counseling_thread_id", activeThreadId.value);
+  }
+
+  currentScreen.value = nextScreen;
+}
+
+onMounted(async () => {
+  if (!accessToken.value && refreshToken.value) {
+    await refreshAccessToken();
+  }
+
+  if (!accessToken.value) {
+    currentScreen.value = "auth";
+    await refreshCaptcha();
+    return;
+  }
+
+  try {
+    await loadAuthenticatedUser("home");
+  } catch {
+    clearAuthSession();
+    currentScreen.value = "auth";
+    await refreshCaptcha();
+  }
+});
+
 function selectedUserMode(): UserMode {
   return isTeenMode.value ? "teen" : "adult";
 }
 
+async function submitAuth() {
+  const username = authUsername.value.trim();
+  const password = authPassword.value;
+  const code = captchaCode.value.trim();
+
+  if (!username || password.length < 6 || !captchaId.value || !code || isAuthenticating.value) {
+    return;
+  }
+
+  try {
+    authError.value = "";
+    isAuthenticating.value = true;
+
+    if (authMode.value === "register") {
+      const registered = await api.register({
+        username,
+        password,
+        age_range: toAgeRange(authSelectedAge.value),
+        captcha_id: captchaId.value,
+        captcha_code: code,
+      });
+      persistAuthSession(registered);
+      currentUsername.value = username;
+      localStorage.setItem("counseling_username", username);
+      selectedAge.value = authSelectedAge.value;
+      currentScreen.value = "onboarding";
+      return;
+    }
+
+    const loggedIn = await api.login({
+      username,
+      password,
+      captcha_id: captchaId.value,
+      captcha_code: code,
+    });
+    persistAuthSession(loggedIn);
+    await loadAuthenticatedUser("home");
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : "认证失败，请检查用户名、密码和验证码。";
+    captchaCode.value = "";
+    await refreshCaptcha();
+  } finally {
+    isAuthenticating.value = false;
+  }
+}
+
 async function ensureBackendSession() {
   if (!accessToken.value || !currentUserId.value) {
-    const stamp = Date.now();
-    const registered = await api.register({
-      email: `demo-${stamp}@example.com`,
-      password: "12345678",
-      age_range: selectedAgeRange(),
-    });
-    accessToken.value = registered.access_token;
-    refreshToken.value = registered.refresh_token;
-    currentUserId.value = registered.user_id;
-    localStorage.setItem("counseling_access_token", registered.access_token);
-    localStorage.setItem("counseling_refresh_token", registered.refresh_token);
-    localStorage.setItem("counseling_user_id", registered.user_id);
+    currentScreen.value = "auth";
+    throw new Error("请先登录或注册后再开始对话。");
   }
 
   if (!activeThreadId.value) {
@@ -248,27 +393,33 @@ function closeSafety() {
   currentScreen.value = lastMainTab.value;
 }
 
-function resetExperience() {
+async function resetExperience() {
+  const tokenToRevoke = refreshToken.value;
+  if (tokenToRevoke) {
+    try {
+      await api.logout({ refresh_token: tokenToRevoke });
+    } catch {
+      // Local session cleanup still wins if the server session is already expired.
+    }
+  }
+
   selectedAge.value = null;
   selectedStyle.value = null;
   selectedGoal.value = null;
   composerText.value = "";
   safetyAction.value = null;
-  currentScreen.value = "ageGate";
+  currentScreen.value = "auth";
   activeTab.value = "home";
   lastMainTab.value = "home";
   messages.value = [...initialMessages];
   messageSeed.value = initialMessages.length + 1;
   quickActions.value = [...defaultQuickActions];
-  accessToken.value = "";
-  refreshToken.value = "";
-  currentUserId.value = "";
-  activeThreadId.value = "";
   apiError.value = "";
-  localStorage.removeItem("counseling_access_token");
-  localStorage.removeItem("counseling_refresh_token");
-  localStorage.removeItem("counseling_user_id");
-  localStorage.removeItem("counseling_thread_id");
+  authUsername.value = "";
+  authPassword.value = "";
+  captchaCode.value = "";
+  clearAuthSession();
+  await refreshCaptcha();
 }
 
 function addMessage(role: ChatRole, text: string, streaming = false) {
@@ -485,7 +636,109 @@ function startQuickCheckIn() {
           </div>
         </div>
 
-        <section v-if="currentScreen === 'ageGate'" class="screen-panel">
+        <section v-if="currentScreen === 'auth'" class="screen-panel screen-panel--auth">
+          <div class="screen-content screen-content--centered auth-content">
+            <div class="intro-block">
+              <span class="eyebrow">欢迎回来</span>
+              <h1 class="screen-title">先确认是你，再慢慢开始。</h1>
+              <p class="screen-description">
+                你的对话会保存在自己的账户里。登录后可以继续上次的陪伴，也可以重新开始。
+              </p>
+            </div>
+
+            <section class="auth-card">
+              <div class="auth-tabs">
+                <button
+                  :class="['auth-tab', { 'auth-tab--active': authMode === 'login' }]"
+                  type="button"
+                  @click="setAuthMode('login')"
+                >
+                  登录
+                </button>
+                <button
+                  :class="['auth-tab', { 'auth-tab--active': authMode === 'register' }]"
+                  type="button"
+                  @click="setAuthMode('register')"
+                >
+                  注册
+                </button>
+              </div>
+
+              <form class="auth-form" @submit.prevent="submitAuth">
+                <label class="auth-field">
+                  <span>用户名</span>
+                  <input
+                    v-model="authUsername"
+                    class="auth-input"
+                    type="text"
+                    autocomplete="username"
+                    placeholder="3-24 位字母、数字或下划线"
+                  />
+                </label>
+
+                <label class="auth-field">
+                  <span>密码</span>
+                  <input
+                    v-model="authPassword"
+                    class="auth-input"
+                    type="password"
+                    autocomplete="current-password"
+                    placeholder="至少 6 位"
+                  />
+                </label>
+
+                <div class="auth-field">
+                  <span>图形验证码</span>
+                  <div class="captcha-row">
+                    <button class="captcha-image" type="button" :disabled="isCaptchaLoading" @click="refreshCaptcha">
+                      <img v-if="captchaImageDataUrl" :src="captchaImageDataUrl" alt="图形验证码" />
+                      <span v-else>{{ isCaptchaLoading ? "加载中..." : "点击刷新" }}</span>
+                    </button>
+                    <input
+                      v-model="captchaCode"
+                      class="auth-input captcha-input"
+                      type="text"
+                      inputmode="text"
+                      autocomplete="off"
+                      placeholder="输入验证码"
+                    />
+                  </div>
+                </div>
+
+                <div v-if="authMode === 'register'" class="auth-field">
+                  <span>年龄段</span>
+                  <div class="auth-age-grid">
+                    <button
+                      v-for="option in ageOptions"
+                      :key="option.id"
+                      :class="['soft-chip soft-chip--button', { 'soft-chip--active': authSelectedAge === option.id }]"
+                      type="button"
+                      @click="authSelectedAge = option.id"
+                    >
+                      {{ option.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <p v-if="authError" class="auth-error">{{ authError }}</p>
+
+                <button
+                  class="primary-button"
+                  type="submit"
+                  :disabled="
+                    isAuthenticating || !authUsername.trim() || authPassword.length < 6 || !captchaId || !captchaCode.trim()
+                  "
+                >
+                  {{ isAuthenticating ? "请稍等..." : authMode === "login" ? "登录并继续" : "创建账户" }}
+                </button>
+              </form>
+            </section>
+
+            <p class="auth-note">我们只用这些信息来保护你的会话和安全分流，不会把它展示给其他人。</p>
+          </div>
+        </section>
+
+        <section v-else-if="currentScreen === 'ageGate'" class="screen-panel">
           <div class="screen-content screen-content--centered">
             <div class="intro-block">
               <span class="eyebrow">心理陪伴</span>
@@ -835,7 +1088,7 @@ function startQuickCheckIn() {
               <p class="surface-copy">
                 13-17 岁用户会自动启用更积极的风险提醒和现实求助建议，以保证体验更安全。
               </p>
-              <button class="secondary-button" type="button" @click="resetExperience">重新开始引导</button>
+              <button class="secondary-button" type="button" @click="resetExperience">退出登录</button>
             </section>
           </div>
 
@@ -1021,6 +1274,12 @@ function startQuickCheckIn() {
   background: var(--amber-background);
 }
 
+.screen-panel--auth {
+  background:
+    radial-gradient(circle at 16% 12%, rgba(20, 184, 166, 0.14), transparent 34%),
+    linear-gradient(180deg, #fffaf2 0%, #f0fdfa 100%);
+}
+
 .screen-header,
 .top-bar,
 .chat-header,
@@ -1058,6 +1317,123 @@ function startQuickCheckIn() {
 
 .intro-block--tight {
   gap: 14px;
+}
+
+.auth-content {
+  justify-content: flex-start;
+  padding-top: 42px;
+}
+
+.auth-card {
+  border: 1px solid rgba(20, 184, 166, 0.14);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 18px;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(18px);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+
+.auth-tab {
+  border-radius: 999px;
+  padding: 11px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 800;
+}
+
+.auth-tab--active {
+  background: #ffffff;
+  color: var(--accent-strong);
+  box-shadow: var(--soft-shadow);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 14px 16px;
+  color: var(--text-primary);
+  box-shadow: var(--soft-shadow);
+}
+
+.auth-age-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.captcha-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.captcha-image {
+  width: 150px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: var(--soft-shadow);
+}
+
+.captcha-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.captcha-input {
+  text-transform: uppercase;
+}
+
+.auth-error {
+  margin: 0;
+  border-radius: 18px;
+  background: #fff7ed;
+  padding: 12px 14px;
+  color: var(--amber-text-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
 }
 
 .eyebrow {
@@ -1426,6 +1802,16 @@ function startQuickCheckIn() {
   font-weight: 700;
 }
 
+.soft-chip--button {
+  border: 1px solid transparent;
+}
+
+.soft-chip--active {
+  border-color: rgba(13, 148, 136, 0.24);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .bottom-nav {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1733,6 +2119,10 @@ function startQuickCheckIn() {
   .hero-card {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .captcha-row {
+    grid-template-columns: 1fr;
   }
 
   .hero-arrow {

@@ -2,33 +2,70 @@ export type UserMode = "teen" | "adult";
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 
+export interface CaptchaResponse {
+  captcha_id: string;
+  image_data_url: string;
+  expires_in: number;
+}
+
 export interface RegisterRequest {
-  email: string;
+  username: string;
   password: string;
   age_range: AgeRange;
+  captcha_id: string;
+  captcha_code: string;
 }
 
 export interface RegisterResponse {
   user_id: string;
   access_token: string;
   refresh_token: string;
+  token_type: string;
+  access_expires_in: number;
+  refresh_expires_in: number;
   user_mode: UserMode;
   onboarding_completed: boolean;
 }
 
 export interface LoginRequest {
-  email: string;
+  username: string;
   password: string;
+  captcha_id: string;
+  captcha_code: string;
 }
 
 export interface LoginResponse {
+  user_id: string;
   access_token: string;
+  refresh_token: string;
+  token_type: string;
+  access_expires_in: number;
+  refresh_expires_in: number;
+  user_mode: UserMode;
+  onboarding_completed: boolean;
+}
+
+export interface RefreshTokenRequest {
+  refresh_token: string;
+}
+
+export interface RefreshTokenResponse {
+  user_id: string;
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  access_expires_in: number;
+  refresh_expires_in: number;
+}
+
+export interface LogoutRequest {
   refresh_token: string;
 }
 
 export interface CurrentUserResponse {
   user_id: string;
-  email: string;
+  username: string;
+  email: string | null;
   nickname: string;
   age_range: AgeRange;
   user_mode: UserMode;

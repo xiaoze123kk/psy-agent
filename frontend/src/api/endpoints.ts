@@ -1,11 +1,15 @@
 import { ApiClient, type SseEventHandler } from "./client";
 import type {
+  CaptchaResponse,
   CurrentUserResponse,
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
+  LogoutRequest,
   MessageListResponse,
   MoodTrendResponse,
+  RefreshTokenRequest,
+  RefreshTokenResponse,
   RegisterRequest,
   RegisterResponse,
   SendMessageRequest,
@@ -18,12 +22,24 @@ import type {
 export class CounselingApi {
   constructor(private readonly client: ApiClient) {}
 
+  getCaptcha(): Promise<CaptchaResponse> {
+    return this.client.get<CaptchaResponse>("/api/v1/auth/captcha");
+  }
+
   register(payload: RegisterRequest): Promise<RegisterResponse> {
     return this.client.post<RegisterResponse, RegisterRequest>("/api/v1/auth/register", payload);
   }
 
   login(payload: LoginRequest): Promise<LoginResponse> {
     return this.client.post<LoginResponse, LoginRequest>("/api/v1/auth/login", payload);
+  }
+
+  refreshToken(payload: RefreshTokenRequest): Promise<RefreshTokenResponse> {
+    return this.client.post<RefreshTokenResponse, RefreshTokenRequest>("/api/v1/auth/refresh", payload);
+  }
+
+  logout(payload: LogoutRequest): Promise<void> {
+    return this.client.post<void, LogoutRequest>("/api/v1/auth/logout", payload);
   }
 
   getCurrentUser(): Promise<CurrentUserResponse> {
