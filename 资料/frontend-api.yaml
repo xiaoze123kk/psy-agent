@@ -1,8 +1,14 @@
 version: 1
 name: counseling-agent-frontend-sdk-contract
+sprint: Sprint 1
 description: |
-  Frontend SDK contract for Sprint 1.
-  This YAML describes frontend-side API wrapper methods and type contracts.
+  心理咨询 Agent Sprint 1 前端 API 契约。
+
+  目标是支撑如下前端闭环：
+  登录/注册 -> 年龄模式落库 -> 首页创建会话 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆/情绪打点。
+
+  本契约不包含后续 Sprint 或占位能力：
+  knowledge、tests、voice、streamMessage、mood trends。
 
 client:
   className: CounselingApi
@@ -11,34 +17,130 @@ client:
     name: vue
     version: 3
     buildTool: vite
-    entry: frontend/src/main.ts
+    language: TypeScript
   transport:
-    protocol: https
+    protocol: http
     implementation: fetch
   auth:
-    type: bearer-token-optional
+    type: bearer-token
     tokenProvider: ApiClient.getAccessToken
+    attachToMethods:
+      - getCurrentUser
+      - startThread
+      - sendMessage
+      - listMemories
+      - updateMemory
+      - deleteMemory
+      - clearMemories
+      - createMoodLog
+      - createCrisisEvent
+    note: 当前后端脚手架尚未强制校验 token，但联调时前端仍应按正式 Bearer 方式传递。
   baseUrl:
     example: http://localhost:8000
   basePath: /api/v1
 
+scope:
+  included:
+    - auth
+    - chat
+    - memory
+    - mood
+    - safety
+  excluded:
+    - knowledge
+    - tests
+    - voice
+    - stream chat
+    - mood trends
+
+implementationStatus:
+  currentSdkImplementedMethods:
+    - startThread
+    - sendMessage
+    - listMemories
+    - getMoodTrend
+  note: 当前 `frontend/src/api/endpoints.ts` 只实现了部分方法；本文档定义的是 Sprint 1 应联调的完整前端 API 契约。
+
+flows:
+  sprint1Demo:
+    - step: register
+      when: 新用户首次进入
+    - step: login
+      when: 已注册用户再次进入
+    - step: getCurrentUser
+      when: 应用恢复会话或刷新后
+    - step: startThread
+      when: 用户点击“我想倾诉”
+    - step: sendMessage
+      when: 对话页发送文本消息
+    - step: createCrisisEvent
+      when: sendMessage 返回 risk_level 为 L2 或 L3
+    - step: getSafetyResources
+      when: 需要展示 SOS 页面或安全资源卡片
+    - step: listMemories
+      when: 我的页查看基础记忆
+    - step: createMoodLog
+      when: 用户完成基础情绪记录
+
 methods:
+  - methodName: register
+    summary: 用户注册并返回 token 与 user_mode
+    requestType: RegisterRequest
+    responseType: RegisterResponse
+    authRequired: false
+    uiEntry:
+      - 登录/注册页
+      - 年龄确认页
+    http:
+      method: POST
+      path: /api/v1/auth/register
+
+  - methodName: login
+    summary: 用户登录
+    requestType: LoginRequest
+    responseType: LoginResponse
+    authRequired: false
+    uiEntry:
+      - 登录/注册页
+    http:
+      method: POST
+      path: /api/v1/auth/login
+
+  - methodName: getCurrentUser
+    summary: 获取当前登录用户信息
+    requestType: none
+    responseType: CurrentUserResponse
+    authRequired: true
+    uiEntry:
+      - 启动页
+      - 首页
+      - 我的页
+    http:
+      method: GET
+      path: /api/v1/auth/me
+
   - methodName: startThread
-    summary: 创建会话线程
+    summary: 创建文本聊天线程
     requestType: StartThreadRequest
     responseType: StartThreadResponse
+    authRequired: true
+    uiEntry:
+      - 首页
     http:
       method: POST
       path: /api/v1/chat/threads
 
   - methodName: sendMessage
-    summary: 发送文本消息并获取助手回复
+    summary: 发送用户文本消息并获取助手回复
     requestType: SendMessageRequest
     responseType: SendMessageResponse
+    authRequired: true
     pathParams:
       - name: threadId
         mapsTo: thread_id
         type: string
+    uiEntry:
+      - 对话页
     http:
       method: POST
       pathTemplate: /api/v1/chat/threads/{thread_id}/messages
@@ -47,37 +149,211 @@ methods:
     summary: 获取记忆列表
     requestType: none
     responseType: ListMemoriesResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
     http:
       method: GET
       path: /api/v1/memories
 
-  - methodName: getMoodTrend
-    summary: 获取情绪趋势
-    requestType: MoodTrendRequest
-    responseType: MoodTrendResponse
+  - methodName: updateMemory
+    summary: 修改单条记忆
+    requestType: UpdateMemoryRequest
+    responseType: MemoryMutationResponse
+    authRequired: true
+    pathParams:
+      - name: memoryId
+        mapsTo: memory_id
+        type: string
+    uiEntry:
+      - 我的页
+    http:
+      method: PATCH
+      pathTemplate: /api/v1/memories/{memory_id}
+
+  - methodName: deleteMemory
+    summary: 删除单条记忆
+    requestType: none
+    responseType: MemoryMutationResponse
+    authRequired: true
+    pathParams:
+      - name: memoryId
+        mapsTo: memory_id
+        type: string
+    uiEntry:
+      - 我的页
+    http:
+      method: DELETE
+      pathTemplate: /api/v1/memories/{memory_id}
+
+  - methodName: clearMemories
+    summary: 清空全部记忆
+    requestType: none
+    responseType: StatusResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+    http:
+      method: DELETE
+      path: /api/v1/memories
+
+  - methodName: createMoodLog
+    summary: 提交基础情绪记录
+    requestType: MoodLogRequest
+    responseType: MoodLogResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 情绪记录弹窗
+    http:
+      method: POST
+      path: /api/v1/moods
+
+  - methodName: getSafetyResources
+    summary: 获取 SOS 资源列表
+    requestType: GetSafetyResourcesQuery
+    responseType: SafetyResourcesResponse
+    authRequired: false
     query:
-      - name: range
-        type: enum
-        values: [7d, 30d]
+      - name: region
+        type: string
+        required: false
+        default: CN
+      - name: audience
+        type: SafetyAudience
+        required: false
+        default: all
+    uiEntry:
+      - SOS 页面
+      - 对话页高风险卡片
     http:
       method: GET
-      path: /api/v1/moods/trends
+      path: /api/v1/safety/resources
+
+  - methodName: createCrisisEvent
+    summary: 记录高风险危机事件
+    requestType: CrisisEventRequest
+    responseType: CrisisEventResponse
+    authRequired: true
+    uiEntry:
+      - 对话页
+      - SOS 页面
+    http:
+      method: POST
+      path: /api/v1/safety/crisis-events
 
 types:
+  AgeRange:
+    type: enum
+    values:
+      - 13_15
+      - 16_17
+      - 18_plus
+
   UserMode:
     type: enum
-    values: [teen, adult]
+    values:
+      - teen
+      - adult
+
+  ThreadMode:
+    type: enum
+    values:
+      - companion
+      - knowledge
+      - test
+      - crisis
+    note: Sprint 1 页面流只使用 companion，其余值保留字段兼容性。
 
   InputType:
     type: enum
-    values: [text, voice, test, system]
+    values:
+      - text
+      - voice
+      - test
+      - system
+
+  RiskLevel:
+    type: enum
+    values:
+      - L0
+      - L1
+      - L2
+      - L3
+
+  SafetyAudience:
+    type: enum
+    values:
+      - all
+      - teen
+      - adult
+
+  RegisterRequest:
+    type: object
+    required:
+      - email
+      - password
+      - age_range
+    fields:
+      email:
+        type: string
+        format: email
+      password:
+        type: string
+      age_range:
+        type: AgeRange
+
+  RegisterResponse:
+    type: object
+    required:
+      - user_id
+      - access_token
+      - refresh_token
+      - user_mode
+      - onboarding_completed
+    fields:
+      user_id: { type: string }
+      access_token: { type: string }
+      refresh_token: { type: string }
+      user_mode: { type: UserMode }
+      onboarding_completed: { type: boolean }
+
+  LoginRequest:
+    type: object
+    required:
+      - email
+      - password
+    fields:
+      email:
+        type: string
+        format: email
+      password: { type: string }
+
+  LoginResponse:
+    type: object
+    required:
+      - access_token
+      - refresh_token
+    fields:
+      access_token: { type: string }
+      refresh_token: { type: string }
+
+  CurrentUserResponse:
+    type: object
+    required:
+      - user_id
+      - nickname
+      - user_mode
+    fields:
+      user_id: { type: string }
+      nickname: { type: string }
+      user_mode: { type: UserMode }
 
   StartThreadRequest:
     type: object
     fields:
       mode:
-        type: enum
-        values: [companion, knowledge, test, crisis]
+        type: ThreadMode
         required: false
       title:
         type: string
@@ -85,7 +361,11 @@ types:
 
   StartThreadResponse:
     type: object
-    required: [thread_id, langgraph_thread_id, mode, title]
+    required:
+      - thread_id
+      - langgraph_thread_id
+      - mode
+      - title
     fields:
       thread_id: { type: string }
       langgraph_thread_id: { type: string }
@@ -94,7 +374,9 @@ types:
 
   SendMessageRequest:
     type: object
-    required: [user_id, content]
+    required:
+      - user_id
+      - content
     fields:
       user_id: { type: string }
       content: { type: string }
@@ -116,9 +398,7 @@ types:
       - should_write_memory
     fields:
       assistant_text: { type: string }
-      risk_level:
-        type: enum
-        values: [L0, L1, L2, L3]
+      risk_level: { type: RiskLevel }
       intent: { type: string }
       suggested_actions:
         type: array
@@ -128,7 +408,9 @@ types:
 
   SendMessageResponse:
     type: object
-    required: [thread_id, assistant_message]
+    required:
+      - thread_id
+      - assistant_message
     fields:
       thread_id: { type: string }
       assistant_message:
@@ -136,7 +418,10 @@ types:
 
   MemoryItem:
     type: object
-    required: [memory_id, memory_type, content]
+    required:
+      - memory_id
+      - memory_type
+      - content
     fields:
       memory_id: { type: string }
       memory_type: { type: string }
@@ -144,43 +429,163 @@ types:
 
   ListMemoriesResponse:
     type: object
-    required: [items]
+    required:
+      - items
     fields:
       items:
         type: array
         items:
           type: MemoryItem
 
-  MoodTrendRequest:
+  UpdateMemoryRequest:
     type: object
-    required: [range]
+    required:
+      - content
     fields:
-      range:
-        type: enum
-        values: [7d, 30d]
+      content: { type: string }
 
-  MoodTrendResponse:
+  MemoryMutationResponse:
     type: object
-    required: [range, avg_mood_score, top_tags, daily, summary]
+    required:
+      - status
     fields:
-      range: { type: string }
-      avg_mood_score: { type: number }
-      top_tags:
+      memory_id:
+        type: string
+        required: false
+      content:
+        type: string
+        required: false
+      status: { type: string }
+
+  StatusResponse:
+    type: object
+    required:
+      - status
+    fields:
+      status: { type: string }
+
+  MoodLogRequest:
+    type: object
+    required:
+      - mood_score
+    fields:
+      mood_score:
+        type: integer
+        minimum: 1
+        maximum: 5
+      anxiety_score:
+        type: integer
+        required: false
+        minimum: 1
+        maximum: 5
+      energy_score:
+        type: integer
+        required: false
+        minimum: 1
+        maximum: 5
+      sleep_quality:
+        type: integer
+        required: false
+        minimum: 1
+        maximum: 5
+      mood_tags:
         type: array
+        required: false
         items: { type: string }
-      daily:
+      note:
+        type: string
+        required: false
+
+  MoodLogResponse:
+    type: object
+    required:
+      - log_id
+      - created_at
+      - mood_score
+    fields:
+      log_id: { type: string }
+      created_at:
+        type: string
+        format: date-time
+      mood_score: { type: integer }
+
+  GetSafetyResourcesQuery:
+    type: object
+    fields:
+      region:
+        type: string
+        required: false
+        default: CN
+      audience:
+        type: SafetyAudience
+        required: false
+        default: all
+
+  SafetyResourceItem:
+    type: object
+    required:
+      - resource_type
+      - title
+      - description
+    fields:
+      resource_type: { type: string }
+      title: { type: string }
+      description: { type: string }
+
+  SafetyResourcesResponse:
+    type: object
+    required:
+      - region
+      - audience
+      - items
+    fields:
+      region: { type: string }
+      audience: { type: SafetyAudience }
+      items:
         type: array
-        items: { type: object }
-      summary: { type: string }
+        items:
+          type: SafetyResourceItem
+
+  CrisisEventRequest:
+    type: object
+    required:
+      - thread_id
+      - risk_level
+    fields:
+      thread_id: { type: string }
+      message_id:
+        type: string
+        required: false
+      risk_level: { type: RiskLevel }
+      detected_signals:
+        type: array
+        required: false
+        items: { type: string }
+      action_taken:
+        type: array
+        required: false
+        items: { type: string }
+
+  CrisisEventResponse:
+    type: object
+    required:
+      - event_id
+      - thread_id
+      - status
+    fields:
+      event_id: { type: string }
+      thread_id: { type: string }
+      status: { type: string }
+
+integrationRules:
+  - rule: 登录或注册成功后，前端必须持久化 access_token、refresh_token、user_mode。
+  - rule: sendMessage 时应显式携带 user_mode，用于 teen/adult 分流。
+  - rule: 当 sendMessage 返回 risk_level 为 L2 或 L3 时，前端必须展示 SOS 入口，并调用 createCrisisEvent 记录事件。
+  - rule: 首页续聊能力依赖 assistant_message.session_summary，Sprint 1 没有单独的会话摘要查询接口。
+  - rule: getSafetyResources 可在未登录状态下调用，便于 SOS 页面兜底展示。
 
 errorHandling:
   behavior: throw-on-non-2xx
   errorShape:
     type: Error
-    messageTemplate: API {status}: {responseText}
-
-notes:
-  - getMoodTrend 默认 range 为 7d
-  - sendMessage 当前为单次返回，流式接口需单独对接 /api/v1/chat/threads/{thread_id}/stream
-  - 语音 websocket 未纳入当前前端 SDK 封装
-  - 前端技术栈为 Vue + Vite，建议在 composable/service 层包装 CounselingApi
+    messageTemplate: "API {status}: {responseText}"

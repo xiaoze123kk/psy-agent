@@ -1,73 +1,103 @@
 openapi: 3.1.0
 info:
   title: Counseling Agent Backend API
-  version: 0.1.0
+  version: 1.0.0-sprint1
   description: |
-    Sprint 1 backend API contract.
-    This document describes implemented HTTP endpoints and planned websocket channel metadata.
+    心理咨询 Agent Sprint 1 后端接口文档。
+
+    本文档只覆盖 Sprint 1 明确交付的闭环接口：
+    鉴权、文本对话、记忆管理、情绪记录、安全资源与危机事件。
+
+    以下脚手架或后续 Sprint 占位能力不纳入本次正式契约：
+    knowledge、tests、voice、SSE stream、mood trends。
 servers:
   - url: http://localhost:8000
+    description: 本地开发环境
 tags:
   - name: health
+    description: 服务可用性检查
   - name: system
+    description: API 根路径与联调入口
   - name: auth
+    description: 注册、登录、获取当前用户
   - name: chat
+    description: 创建会话、发送文本消息
   - name: memory
+    description: 记忆列表与基础维护
   - name: mood
-  - name: knowledge
-  - name: tests
+    description: 基础情绪记录
   - name: safety
-  - name: voice
+    description: SOS 资源与危机事件记录
 paths:
   /health:
     get:
       tags: [health]
-      summary: Health check
+      summary: 健康检查
       operationId: healthCheck
       responses:
         "200":
-          description: Service is alive
+          description: 服务正常
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
 
   /api/v1:
     get:
       tags: [system]
-      summary: API root
+      summary: API 根路径
       operationId: apiRoot
       responses:
         "200":
-          description: API root message
+          description: API 版本信息
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiRootResponse"
+              example:
+                message: Counseling Agent API v1
 
   /api/v1/auth/register:
     post:
       tags: [auth]
-      summary: Register
+      summary: 注册
       operationId: register
+      description: |
+        Sprint 1 注册接口。
+        后端依据 `age_range` 推导 `user_mode`：
+        `13_15`、`16_17` -> `teen`，其余 -> `adult`。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/RegisterRequest"
+            example:
+              email: demo@example.com
+              password: "12345678"
+              age_range: 16_17
       responses:
         "200":
-          description: Registration result
+          description: 注册成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/RegisterResponse"
+              example:
+                user_id: 8b6f8d6f-8b4a-4cf0-b7b1-7d41ea4d2a19
+                access_token: replace-with-real-jwt
+                refresh_token: replace-with-real-refresh-token
+                user_mode: teen
+                onboarding_completed: false
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/auth/login:
     post:
       tags: [auth]
-      summary: Login
+      summary: 登录
       operationId: login
       requestBody:
         required: true
@@ -75,55 +105,91 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: demo@example.com
+              password: "12345678"
       responses:
         "200":
-          description: Login result
+          description: 登录成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
+              example:
+                access_token: replace-with-real-jwt
+                refresh_token: replace-with-real-refresh-token
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/auth/me:
     get:
       tags: [auth]
-      summary: Current user
+      summary: 获取当前用户
       operationId: getCurrentUser
+      description: |
+        Sprint 1 联调期应携带 Bearer Token。
+        当前脚手架暂未校验 Authorization 头，但前后端联调仍按正式鉴权方式传递。
+      security:
+        - BearerAuth: []
       responses:
         "200":
-          description: Current user info
+          description: 当前用户基础信息
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CurrentUserResponse"
+              example:
+                user_id: demo-user
+                nickname: demo
+                user_mode: adult
 
   /api/v1/chat/threads:
     post:
       tags: [chat]
-      summary: Create chat thread
+      summary: 创建会话
       operationId: createThread
+      description: 创建 Sprint 1 文本聊天线程。
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/StartThreadRequest"
+            example:
+              mode: companion
+              title: 我想倾诉
       responses:
         "200":
-          description: Thread created
+          description: 会话创建成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartThreadResponse"
+              example:
+                thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+                langgraph_thread_id: lg-0f8fad5b-d9cb-469f-a165-70867728950e
+                mode: companion
+                title: 我想倾诉
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/chat/threads/{thread_id}/messages:
     post:
       tags: [chat]
-      summary: Send chat message
+      summary: 发送消息
       operationId: sendMessage
+      description: |
+        向指定会话发送一条文本消息，并同步返回 LangGraph 编排后的助手回复。
+        当前 Sprint 1 仅要求单次请求-响应模式，不包含流式返回。
+      security:
+        - BearerAuth: []
       parameters:
         - in: path
           name: thread_id
           required: true
+          description: 会话 ID
           schema:
             type: string
       requestBody:
@@ -132,77 +198,102 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SendMessageRequest"
+            examples:
+              empathy:
+                summary: 普通倾诉场景
+                value:
+                  user_id: demo-user
+                  content: 我最近压力好大，感觉没人理解我
+                  input_type: text
+                  user_mode: teen
+              crisis:
+                summary: 高风险场景
+                value:
+                  user_id: demo-user
+                  content: 我真的不想活了
+                  input_type: text
+                  user_mode: teen
       responses:
         "200":
-          description: Assistant response
+          description: 助手回复
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SendMessageResponse"
-
-  /api/v1/chat/threads/{thread_id}/stream:
-    post:
-      tags: [chat]
-      summary: Send message with SSE stream
-      operationId: streamMessage
-      parameters:
-        - in: path
-          name: thread_id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SendMessageRequest"
-      responses:
-        "200":
-          description: SSE event stream (graph_update, token, final)
-          content:
-            text/event-stream:
-              schema:
-                type: string
-                example: |
-                  event: graph_update
-                  data: {"node":"risk_classifier","risk_level":"L1"}
-
-                  event: token
-                  data: {"text":"I "}
-
-                  event: final
-                  data: {"assistant_text":"..."}
+              examples:
+                empathy:
+                  summary: 普通共情回复
+                  value:
+                    thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+                    assistant_message:
+                      assistant_text: I hear you. Thank you for sharing this. We can go slowly and focus on what feels hardest right now.
+                      risk_level: L1
+                      intent: vent
+                      suggested_actions:
+                        - continue
+                        - summarize
+                        - gentle advice
+                      session_summary: topic=我最近压力好大，感觉没人理解我 risk=L1
+                      should_write_memory: true
+                crisis:
+                  summary: 高风险安全分流回复
+                  value:
+                    thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+                    assistant_message:
+                      assistant_text: Your safety matters most right now. I want you to contact a trusted person immediately and use local emergency resources.
+                      risk_level: L2
+                      intent: other
+                      suggested_actions:
+                        - contact trusted person
+                        - open SOS
+                        - local emergency
+                      session_summary: topic=我真的不想活了 risk=L2
+                      should_write_memory: true
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/memories:
     get:
       tags: [memory]
-      summary: List memories
+      summary: 获取记忆列表
       operationId: listMemories
+      security:
+        - BearerAuth: []
       responses:
         "200":
-          description: Memory list
+          description: 记忆列表
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListMemoriesResponse"
+              example:
+                items:
+                  - memory_id: demo-memory-1
+                    memory_type: preference
+                    content: Prefers gentle responses.
     delete:
       tags: [memory]
-      summary: Clear all memories
+      summary: 清空全部记忆
       operationId: clearMemories
+      security:
+        - BearerAuth: []
       responses:
         "200":
-          description: Clear result
+          description: 清空结果
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: cleared
 
   /api/v1/memories/{memory_id}:
     patch:
       tags: [memory]
-      summary: Update one memory
+      summary: 修改单条记忆
       operationId: updateMemory
+      security:
+        - BearerAuth: []
       parameters:
         - in: path
           name: memory_id
@@ -215,17 +306,27 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateMemoryRequest"
+            example:
+              content: 用户更偏好简短、温柔的回复
       responses:
         "200":
-          description: Update result
+          description: 修改成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryMutationResponse"
+              example:
+                memory_id: demo-memory-1
+                content: 用户更偏好简短、温柔的回复
+                status: updated
+        "422":
+          $ref: "#/components/responses/ValidationError"
     delete:
       tags: [memory]
-      summary: Delete one memory
+      summary: 删除单条记忆
       operationId: deleteMemory
+      security:
+        - BearerAuth: []
       parameters:
         - in: path
           name: memory_id
@@ -234,146 +335,58 @@ paths:
             type: string
       responses:
         "200":
-          description: Delete result
+          description: 删除成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryMutationResponse"
+              example:
+                memory_id: demo-memory-1
+                status: deleted
 
   /api/v1/moods:
     post:
       tags: [mood]
-      summary: Create mood log
+      summary: 新增情绪记录
       operationId: createMoodLog
+      description: Sprint 1 仅提供基础打点能力，不包含趋势可视化接口。
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/MoodLogRequest"
+            example:
+              mood_score: 2
+              anxiety_score: 4
+              energy_score: 2
+              sleep_quality: 2
+              mood_tags:
+                - anxious
+                - tired
+              note: 今天临近考试，整个人很紧绷
       responses:
         "200":
-          description: Mood log created
+          description: 记录成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MoodLogResponse"
-
-  /api/v1/moods/trends:
-    get:
-      tags: [mood]
-      summary: Get mood trend
-      operationId: getMoodTrend
-      parameters:
-        - in: query
-          name: range
-          required: false
-          schema:
-            type: string
-            enum: [7d, 30d]
-            default: 7d
-      responses:
-        "200":
-          description: Mood trend response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MoodTrendResponse"
-
-  /api/v1/knowledge/search:
-    get:
-      tags: [knowledge]
-      summary: Search knowledge
-      operationId: searchKnowledge
-      parameters:
-        - in: query
-          name: q
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Search result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnowledgeSearchResponse"
-
-  /api/v1/knowledge/ask:
-    post:
-      tags: [knowledge]
-      summary: Ask knowledge question
-      operationId: askKnowledge
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AskKnowledgeRequest"
-      responses:
-        "200":
-          description: Knowledge answer
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AskKnowledgeResponse"
-
-  /api/v1/tests:
-    get:
-      tags: [tests]
-      summary: List tests
-      operationId: listTests
-      responses:
-        "200":
-          description: Test list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListTestsResponse"
-
-  /api/v1/tests/{test_id}/attempts:
-    post:
-      tags: [tests]
-      summary: Start test attempt
-      operationId: startTestAttempt
-      parameters:
-        - in: path
-          name: test_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Attempt created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StartAttemptResponse"
-
-  /api/v1/tests/attempts/{attempt_id}/complete:
-    post:
-      tags: [tests]
-      summary: Complete test attempt
-      operationId: completeTestAttempt
-      parameters:
-        - in: path
-          name: attempt_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Completion result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CompleteAttemptResponse"
+              example:
+                log_id: demo-log-id
+                created_at: "2026-04-24T12:00:00Z"
+                mood_score: 2
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/safety/resources:
     get:
       tags: [safety]
-      summary: Get safety resources
+      summary: 获取 SOS 资源
       operationId: getSafetyResources
+      description: 高风险场景下前端可直接调用，用于渲染 SOS 页面或紧急引导卡片。
       parameters:
         - in: query
           name: region
@@ -381,96 +394,166 @@ paths:
           schema:
             type: string
             default: CN
+          description: 资源地域代码
         - in: query
           name: audience
           required: false
           schema:
-            type: string
-            default: all
+            $ref: "#/components/schemas/SafetyAudience"
+          description: 资源面向人群
       responses:
         "200":
-          description: Safety resources
+          description: SOS 资源列表
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SafetyResourcesResponse"
+              example:
+                region: CN
+                audience: teen
+                items:
+                  - resource_type: trusted_adult
+                    title: 联系可信任的大人
+                    description: 先联系家长、老师或其他你信任的成年人
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/safety/crisis-events:
     post:
       tags: [safety]
-      summary: Record crisis event
+      summary: 记录危机事件
       operationId: createCrisisEvent
+      description: |
+        当前端收到 `risk_level` 为 `L2` 或 `L3` 的回复时，应调用该接口记录危机事件，
+        供 Sprint 1 Demo 中的风险留痕与后续人工排查使用。
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/CrisisEventRequest"
+            example:
+              thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+              message_id: client-msg-001
+              risk_level: L2
+              detected_signals:
+                - 不想活了
+              action_taken:
+                - open SOS
+                - contact trusted person
       responses:
         "200":
-          description: Crisis event recorded
+          description: 记录成功
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CrisisEventResponse"
-
-  /api/v1/voice/sessions:
-    post:
-      tags: [voice]
-      summary: Create voice session
-      operationId: createVoiceSession
-      parameters:
-        - in: query
-          name: thread_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Voice session result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/VoiceSessionResponse"
-
-x-websocket:
-  /api/v1/voice/sessions/{voice_session_id}/ws:
-    description: Bidirectional websocket channel for realtime voice messages
-    client_messages:
-      - type: audio_chunk
-      - type: commit_turn
-      - type: end_session
-    server_messages:
-      - type: session_ready
-      - type: echo
-      - type: session_ended
+              example:
+                event_id: demo-crisis-event
+                thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+                status: recorded
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    ValidationError:
+      description: 请求参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HTTPValidationError"
+
   schemas:
+    AgeRange:
+      type: string
+      enum:
+        - 13_15
+        - 16_17
+        - 18_plus
+      description: 注册阶段用于推导 teen/adult 模式
+
+    UserMode:
+      type: string
+      enum:
+        - teen
+        - adult
+
+    ThreadMode:
+      type: string
+      enum:
+        - companion
+        - knowledge
+        - test
+        - crisis
+      description: |
+        当前 Sprint 1 正式使用 `companion` 为主；
+        其余值保留字段兼容性，不代表对应能力已纳入 Sprint 1 范围。
+
+    InputType:
+      type: string
+      enum:
+        - text
+        - voice
+        - test
+        - system
+
+    RiskLevel:
+      type: string
+      enum:
+        - L0
+        - L1
+        - L2
+        - L3
+      description: |
+        L0=正常，L1=中低风险情绪波动，L2/L3=需进入安全分流。
+
+    SafetyAudience:
+      type: string
+      enum:
+        - all
+        - teen
+        - adult
+
     HealthResponse:
       type: object
       properties:
         status:
           type: string
-      required: [status]
+      required:
+        - status
 
     ApiRootResponse:
       type: object
       properties:
         message:
           type: string
-      required: [message]
+      required:
+        - message
 
     RegisterRequest:
       type: object
       properties:
         email:
           type: string
+          format: email
         password:
           type: string
+          minLength: 6
         age_range:
-          type: string
-      required: [email, password, age_range]
+          $ref: "#/components/schemas/AgeRange"
+      required:
+        - email
+        - password
+        - age_range
 
     RegisterResponse:
       type: object
@@ -482,21 +565,27 @@ components:
         refresh_token:
           type: string
         user_mode:
-          type: string
-          enum: [teen, adult]
+          $ref: "#/components/schemas/UserMode"
         onboarding_completed:
           type: boolean
       required:
-        [user_id, access_token, refresh_token, user_mode, onboarding_completed]
+        - user_id
+        - access_token
+        - refresh_token
+        - user_mode
+        - onboarding_completed
 
     LoginRequest:
       type: object
       properties:
         email:
           type: string
+          format: email
         password:
           type: string
-      required: [email, password]
+      required:
+        - email
+        - password
 
     LoginResponse:
       type: object
@@ -505,7 +594,9 @@ components:
           type: string
         refresh_token:
           type: string
-      required: [access_token, refresh_token]
+      required:
+        - access_token
+        - refresh_token
 
     CurrentUserResponse:
       type: object
@@ -515,18 +606,21 @@ components:
         nickname:
           type: string
         user_mode:
-          type: string
-      required: [user_id, nickname, user_mode]
+          $ref: "#/components/schemas/UserMode"
+      required:
+        - user_id
+        - nickname
+        - user_mode
 
     StartThreadRequest:
       type: object
       properties:
         mode:
-          type: string
-          enum: [companion, knowledge, test, crisis]
+          $ref: "#/components/schemas/ThreadMode"
           default: companion
         title:
           type: string
+      additionalProperties: false
 
     StartThreadResponse:
       type: object
@@ -539,7 +633,11 @@ components:
           type: string
         title:
           type: string
-      required: [thread_id, langgraph_thread_id, mode, title]
+      required:
+        - thread_id
+        - langgraph_thread_id
+        - mode
+        - title
 
     SendMessageRequest:
       type: object
@@ -549,14 +647,14 @@ components:
         content:
           type: string
         input_type:
-          type: string
-          enum: [text, voice, test, system]
+          $ref: "#/components/schemas/InputType"
           default: text
         user_mode:
-          type: string
-          enum: [teen, adult]
+          $ref: "#/components/schemas/UserMode"
           default: adult
-      required: [user_id, content]
+      required:
+        - user_id
+        - content
 
     AssistantMessage:
       type: object
@@ -564,16 +662,17 @@ components:
         assistant_text:
           type: string
         risk_level:
-          type: string
-          enum: [L0, L1, L2, L3]
+          $ref: "#/components/schemas/RiskLevel"
         intent:
           type: string
+          description: LangGraph 意图识别结果
         suggested_actions:
           type: array
           items:
             type: string
         session_summary:
           type: string
+          description: 当前轮对话摘要，供首页续聊展示使用
         should_write_memory:
           type: boolean
       required:
@@ -591,7 +690,9 @@ components:
           type: string
         assistant_message:
           $ref: "#/components/schemas/AssistantMessage"
-      required: [thread_id, assistant_message]
+      required:
+        - thread_id
+        - assistant_message
 
     MemoryItem:
       type: object
@@ -602,7 +703,10 @@ components:
           type: string
         content:
           type: string
-      required: [memory_id, memory_type, content]
+      required:
+        - memory_id
+        - memory_type
+        - content
 
     ListMemoriesResponse:
       type: object
@@ -611,14 +715,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MemoryItem"
-      required: [items]
+      required:
+        - items
 
     UpdateMemoryRequest:
       type: object
       properties:
         content:
           type: string
-      required: [content]
+      required:
+        - content
 
     MemoryMutationResponse:
       type: object
@@ -629,14 +735,16 @@ components:
           type: string
         status:
           type: string
-      required: [status]
+      required:
+        - status
 
     StatusResponse:
       type: object
       properties:
         status:
           type: string
-      required: [status]
+      required:
+        - status
 
     MoodLogRequest:
       type: object
@@ -663,7 +771,8 @@ components:
             type: string
         note:
           type: string
-      required: [mood_score]
+      required:
+        - mood_score
 
     MoodLogResponse:
       type: object
@@ -672,120 +781,13 @@ components:
           type: string
         created_at:
           type: string
+          format: date-time
         mood_score:
           type: integer
-      required: [log_id, created_at, mood_score]
-
-    MoodTrendResponse:
-      type: object
-      properties:
-        range:
-          type: string
-        avg_mood_score:
-          type: number
-        top_tags:
-          type: array
-          items:
-            type: string
-        daily:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        summary:
-          type: string
-      required: [range, avg_mood_score, top_tags, daily, summary]
-
-    KnowledgeSearchItem:
-      type: object
-      properties:
-        article_id:
-          type: string
-        title:
-          type: string
-        summary_30s:
-          type: string
-      required: [article_id, title, summary_30s]
-
-    KnowledgeSearchResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/KnowledgeSearchItem"
-      required: [items]
-
-    AskKnowledgeRequest:
-      type: object
-      properties:
-        question:
-          type: string
-        use_my_context:
-          type: boolean
-          default: true
-      required: [question]
-
-    AskKnowledgeResponse:
-      type: object
-      properties:
-        answer:
-          type: string
-        related_articles:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-      required: [answer, related_articles]
-
-    TestItem:
-      type: object
-      properties:
-        test_id:
-          type: string
-        code:
-          type: string
-        title:
-          type: string
-        estimated_minutes:
-          type: integer
-      required: [test_id, code, title, estimated_minutes]
-
-    ListTestsResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/TestItem"
-      required: [items]
-
-    StartAttemptResponse:
-      type: object
-      properties:
-        attempt_id:
-          type: string
-        test_id:
-          type: string
-        questions:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-      required: [attempt_id, test_id, questions]
-
-    CompleteAttemptResponse:
-      type: object
-      properties:
-        attempt_id:
-          type: string
-        result_code:
-          type: string
-        result_title:
-          type: string
-        summary:
-          type: string
-      required: [attempt_id, result_code, result_title, summary]
+      required:
+        - log_id
+        - created_at
+        - mood_score
 
     SafetyResourceItem:
       type: object
@@ -796,7 +798,10 @@ components:
           type: string
         description:
           type: string
-      required: [resource_type, title, description]
+      required:
+        - resource_type
+        - title
+        - description
 
     SafetyResourcesResponse:
       type: object
@@ -804,12 +809,15 @@ components:
         region:
           type: string
         audience:
-          type: string
+          $ref: "#/components/schemas/SafetyAudience"
         items:
           type: array
           items:
             $ref: "#/components/schemas/SafetyResourceItem"
-      required: [region, audience, items]
+      required:
+        - region
+        - audience
+        - items
 
     CrisisEventRequest:
       type: object
@@ -819,7 +827,7 @@ components:
         message_id:
           type: string
         risk_level:
-          type: string
+          $ref: "#/components/schemas/RiskLevel"
         detected_signals:
           type: array
           items:
@@ -828,7 +836,9 @@ components:
           type: array
           items:
             type: string
-      required: [thread_id, risk_level]
+      required:
+        - thread_id
+        - risk_level
 
     CrisisEventResponse:
       type: object
@@ -839,15 +849,35 @@ components:
           type: string
         status:
           type: string
-      required: [event_id, thread_id, status]
+      required:
+        - event_id
+        - thread_id
+        - status
 
-    VoiceSessionResponse:
+    ValidationError:
       type: object
       properties:
-        voice_session_id:
+        loc:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: integer
+        msg:
           type: string
-        thread_id:
+        type:
           type: string
-        ws_url:
-          type: string
-      required: [voice_session_id, thread_id, ws_url]
+      required:
+        - loc
+        - msg
+        - type
+
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+      required:
+        - detail
