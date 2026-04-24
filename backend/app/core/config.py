@@ -11,9 +11,13 @@ DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _load_env_files() -> None:
+    external_env_keys = set(os.environ.keys())
+
     for env_path in (BASE_DIR / ".env", BASE_DIR / ".env.local"):
         if not env_path.exists():
             continue
+
+        allow_override = env_path.name == ".env.local"
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -21,7 +25,15 @@ def _load_env_files() -> None:
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            os.environ.setdefault(key, value)
+
+            # Keep externally injected env vars as highest priority.
+            if key in external_env_keys:
+                continue
+
+            if allow_override:
+                os.environ[key] = value
+            else:
+                os.environ.setdefault(key, value)
 
 
 _load_env_files()
