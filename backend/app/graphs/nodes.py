@@ -1,4 +1,5 @@
 from app.graphs.state import AgentState
+from app.services.deepseek_client import deepseek_client
 
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
@@ -21,6 +22,55 @@ def _last_user_message(messages: list[dict]) -> str:
         if message.get("role") == "user":
             return str(message.get("content", ""))
     return ""
+
+
+def _memory_context(memories: list[dict]) -> str:
+    lines = []
+    for memory in memories[:4]:
+        content = str(memory.get("content", "")).strip()
+        if content:
+            lines.append(f"- {content}")
+    return "\n".join(lines) or "无"
+
+
+async def _model_reply(state: AgentState, *, mode: str, fallback: str) -> str:
+    text = state.get("normalized_text", "")
+    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
+    style = state.get("companion_preferences", {}).get("style", "gentle")
+    last_summary = state.get("last_summary") or "无"
+    memory_context = _memory_context(state.get("retrieved_memories", []))
+
+    mode_guidance = {
+        "companion": "先共情和接住情绪，少分析，最多问一个温和的问题。",
+        "vent": "重点回应用户没有被理解、压力很大的感受，不急着给建议。",
+        "soothe": "先带用户稳定身体和呼吸，再轻轻询问触发点。",
+        "counseling": "轻量结构化梳理事件、感受、想法和一个很小的下一步。",
+    }.get(mode, "先共情，再给一个很小的下一步。")
+
+    system_prompt = (
+        "你是心理陪伴产品里的支持型对话 agent，不是医生或心理咨询师。"
+        "不要诊断、不要承诺治疗、不要替代专业帮助。"
+        "高风险安全分流由系统规则处理；当前只写非危机陪伴回复。"
+        "用简体中文，语气稳定、克制、温和。回复控制在 120 字以内。"
+    )
+    user_prompt = (
+        f"用户模式：{user_mode}\n"
+        f"陪伴风格：{style}\n"
+        f"当前回复模式：{mode}\n"
+        f"回复要求：{mode_guidance}\n"
+        f"上次摘要：{last_summary}\n"
+        f"可参考记忆：\n{memory_context}\n"
+        f"用户刚刚说：{text}\n"
+        "请直接输出给用户看的回复正文。"
+    )
+
+    reply = await deepseek_client.chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return reply or fallback
 
 
 async def normalize_input(state: AgentState) -> AgentState:
@@ -181,11 +231,13 @@ async def companion_response(state: AgentState) -> AgentState:
         body = "你可以先只说此刻最卡住、最难受的那一小块。"
         actions = ["继续说", "帮我理一理", "先听我说完"]
 
+    fallback = (
+        f"{opener}{body}"
+        f" 你刚刚提到“{excerpt}”。如果你愿意，我们先从这里慢慢展开。"
+    )
+    mode = "vent" if intent == "vent" else "companion"
     return {
-        "assistant_text": (
-            f"{opener}{body}"
-            f" 你刚刚提到“{excerpt}”。如果你愿意，我们先从这里慢慢展开。"
-        ),
+        "assistant_text": await _model_reply(state, mode=mode, fallback=fallback),
         "suggested_actions": actions,
     }
 
@@ -197,24 +249,26 @@ async def soothing_response(state: AgentState) -> AgentState:
         if user_mode == "adult"
         else "先稳住身体，再聊刚才发生了什么。"
     )
+    fallback = (
+        "先不急着分析，先把身体拉回到当下。"
+        "试着做三步：双脚踩地，慢慢吸气 4 秒呼气 6 秒做 3 轮，"
+        "再说出你眼前看到的 3 样东西。"
+        f"{tail}"
+    )
     return {
-        "assistant_text": (
-            "先不急着分析，先把身体拉回到当下。"
-            "试着做三步：双脚踩地，慢慢吸气 4 秒呼气 6 秒做 3 轮，"
-            "再说出你眼前看到的 3 样东西。"
-            f"{tail}"
-        ),
+        "assistant_text": await _model_reply(state, mode="soothe", fallback=fallback),
         "suggested_actions": ["跟我做 60 秒稳定练习", "继续聊触发点", "打开 SOS"],
     }
 
 
 async def counseling_response(state: AgentState) -> AgentState:
+    fallback = (
+        "我们先把这件事拆小一点，不急着得出结论。"
+        "先说最近一次发生了什么，再说那一刻你脑子里冒出的第一句话，"
+        "最后只找一个最小的下一步。"
+    )
     return {
-        "assistant_text": (
-            "我们先把这件事拆小一点，不急着得出结论。"
-            "先说最近一次发生了什么，再说那一刻你脑子里冒出的第一句话，"
-            "最后只找一个最小的下一步。"
-        ),
+        "assistant_text": await _model_reply(state, mode="counseling", fallback=fallback),
         "suggested_actions": ["先说发生了什么", "帮我理清想法", "一起定下一步"],
     }
 

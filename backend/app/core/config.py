@@ -10,6 +10,23 @@ DEFAULT_SQLITE_PATH = BASE_DIR / "data" / "app.db"
 DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _load_env_files() -> None:
+    for env_path in (BASE_DIR / ".env", BASE_DIR / ".env.local"):
+        if not env_path.exists():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+_load_env_files()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_title: str
@@ -17,6 +34,10 @@ class Settings:
     secret_key: str
     access_token_ttl_seconds: int
     refresh_token_ttl_seconds: int
+    deepseek_api_key: str | None
+    deepseek_base_url: str
+    deepseek_model: str
+    deepseek_timeout_seconds: float
 
 
 def _default_database_url() -> str:
@@ -30,6 +51,10 @@ def load_settings() -> Settings:
         secret_key=os.getenv("APP_SECRET_KEY", "dev-only-change-me"),
         access_token_ttl_seconds=int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")),
         refresh_token_ttl_seconds=int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", "2592000")),
+        deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
+        deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
     )
 
 

@@ -37,6 +37,19 @@ def format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def iter_stream_chunks(text: str, *, chunk_size: int = 6):
+    buffer = ""
+    stop_chars = set("。！？!?；;\n")
+    for char in text:
+        buffer += char
+        if len(buffer) >= chunk_size or char in stop_chars:
+            yield buffer
+            buffer = ""
+
+    if buffer:
+        yield buffer
+
+
 @router.post("/threads", response_model=StartThreadResponse)
 async def create_thread(
     payload: StartThreadRequest,
@@ -164,7 +177,7 @@ async def stream_message(
     thread = get_thread_for_user(db, current_user.id, thread_id)
 
     async def event_generator():
-        _, assistant_message, assistant_result = await process_message_turn(
+        user_message, assistant_message, assistant_result = await process_message_turn(
             db,
             user=current_user,
             thread=thread,
@@ -177,16 +190,23 @@ async def stream_message(
                 "risk_level": assistant_result["risk_level"],
             },
         )
-        for token in assistant_message.content.split(" "):
-            if token:
-                yield format_sse_event("token", {"text": token + " "})
+        for chunk in iter_stream_chunks(assistant_message.content):
+            yield format_sse_event("token", {"text": chunk})
         yield format_sse_event(
             "final",
             {
                 "thread_id": thread.id,
+                "message_id": user_message.id,
                 "assistant_message_id": assistant_message.id,
                 **assistant_result,
             },
         )
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
