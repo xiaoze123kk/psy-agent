@@ -3,11 +3,11 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ApiClient } from "./api/client";
 import { CounselingApi } from "./api/endpoints";
-import type { AgeRange, UserMode } from "./types/api";
+import type { AgeRange, MemoryItem, MessageItem, MoodTrendResponse, ThreadListItem, UserMode } from "./types/api";
 
+type Stage = "auth" | "onboarding" | "app";
+type Tab = "home" | "chat" | "profile";
 type AgeOptionId = "13-15" | "16-17" | "18-24" | "25+";
-type MainTab = "home" | "chat" | "profile";
-type Screen = "auth" | "ageGate" | "onboarding" | MainTab | "safety";
 type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
 type RiskLevel = "L0" | "L1" | "L2" | "L3";
@@ -23,61 +23,136 @@ interface ChatMessage {
   id: number;
   role: ChatRole;
   text: string;
+  createdAt?: string;
+  riskLevel?: RiskLevel | null;
   streaming?: boolean;
 }
 
+const ACCESS_TOKEN_KEY = "counseling_access_token";
+const REFRESH_TOKEN_KEY = "counseling_refresh_token";
+const USER_ID_KEY = "counseling_user_id";
+const USERNAME_KEY = "counseling_username";
+const THREAD_ID_KEY = "counseling_thread_id";
+const STYLE_KEY = "counseling_style";
+const GOAL_KEY = "counseling_goal";
+
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
 const ageOptions: Array<SelectOption & { id: AgeOptionId }> = [
-  { id: "13-15", label: "13-15 岁", description: "自动启用青少年保护模式" },
-  { id: "16-17", label: "16-17 岁", description: "自动启用青少年保护模式" },
-  { id: "18-24", label: "18-24 岁", description: "进入标准陪伴模式" },
-  { id: "25+", label: "25 岁及以上", description: "进入标准陪伴模式" },
+  { id: "13-15", label: "13-15 岁", description: "青少年保护模式" },
+  { id: "16-17", label: "16-17 岁", description: "青少年保护模式" },
+  { id: "18-24", label: "18-24 岁", description: "标准陪伴模式" },
+  { id: "25+", label: "25 岁及以上", description: "标准陪伴模式" },
 ];
 
 const styleOptions: SelectOption[] = [
-  { id: "gentle", label: "温柔安抚型", description: "先接住情绪，慢慢放松下来" },
-  { id: "rational", label: "理性分析型", description: "把困扰拆开，理清头绪" },
-  { id: "reflective", label: "陪你梳理型", description: "边听边整理感受和触发点" },
-  { id: "action", label: "轻量行动型", description: "给出一两个可执行的小步骤" },
+  { id: "gentle", label: "温柔安抚型", description: "先接住情绪，再慢慢放松。" },
+  { id: "rational", label: "理性分析型", description: "把困扰拆开，理清头绪。" },
+  { id: "reflective", label: "陪你梳理型", description: "一起整理感受和触发点。" },
+  { id: "action", label: "轻量行动型", description: "给出一两个可执行步骤。" },
 ];
 
 const goalOptions: SelectOption[] = [
-  { id: "heard", label: "想先被听见", description: "需要一个安全、不被打断的出口" },
-  { id: "anxiety", label: "想缓解焦虑", description: "先把身体和情绪稳定下来" },
-  { id: "sleep", label: "想改善作息", description: "最近睡眠或精力状态不太稳" },
-  { id: "relationships", label: "想理清关系", description: "关于家人、朋友或亲密关系" },
+  { id: "heard", label: "想先被听见", description: "需要一个不被打断的出口。" },
+  { id: "anxiety", label: "想缓解焦虑", description: "先把身体和情绪稳定下来。" },
+  { id: "sleep", label: "想改善作息", description: "最近睡眠或精力不太稳。" },
+  { id: "relationships", label: "想理清关系", description: "关于家人、朋友或亲密关系。" },
 ];
 
 const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
-const storedAccessToken = localStorage.getItem("counseling_access_token") ?? "";
-const storedRefreshToken = localStorage.getItem("counseling_refresh_token") ?? "";
-const storedUserId = localStorage.getItem("counseling_user_id") ?? "";
 
-const initialMessages: ChatMessage[] = [
+const demoThreads: ThreadListItem[] = [
   {
-    id: 1,
-    role: "assistant",
-    text: "你好，我在这里。你可以慢慢说，我们先从今天最难受的那一刻开始。",
+    thread_id: "demo-sleep",
+    title: "最近总是睡不好",
+    mode: "companion",
+    last_summary: "你提到晚上脑子停不下来，第二天也恢复不过来。",
+    last_risk_level: "L0",
+    updated_at: new Date().toISOString(),
   },
   {
-    id: 2,
-    role: "user",
-    text: "最近总是睡不好，白天也提不起精神。",
-  },
-  {
-    id: 3,
-    role: "assistant",
-    text: "听起来你已经撑了一段时间了。我们可以先一起理一理，是入睡困难、容易醒，还是醒来后还是很累？",
+    thread_id: "demo-anxiety",
+    title: "开会前会很慌",
+    mode: "companion",
+    last_summary: "你希望找到一个能在 3 分钟内稳定下来的方式。",
+    last_risk_level: "L1",
+    updated_at: "2026-05-01T18:20:00+08:00",
   },
 ];
 
-const currentScreen = ref<Screen>(storedAccessToken ? "home" : "auth");
-const activeTab = ref<MainTab>("home");
-const lastMainTab = ref<MainTab>("home");
-const selectedAge = ref<AgeOptionId | null>(null);
-const selectedStyle = ref<string | null>(null);
-const selectedGoal = ref<string | null>(null);
+const demoMessages: Record<string, ChatMessage[]> = {
+  "demo-sleep": [
+    {
+      id: 1,
+      role: "assistant",
+      text: "你好，我们先不急着把问题变小。最近最折磨你的，是入睡困难、半夜醒来，还是醒来后还是很累？",
+      createdAt: new Date().toISOString(),
+      riskLevel: "L0",
+    },
+    {
+      id: 2,
+      role: "user",
+      text: "主要是脑子停不下来，越想早点睡越睡不着。",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 3,
+      role: "assistant",
+      text: "那我们先把目标从“立刻睡着”调成“让大脑慢下来一点”。你愿意先一起找出睡前最容易开始转动的那类念头吗？",
+      createdAt: new Date().toISOString(),
+      riskLevel: "L0",
+    },
+  ],
+  "demo-anxiety": [
+    {
+      id: 1,
+      role: "assistant",
+      text: "开会前的慌张，常常是身体先进入警戒状态。我们可以先看身体信号，再看事情本身。",
+      createdAt: "2026-05-01T18:05:00+08:00",
+      riskLevel: "L1",
+    },
+  ],
+};
+
+const demoMemories: MemoryItem[] = [
+  { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
+  { memory_id: "m2", memory_type: "support", content: "高压场景前适合先做 60 秒呼吸。" },
+];
+
+const demoMoodTrend: MoodTrendResponse = {
+  range: "7d",
+  avg_mood_score: 3,
+  top_tags: ["睡眠", "焦虑", "关系"],
+  daily: [],
+  summary: "最近压力主要集中在睡眠和会前焦虑，适合优先减负。",
+};
+
+function storageText(key: string) {
+  return localStorage.getItem(key) ?? "";
+}
+
+function storageOption(key: string, options: SelectOption[]) {
+  const value = localStorage.getItem(key);
+  return value && options.some((option) => option.id === value) ? value : null;
+}
+
+const stage = ref<Stage>(storageText(ACCESS_TOKEN_KEY) ? "app" : "auth");
+const activeTab = ref<Tab>("home");
 const authMode = ref<AuthMode>("login");
+const isDemoMode = ref(false);
+const isBooting = ref(true);
+const isAuthenticating = ref(false);
+const isCaptchaLoading = ref(false);
+const isLoadingApp = ref(false);
+const isSending = ref(false);
+const isSafetyOpen = ref(false);
+
+const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
+const refreshToken = ref(storageText(REFRESH_TOKEN_KEY));
+const currentUserId = ref(storageText(USER_ID_KEY));
+const username = ref(storageText(USERNAME_KEY));
+const activeThreadId = ref(storageText(THREAD_ID_KEY));
+
 const authUsername = ref("");
 const authPassword = ref("");
 const authSelectedAge = ref<AgeOptionId>("18-24");
@@ -85,21 +160,22 @@ const captchaId = ref("");
 const captchaImageDataUrl = ref("");
 const captchaCode = ref("");
 const authError = ref("");
-const isAuthenticating = ref(false);
-const isCaptchaLoading = ref(false);
+const apiError = ref("");
+
+const selectedAge = ref<AgeOptionId | null>(null);
+const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
+const selectedGoal = ref<string | null>(storageOption(GOAL_KEY, goalOptions));
+
+const threads = ref<ThreadListItem[]>([]);
+const messages = ref<ChatMessage[]>([]);
+const memories = ref<MemoryItem[]>([]);
+const moodTrend = ref<MoodTrendResponse | null>(null);
+const quickActions = ref([...defaultQuickActions]);
 const composerText = ref("");
 const safetyAction = ref<SafetyAction>(null);
-const quickActions = ref([...defaultQuickActions]);
-const messages = ref<ChatMessage[]>([...initialMessages]);
-const messageSeed = ref(initialMessages.length + 1);
+const messageSeed = ref(1);
 const messageListRef = ref<HTMLElement | null>(null);
-const accessToken = ref(storedAccessToken);
-const refreshToken = ref(storedRefreshToken);
-const currentUserId = ref(storedUserId);
-const currentUsername = ref(localStorage.getItem("counseling_username") ?? "");
-const activeThreadId = ref(localStorage.getItem("counseling_thread_id") ?? "");
-const apiError = ref("");
-const isSending = ref(false);
+const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
 
 const apiClient = new ApiClient({
   baseUrl: apiBaseUrl,
@@ -109,54 +185,48 @@ const apiClient = new ApiClient({
 const api = new CounselingApi(apiClient);
 
 const isTeenMode = computed(() => selectedAge.value === "13-15" || selectedAge.value === "16-17");
-const modeLabel = computed(() => (isTeenMode.value ? "青少年模式" : "标准模式"));
-const userName = computed(() => currentUsername.value || "朋友");
-const greeting = computed(() => {
-  const hour = new Date().getHours();
-
-  if (hour < 12) {
-    return "早上好";
-  }
-
-  if (hour < 18) {
-    return "下午好";
-  }
-
-  return "晚上好";
-});
-const canEnterHome = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
-const selectedAgeLabel = computed(
-  () => ageOptions.find((option) => option.id === selectedAge.value)?.label ?? "未选择",
-);
+const modeLabel = computed(() => (isDemoMode.value ? "演示模式" : isTeenMode.value ? "青少年模式" : "标准模式"));
+const userName = computed(() => username.value || "朋友");
+const selectedAgeLabel = computed(() => ageOptions.find((option) => option.id === selectedAge.value)?.label ?? "未设置");
 const selectedStyleLabel = computed(
   () => styleOptions.find((option) => option.id === selectedStyle.value)?.label ?? "未设置",
 );
-const selectedGoalLabel = computed(
-  () => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置",
+const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
+const canSubmitAuth = computed(
+  () =>
+    Boolean(authUsername.value.trim()) &&
+    authPassword.value.length >= 6 &&
+    Boolean(captchaId.value) &&
+    Boolean(captchaCode.value.trim()),
 );
-const currentPreferenceChips = computed(() =>
+const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
+const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
+const moodSummary = computed(() => moodTrend.value?.summary || "还没有足够的状态数据，先从今天开始记录。");
+const contextText = computed(() =>
   [
-    selectedStyle.value ? selectedStyleLabel.value : "",
-    selectedGoal.value ? selectedGoalLabel.value : "",
-  ].filter(Boolean),
+    activeThread.value?.title,
+    activeThread.value?.last_summary,
+    ...messages.value.slice(-6).map((message) => message.text),
+  ]
+    .filter(Boolean)
+    .join(" "),
 );
-const latestUserSummary = computed(() => {
-  const latestUserMessage = [...messages.value].reverse().find((message) => message.role === "user");
-  return latestUserMessage?.text ?? "上次你提到最近睡眠不太稳定...";
-});
-
-async function scrollMessageListToBottom() {
-  await nextTick();
-
-  if (messageListRef.value) {
-    messageListRef.value.scrollTop = messageListRef.value.scrollHeight;
-  }
-}
 
 watch(
   () => messages.value.map((message) => `${message.id}:${message.text}`).join("\n"),
-  scrollMessageListToBottom,
+  async () => {
+    await nextTick();
+    if (messageListRef.value) {
+      messageListRef.value.scrollTop = messageListRef.value.scrollHeight;
+    }
+  },
 );
+
+watch([selectedStyle, selectedGoal], ([style, goal]) => {
+  style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
+  goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+});
 
 watch(authMode, () => {
   authError.value = "";
@@ -164,172 +234,185 @@ watch(authMode, () => {
   void refreshCaptcha();
 });
 
-function persistAuthSession(payload: { user_id: string; access_token: string; refresh_token: string }) {
-  accessToken.value = payload.access_token;
-  refreshToken.value = payload.refresh_token;
-  currentUserId.value = payload.user_id;
-  localStorage.setItem("counseling_access_token", payload.access_token);
-  localStorage.setItem("counseling_refresh_token", payload.refresh_token);
-  localStorage.setItem("counseling_user_id", payload.user_id);
-}
-
-function clearAuthSession() {
-  accessToken.value = "";
-  refreshToken.value = "";
-  currentUserId.value = "";
-  currentUsername.value = "";
-  activeThreadId.value = "";
-  localStorage.removeItem("counseling_access_token");
-  localStorage.removeItem("counseling_refresh_token");
-  localStorage.removeItem("counseling_user_id");
-  localStorage.removeItem("counseling_username");
-  localStorage.removeItem("counseling_thread_id");
-}
-
 function toAgeRange(age: AgeOptionId | null): AgeRange {
-  if (age === "13-15") {
-    return "13_15";
-  }
-
-  if (age === "16-17") {
-    return "16_17";
-  }
-
+  if (age === "13-15") return "13_15";
+  if (age === "16-17") return "16_17";
   return "18_plus";
 }
 
 function applyAgeRange(ageRange: AgeRange) {
-  if (ageRange === "13_15") {
-    selectedAge.value = "13-15";
-  } else if (ageRange === "16_17") {
-    selectedAge.value = "16-17";
-  } else {
-    selectedAge.value = "18-24";
-  }
+  selectedAge.value = ageRange === "13_15" ? "13-15" : ageRange === "16_17" ? "16-17" : "18-24";
+  authSelectedAge.value = selectedAge.value;
+}
+
+function selectedUserMode(): UserMode {
+  return isTeenMode.value ? "teen" : "adult";
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return "刚刚";
+  const time = new Date(value).getTime();
+  const diff = Date.now() - time;
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  if (diff < hour) return "刚刚";
+  if (diff < day) return `${Math.round(diff / hour)} 小时前`;
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
+}
+
+function riskLabel(level?: RiskLevel | null) {
+  if (level === "L3") return "立即支持";
+  if (level === "L2") return "需要陪伴";
+  if (level === "L1") return "多一点支持";
+  return "平稳";
+}
+
+function riskClass(level?: RiskLevel | null) {
+  if (level === "L3") return "risk--critical";
+  if (level === "L2") return "risk--warning";
+  if (level === "L1") return "risk--watch";
+  return "risk--steady";
+}
+
+function sortThreads(items: ThreadListItem[]) {
+  return [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+}
+
+function setMessages(items: ChatMessage[]) {
+  messages.value = items.map((message, index) => ({ ...message, id: index + 1 }));
+  messageSeed.value = messages.value.length + 1;
+}
+
+function persistAuth(payload: { user_id: string; access_token: string; refresh_token: string }) {
+  accessToken.value = payload.access_token;
+  refreshToken.value = payload.refresh_token;
+  currentUserId.value = payload.user_id;
+  localStorage.setItem(ACCESS_TOKEN_KEY, payload.access_token);
+  localStorage.setItem(REFRESH_TOKEN_KEY, payload.refresh_token);
+  localStorage.setItem(USER_ID_KEY, payload.user_id);
+}
+
+function clearSession() {
+  accessToken.value = "";
+  refreshToken.value = "";
+  currentUserId.value = "";
+  username.value = "";
+  activeThreadId.value = "";
+  [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_ID_KEY, USERNAME_KEY, THREAD_ID_KEY].forEach((key) => localStorage.removeItem(key));
 }
 
 async function refreshCaptcha() {
+  if (isDemoMode.value) return;
   try {
     isCaptchaLoading.value = true;
     const captcha = await api.getCaptcha();
     captchaId.value = captcha.captcha_id;
     captchaImageDataUrl.value = captcha.image_data_url;
   } catch (error) {
-    authError.value = error instanceof Error ? error.message : "验证码加载失败，请刷新重试。";
+    authError.value = error instanceof Error ? error.message : "验证码加载失败。";
   } finally {
     isCaptchaLoading.value = false;
   }
 }
 
-function setAuthMode(mode: AuthMode) {
-  authMode.value = mode;
-}
-
 async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshToken.value) {
-    clearAuthSession();
-    currentScreen.value = "auth";
-    void refreshCaptcha();
-    return false;
-  }
-
+  if (!refreshToken.value) return false;
   const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/v1/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken.value }),
   });
-
   if (!response.ok) {
-    clearAuthSession();
-    currentScreen.value = "auth";
-    void refreshCaptcha();
+    clearSession();
     return false;
   }
-
-  persistAuthSession((await response.json()) as { user_id: string; access_token: string; refresh_token: string });
+  persistAuth((await response.json()) as { user_id: string; access_token: string; refresh_token: string });
   return true;
 }
 
-async function loadAuthenticatedUser(nextScreen: Screen = "home") {
-  const user = await api.getCurrentUser();
-  currentUserId.value = user.user_id;
-  currentUsername.value = user.username;
-  localStorage.setItem("counseling_user_id", user.user_id);
-  localStorage.setItem("counseling_username", user.username);
-  applyAgeRange(user.age_range);
-
-  const threads = await api.listThreads();
-  if (!activeThreadId.value && threads.items[0]) {
-    activeThreadId.value = threads.items[0].thread_id;
-    localStorage.setItem("counseling_thread_id", activeThreadId.value);
-  }
-
-  currentScreen.value = nextScreen;
+function mapMessage(item: MessageItem): ChatMessage | null {
+  if (item.role !== "assistant" && item.role !== "user") return null;
+  return {
+    id: 0,
+    role: item.role,
+    text: item.content,
+    createdAt: item.created_at,
+    riskLevel: item.risk_level,
+  };
 }
 
-onMounted(async () => {
-  if (!accessToken.value && refreshToken.value) {
-    await refreshAccessToken();
-  }
-
-  if (!accessToken.value) {
-    currentScreen.value = "auth";
-    await refreshCaptcha();
+async function loadThreadMessages(threadId: string) {
+  if (!threadId) {
+    setMessages([]);
     return;
   }
-
-  try {
-    await loadAuthenticatedUser("home");
-  } catch {
-    clearAuthSession();
-    currentScreen.value = "auth";
-    await refreshCaptcha();
+  if (isDemoMode.value || threadId.startsWith("local-")) {
+    setMessages(demoMessagesByThread.value[threadId] ?? []);
+    return;
   }
-});
+  const response = await api.listMessages(threadId);
+  setMessages(response.items.map(mapMessage).filter((item): item is ChatMessage => Boolean(item)));
+}
 
-function selectedUserMode(): UserMode {
-  return isTeenMode.value ? "teen" : "adult";
+async function loadApp() {
+  if (!accessToken.value) {
+    stage.value = "auth";
+    return;
+  }
+  try {
+    isLoadingApp.value = true;
+    const [user, threadList, memoryList, mood] = await Promise.all([
+      api.getCurrentUser(),
+      api.listThreads(),
+      api.listMemories(),
+      api.getMoodTrend("7d"),
+    ]);
+    username.value = user.nickname || user.username;
+    localStorage.setItem(USERNAME_KEY, username.value);
+    applyAgeRange(user.age_range);
+    threads.value = sortThreads(threadList.items);
+    memories.value = memoryList.items;
+    moodTrend.value = mood;
+    activeThreadId.value = activeThreadId.value || threads.value[0]?.thread_id || "";
+    if (activeThreadId.value) {
+      localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
+      await loadThreadMessages(activeThreadId.value);
+    }
+    stage.value = selectedStyle.value && selectedGoal.value ? "app" : "onboarding";
+  } catch (error) {
+    clearSession();
+    authError.value = error instanceof Error ? error.message : "登录状态已失效，请重新登录。";
+    stage.value = "auth";
+    await refreshCaptcha();
+  } finally {
+    isLoadingApp.value = false;
+  }
 }
 
 async function submitAuth() {
-  const username = authUsername.value.trim();
-  const password = authPassword.value;
-  const code = captchaCode.value.trim();
-
-  if (!username || password.length < 6 || !captchaId.value || !code || isAuthenticating.value) {
-    return;
-  }
-
+  if (!canSubmitAuth.value || isAuthenticating.value) return;
   try {
-    authError.value = "";
     isAuthenticating.value = true;
-
-    if (authMode.value === "register") {
-      const registered = await api.register({
-        username,
-        password,
-        age_range: toAgeRange(authSelectedAge.value),
-        captcha_id: captchaId.value,
-        captcha_code: code,
-      });
-      persistAuthSession(registered);
-      currentUsername.value = username;
-      localStorage.setItem("counseling_username", username);
-      selectedAge.value = authSelectedAge.value;
-      currentScreen.value = "onboarding";
-      return;
-    }
-
-    const loggedIn = await api.login({
-      username,
-      password,
+    authError.value = "";
+    const authPayload = {
+      username: authUsername.value.trim(),
+      password: authPassword.value,
       captcha_id: captchaId.value,
-      captcha_code: code,
-    });
-    persistAuthSession(loggedIn);
-    await loadAuthenticatedUser("home");
+      captcha_code: captchaCode.value.trim(),
+    };
+    if (authMode.value === "register") {
+      const response = await api.register({ ...authPayload, age_range: toAgeRange(authSelectedAge.value) });
+      persistAuth(response);
+      username.value = authPayload.username;
+      selectedAge.value = authSelectedAge.value;
+      stage.value = "onboarding";
+    } else {
+      const response = await api.login(authPayload);
+      persistAuth(response);
+      await loadApp();
+    }
   } catch (error) {
-    authError.value = error instanceof Error ? error.message : "认证失败，请检查用户名、密码和验证码。";
+    authError.value = error instanceof Error ? error.message : "认证失败，请检查输入。";
     captchaCode.value = "";
     await refreshCaptcha();
   } finally {
@@ -337,1796 +420,1138 @@ async function submitAuth() {
   }
 }
 
-async function ensureBackendSession() {
-  if (!accessToken.value || !currentUserId.value) {
-    currentScreen.value = "auth";
-    throw new Error("请先登录或注册后再开始对话。");
-  }
-
-  if (!activeThreadId.value) {
-    const thread = await api.startThread({
-      mode: "companion",
-      title: "我想倾诉",
-    });
-    activeThreadId.value = thread.thread_id;
-    localStorage.setItem("counseling_thread_id", thread.thread_id);
-  }
+function enterDemoMode() {
+  isDemoMode.value = true;
+  username.value = "小林";
+  selectedAge.value = "18-24";
+  selectedStyle.value ||= "gentle";
+  selectedGoal.value ||= "anxiety";
+  threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
+  demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
+  memories.value = demoMemories.map((item) => ({ ...item }));
+  moodTrend.value = { ...demoMoodTrend };
+  activeThreadId.value = threads.value[0]?.thread_id ?? "";
+  setMessages(demoMessagesByThread.value[activeThreadId.value] ?? []);
+  stage.value = "onboarding";
 }
 
-function goToTab(tab: MainTab) {
-  activeTab.value = tab;
-  lastMainTab.value = tab;
-  currentScreen.value = tab;
-}
-
-function goToOnboarding() {
-  if (!selectedAge.value) {
-    return;
-  }
-
-  currentScreen.value = "onboarding";
-}
-
-async function finishOnboarding(skip = false) {
-  if (!skip && !canEnterHome.value) {
-    return;
-  }
-
-  try {
-    apiError.value = "";
-    await ensureBackendSession();
-  } catch (error) {
-    apiError.value = error instanceof Error ? error.message : "API connection failed";
-  }
-
-  goToTab("home");
-}
-
-function openSafety() {
-  safetyAction.value = null;
-  lastMainTab.value = activeTab.value;
-  currentScreen.value = "safety";
-}
-
-function closeSafety() {
-  safetyAction.value = null;
-  currentScreen.value = lastMainTab.value;
-}
-
-async function resetExperience() {
-  const tokenToRevoke = refreshToken.value;
-  if (tokenToRevoke) {
-    try {
-      await api.logout({ refresh_token: tokenToRevoke });
-    } catch {
-      // Local session cleanup still wins if the server session is already expired.
-    }
-  }
-
-  selectedAge.value = null;
-  selectedStyle.value = null;
-  selectedGoal.value = null;
-  composerText.value = "";
-  safetyAction.value = null;
-  currentScreen.value = "auth";
+function finishOnboarding(skip = false) {
+  if (!skip && !canContinueOnboarding.value) return;
+  stage.value = "app";
   activeTab.value = "home";
-  lastMainTab.value = "home";
-  messages.value = [...initialMessages];
-  messageSeed.value = initialMessages.length + 1;
-  quickActions.value = [...defaultQuickActions];
-  apiError.value = "";
-  authUsername.value = "";
-  authPassword.value = "";
-  captchaCode.value = "";
-  clearAuthSession();
-  await refreshCaptcha();
 }
 
-function addMessage(role: ChatRole, text: string, streaming = false) {
+async function selectThread(threadId: string) {
+  activeThreadId.value = threadId;
+  localStorage.setItem(THREAD_ID_KEY, threadId);
+  activeTab.value = "chat";
+  await loadThreadMessages(threadId);
+  quickActions.value = inferContextualActions();
+}
+
+async function createThread(title = "新的对话") {
+  if (isDemoMode.value || !accessToken.value) {
+    const threadId = `local-${Date.now()}`;
+    threads.value = sortThreads([
+      {
+        thread_id: threadId,
+        title,
+        mode: "companion",
+        last_summary: null,
+        last_risk_level: "L0",
+        updated_at: new Date().toISOString(),
+      },
+      ...threads.value,
+    ]);
+    demoMessagesByThread.value = { ...demoMessagesByThread.value, [threadId]: [] };
+    activeThreadId.value = threadId;
+    setMessages([]);
+    return;
+  }
+  const thread = await api.startThread({ mode: "companion", title });
+  threads.value = sortThreads([
+    {
+      thread_id: thread.thread_id,
+      title: thread.title,
+      mode: thread.mode,
+      last_summary: null,
+      last_risk_level: "L0",
+      updated_at: thread.updated_at,
+    },
+    ...threads.value,
+  ]);
+  activeThreadId.value = thread.thread_id;
+  localStorage.setItem(THREAD_ID_KEY, thread.thread_id);
+  setMessages([]);
+}
+
+function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = null, streaming = false) {
   const id = messageSeed.value;
-  messages.value = [...messages.value, { id, role, text, streaming }];
+  messages.value = [...messages.value, { id, role, text, riskLevel, streaming, createdAt: new Date().toISOString() }];
   messageSeed.value += 1;
   return id;
 }
 
-function updateMessage(id: number, patch: Partial<Pick<ChatMessage, "text" | "streaming">>) {
+function updateMessage(id: number, patch: Partial<Pick<ChatMessage, "text" | "riskLevel" | "streaming">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
 }
 
 function appendMessageText(id: number, text: string) {
-  if (!text) {
-    return;
-  }
-
   messages.value = messages.value.map((message) =>
     message.id === id ? { ...message, text: `${message.text}${text}` } : message,
   );
 }
 
-function buildAssistantReply(message: string): string {
-  if (message.includes("睡") || message.includes("失眠")) {
-    return "睡不好的时候，很多情绪都会被放大。我们先不急着一次解决全部，只先分开看看：是入睡难、半夜醒，还是醒来后很累？";
-  }
-
-  if (message.includes("难受") || message.includes("倾诉")) {
-    return "我在听。你不用一下子说得很完整，只要把现在最压着你的那一小块感受说出来就可以。";
-  }
-
-  if (message.includes("梳理")) {
-    return "可以，我们先把事情拆成三块：发生了什么、你当时最强烈的感受、以及现在最需要被支持的部分。";
-  }
-
-  if (message.includes("建议") || message.includes("怎么办")) {
-    return "我可以陪你一起想下一步。不过在建议之前，我想先帮你找稳一点的落点：现在最需要的是情绪缓下来，还是事情先变清楚？";
-  }
-
-  if (message.includes("呼吸")) {
-    return "现在先把注意力放回身体。吸气四拍，停一拍，呼气六拍，我们先做三轮，不用追求做得标准。";
-  }
-
-  return "谢谢你愿意继续说。我先把这句话接住，再和你一起看接下来更需要的是安抚、梳理，还是现实支持。";
-}
-
-function normalizeSuggestedActions(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const seen = new Set<string>();
-  const actions: string[] = [];
-  for (const item of value) {
-    if (typeof item !== "string") {
-      continue;
-    }
-
-    const action = item.trim().replace(/\s+/g, " ").slice(0, 18);
-    if (!action || seen.has(action)) {
-      continue;
-    }
-
-    seen.add(action);
-    actions.push(action);
-    if (actions.length >= 4) {
-      break;
-    }
-  }
-
-  return actions;
-}
-
-function inferQuickActions(message: string, riskLevel: RiskLevel | null): string[] {
-  if (riskLevel === "L2" || riskLevel === "L3") {
-    return ["打开 SOS", "联系可信的人", "陪我撑过10分钟", "先远离危险物"];
-  }
-
-  if (message.includes("睡") || message.includes("失眠") || message.includes("醒")) {
-    return ["帮我找睡不着原因", "做睡前放松", "明天怎么恢复精力", "继续聊睡眠"];
-  }
-
-  if (message.includes("焦虑") || message.includes("慌") || message.includes("呼吸") || message.includes("紧张")) {
-    return ["带我稳定60秒", "帮我找触发点", "给我一个小步骤", "继续陪我待一会"];
-  }
-
-  if (message.includes("关系") || message.includes("朋友") || message.includes("家人") || message.includes("同学")) {
-    return ["帮我理清关系", "先听我说完", "给我一句怎么开口", "看看我在意什么"];
-  }
-
-  if (message.includes("建议") || message.includes("怎么办") || message.includes("选择")) {
-    return ["给我一个小步骤", "帮我拆成选项", "先判断最急的事", "继续分析利弊"];
-  }
-
-  if (message.includes("难受") || message.includes("卡住") || message.includes("压力")) {
-    return ["继续说最卡的点", "帮我梳理压力源", "先稳定一下", "给我一点支持"];
-  }
-
-  return [...defaultQuickActions];
-}
-
-function updateQuickActions(value: unknown, message: string, riskLevel: RiskLevel | null) {
-  const suggestedActions = normalizeSuggestedActions(value);
-  quickActions.value = suggestedActions.length > 0 ? suggestedActions : inferQuickActions(message, riskLevel);
-}
-
-function readRiskLevel(value: unknown): RiskLevel | null {
-  if (value === "L0" || value === "L1" || value === "L2" || value === "L3") {
-    return value;
-  }
-
+function inferRisk(message: string): RiskLevel | null {
+  if (message.includes("自杀") || message.includes("不想活") || message.includes("结束自己")) return "L3";
+  if (message.includes("不安全") || message.includes("撑不住") || message.includes("伤害自己")) return "L2";
+  if (message.includes("崩溃") || message.includes("绝望")) return "L1";
   return null;
 }
 
-async function submitMessage(text = composerText.value) {
-  const nextMessage = text.trim();
+function inferActions(message: string, risk: RiskLevel | null) {
+  if (risk === "L2" || risk === "L3") return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
+  if (message.includes("睡")) return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
+  if (message.includes("焦虑") || message.includes("慌")) return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
+  return [...defaultQuickActions];
+}
 
-  if (!nextMessage || isSending.value) {
+function inferContextualActions(message = "", risk: RiskLevel | null = null) {
+  if (risk === "L2" || risk === "L3") {
+    return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
+  }
+
+  const joinedContext = `${contextText.value} ${message}`;
+
+  if (joinedContext.includes("开会") || joinedContext.includes("发言") || joinedContext.includes("被点名")) {
+    if (message.includes("梳理")) {
+      return ["拆成会前步骤", "找最怕的场景", "准备一句开口", "先稳住身体"];
+    }
+
+    if (message.includes("建议")) {
+      return ["会前 3 分钟怎么做", "准备备用句子", "降低发言压力", "会后怎么恢复"];
+    }
+
+    return ["先稳住身体", "找最怕的场景", "准备一句发言", "拆成会前步骤"];
+  }
+
+  if (joinedContext.includes("睡") || joinedContext.includes("失眠") || joinedContext.includes("睡不着")) {
+    if (message.includes("梳理")) {
+      return ["找睡前触发点", "分清担心和事实", "写下明天待办", "做睡前收尾"];
+    }
+
+    return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
+  }
+
+  if (joinedContext.includes("关系") || joinedContext.includes("家人") || joinedContext.includes("朋友")) {
+    return ["理清对方的话", "说出我的感受", "准备一句边界", "看我真正想要什么"];
+  }
+
+  if (joinedContext.includes("焦虑") || joinedContext.includes("慌") || joinedContext.includes("紧张")) {
+    return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
+  }
+
+  return inferActions(message, risk);
+}
+
+function buildReply(message: string) {
+  if (message.includes("睡")) return "睡不好的时候，很多情绪都会被放大。我们先不急着解决全部，只分开看看：是入睡难、半夜醒，还是醒来后很累？";
+  if (message.includes("焦虑") || message.includes("慌")) return "焦虑来的时候，身体常常比想法更快。我们先让身体退一步，再看事情本身。";
+  if (message.includes("关系") || message.includes("家人")) return "关系里的难受，通常不只是一句话，而是那句话碰到了你很在意的东西。你最怕哪种感受被忽略？";
+  if (message.includes("呼吸")) return "现在先把注意力放回身体。吸气四拍，停一拍，呼气六拍。先做三轮，不用追求标准。";
+  return "我在这里。你不用一下子说得很完整，先把压在胸口最重的那一小块说出来就够了。";
+}
+
+function syncLocalThread(summary: string, risk: RiskLevel | null) {
+  if (!activeThreadId.value) return;
+  threads.value = sortThreads(
+    threads.value.map((thread) =>
+      thread.thread_id === activeThreadId.value
+        ? { ...thread, last_summary: summary, last_risk_level: risk ?? thread.last_risk_level, updated_at: new Date().toISOString() }
+        : thread,
+    ),
+  );
+  demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
+}
+
+async function submitMessage(text = composerText.value) {
+  const content = text.trim();
+  if (!content || isSending.value) return;
+  composerText.value = "";
+  activeTab.value = "chat";
+  if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
+  addMessage("user", content);
+  const localRisk = inferRisk(content);
+  quickActions.value = inferContextualActions(content, localRisk);
+
+  if (isDemoMode.value || !accessToken.value || activeThreadId.value.startsWith("local-")) {
+    const reply = buildReply(content);
+    addMessage("assistant", reply, localRisk);
+    syncLocalThread(reply, localRisk);
+    if (localRisk === "L2" || localRisk === "L3") openSafety();
     return;
   }
 
-  composerText.value = "";
-
-  if (currentScreen.value !== "chat") {
-    goToTab("chat");
-  }
-
-  addMessage("user", nextMessage);
-  quickActions.value = inferQuickActions(nextMessage, null);
-  let assistantMessageId: number | null = null;
-  let streamedText = "";
-  let finalRiskLevel: RiskLevel | null = null;
-
+  let assistantId: number | null = null;
+  let streamed = "";
+  let risk: RiskLevel | null = null;
   try {
-    apiError.value = "";
     isSending.value = true;
-    await ensureBackendSession();
-    assistantMessageId = addMessage("assistant", "", true);
-    const streamingMessageId = assistantMessageId;
+    assistantId = addMessage("assistant", "", null, true);
     await api.streamMessage(
       activeThreadId.value,
-      {
-        user_id: currentUserId.value,
-        content: nextMessage,
-        input_type: "text",
-        user_mode: selectedUserMode(),
-      },
+      { user_id: currentUserId.value, content, input_type: "text", user_mode: selectedUserMode() },
       (event, data) => {
-        if (event === "token") {
-          const chunk = typeof data.text === "string" ? data.text : "";
-          streamedText += chunk;
-          appendMessageText(streamingMessageId, chunk);
-          return;
+        if (event === "token" && typeof data.text === "string") {
+          streamed += data.text;
+          appendMessageText(assistantId as number, data.text);
         }
-
         if (event === "final") {
-          finalRiskLevel = readRiskLevel(data.risk_level);
-          updateQuickActions(data.suggested_actions, nextMessage, finalRiskLevel);
-          const finalText = typeof data.assistant_text === "string" ? data.assistant_text : "";
-          if (!streamedText && finalText) {
-            streamedText = finalText;
-            updateMessage(streamingMessageId, { text: finalText });
+          risk = data.risk_level === "L1" || data.risk_level === "L2" || data.risk_level === "L3" ? data.risk_level : "L0";
+          const actions = Array.isArray(data.suggested_actions) ? data.suggested_actions.filter((item): item is string => typeof item === "string") : [];
+          quickActions.value = actions.length ? actions.slice(0, 4) : inferContextualActions(content, risk);
+          if (!streamed && typeof data.assistant_text === "string") {
+            streamed = data.assistant_text;
+            updateMessage(assistantId as number, { text: streamed, riskLevel: risk });
           }
         }
       },
     );
-
-    if (!streamedText) {
-      updateMessage(streamingMessageId, { text: buildAssistantReply(nextMessage) });
+    if (!streamed && assistantId) {
+      streamed = buildReply(content);
+      updateMessage(assistantId, { text: streamed, riskLevel: risk });
     }
-
-    if (finalRiskLevel === "L2" || finalRiskLevel === "L3") {
-      openSafety();
-    }
+    syncLocalThread(streamed, risk);
+    if (risk === "L2" || risk === "L3") openSafety();
   } catch (error) {
-    apiError.value = error instanceof Error ? error.message : "API connection failed";
-    quickActions.value = inferQuickActions(nextMessage, finalRiskLevel);
-    if (assistantMessageId === null) {
-      addMessage("assistant", buildAssistantReply(nextMessage));
-    } else if (!streamedText) {
-      updateMessage(assistantMessageId, { text: buildAssistantReply(nextMessage) });
-    }
+    apiError.value = error instanceof Error ? error.message : "发送失败，已使用本地回复。";
+    const reply = buildReply(content);
+    quickActions.value = inferContextualActions(content, localRisk);
+    if (assistantId) updateMessage(assistantId, { text: reply, riskLevel: localRisk });
+    else addMessage("assistant", reply, localRisk);
+    syncLocalThread(reply, localRisk);
+    if (localRisk === "L2" || localRisk === "L3") openSafety();
   } finally {
-    if (assistantMessageId !== null) {
-      updateMessage(assistantMessageId, { streaming: false });
-    }
+    if (assistantId) updateMessage(assistantId, { streaming: false });
     isSending.value = false;
   }
 }
 
-function startQuickCheckIn() {
-  const starter = "我现在有点难受，想倾诉";
-  const latestUserMessage = [...messages.value].reverse().find((message) => message.role === "user")?.text;
-
-  goToTab("chat");
-
-  if (latestUserMessage !== starter) {
-    submitMessage(starter);
-  }
+async function startQuickCheckIn() {
+  await createThread("我想倾诉");
+  await submitMessage("我现在有点难受，想倾诉");
 }
+
+function openSafety() {
+  safetyAction.value = null;
+  isSafetyOpen.value = true;
+}
+
+function closeSafety() {
+  safetyAction.value = null;
+  isSafetyOpen.value = false;
+}
+
+async function logout() {
+  if (!isDemoMode.value && refreshToken.value) {
+    try {
+      await api.logout({ refresh_token: refreshToken.value });
+    } catch {
+      // Local cleanup is still required when the server session is expired.
+    }
+  }
+  clearSession();
+  isDemoMode.value = false;
+  selectedAge.value = null;
+  selectedStyle.value = null;
+  selectedGoal.value = null;
+  threads.value = [];
+  memories.value = [];
+  moodTrend.value = null;
+  setMessages([]);
+  stage.value = "auth";
+  await refreshCaptcha();
+}
+
+onMounted(async () => {
+  try {
+    if (!accessToken.value && refreshToken.value) await refreshAccessToken();
+    if (accessToken.value) await loadApp();
+    else await refreshCaptcha();
+  } finally {
+    isBooting.value = false;
+  }
+});
 </script>
 
 <template>
-  <main class="app-shell">
-    <section class="device-frame">
-      <div class="device-inner">
-        <div class="status-strip">
-          <span>9:41</span>
-          <div class="status-icons">
-            <span class="status-dot"></span>
-            <span class="status-dot status-dot--wide"></span>
-            <span class="status-battery"></span>
-          </div>
+  <main class="app-canvas">
+    <section class="phone-shell" :class="{ 'phone-shell--modal': isSafetyOpen }">
+      <div v-if="isBooting" class="boot-screen">
+        <span class="brand-dot">宁语</span>
+        <h1>正在进入</h1>
+        <p>把最近的会话和状态放回原位。</p>
+      </div>
+
+      <section v-else-if="stage === 'auth'" class="app-screen auth-screen">
+        <header class="auth-hero">
+          <span class="brand-dot">宁语</span>
+          <h1>今晚想先聊哪一点？</h1>
+          <p>登录后继续你的会话；也可以先进入演示模式看完整 App 流程。</p>
+        </header>
+
+        <div class="segmented">
+          <button :class="{ active: authMode === 'login' }" type="button" @click="authMode = 'login'">登录</button>
+          <button :class="{ active: authMode === 'register' }" type="button" @click="authMode = 'register'">注册</button>
         </div>
 
-        <section v-if="currentScreen === 'auth'" class="screen-panel screen-panel--auth">
-          <div class="screen-content screen-content--centered auth-content">
-            <div class="intro-block">
-              <span class="eyebrow">欢迎回来</span>
-              <h1 class="screen-title">先确认是你，再慢慢开始。</h1>
-              <p class="screen-description">
-                你的对话会保存在自己的账户里。登录后可以继续上次的陪伴，也可以重新开始。
-              </p>
-            </div>
+        <form class="auth-form" @submit.prevent="submitAuth">
+          <label class="field">
+            <span>用户名</span>
+            <input v-model="authUsername" type="text" autocomplete="username" placeholder="请输入用户名" />
+          </label>
 
-            <section class="auth-card">
-              <div class="auth-tabs">
-                <button
-                  :class="['auth-tab', { 'auth-tab--active': authMode === 'login' }]"
-                  type="button"
-                  @click="setAuthMode('login')"
-                >
-                  登录
-                </button>
-                <button
-                  :class="['auth-tab', { 'auth-tab--active': authMode === 'register' }]"
-                  type="button"
-                  @click="setAuthMode('register')"
-                >
-                  注册
-                </button>
-              </div>
+          <label class="field">
+            <span>密码</span>
+            <input v-model="authPassword" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+          </label>
 
-              <form class="auth-form" @submit.prevent="submitAuth">
-                <label class="auth-field">
-                  <span>用户名</span>
-                  <input
-                    v-model="authUsername"
-                    class="auth-input"
-                    type="text"
-                    autocomplete="username"
-                    placeholder="3-24 位字母、数字或下划线"
-                  />
-                </label>
-
-                <label class="auth-field">
-                  <span>密码</span>
-                  <input
-                    v-model="authPassword"
-                    class="auth-input"
-                    type="password"
-                    autocomplete="current-password"
-                    placeholder="至少 6 位"
-                  />
-                </label>
-
-                <div class="auth-field">
-                  <span>图形验证码</span>
-                  <div class="captcha-row">
-                    <button class="captcha-image" type="button" :disabled="isCaptchaLoading" @click="refreshCaptcha">
-                      <img v-if="captchaImageDataUrl" :src="captchaImageDataUrl" alt="图形验证码" />
-                      <span v-else>{{ isCaptchaLoading ? "加载中..." : "点击刷新" }}</span>
-                    </button>
-                    <input
-                      v-model="captchaCode"
-                      class="auth-input captcha-input"
-                      type="text"
-                      inputmode="text"
-                      autocomplete="off"
-                      placeholder="输入验证码"
-                    />
-                  </div>
-                </div>
-
-                <div v-if="authMode === 'register'" class="auth-field">
-                  <span>年龄段</span>
-                  <div class="auth-age-grid">
-                    <button
-                      v-for="option in ageOptions"
-                      :key="option.id"
-                      :class="['soft-chip soft-chip--button', { 'soft-chip--active': authSelectedAge === option.id }]"
-                      type="button"
-                      @click="authSelectedAge = option.id"
-                    >
-                      {{ option.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <p v-if="authError" class="auth-error">{{ authError }}</p>
-
-                <button
-                  class="primary-button"
-                  type="submit"
-                  :disabled="
-                    isAuthenticating || !authUsername.trim() || authPassword.length < 6 || !captchaId || !captchaCode.trim()
-                  "
-                >
-                  {{ isAuthenticating ? "请稍等..." : authMode === "login" ? "登录并继续" : "创建账户" }}
-                </button>
-              </form>
-            </section>
-
-            <p class="auth-note">我们只用这些信息来保护你的会话和安全分流，不会把它展示给其他人。</p>
+          <div v-if="authMode === 'register'" class="age-list">
+            <button
+              v-for="option in ageOptions"
+              :key="option.id"
+              :class="['age-option', { active: authSelectedAge === option.id }]"
+              type="button"
+              @click="authSelectedAge = option.id"
+            >
+              <strong>{{ option.label }}</strong>
+              <span>{{ option.description }}</span>
+            </button>
           </div>
-        </section>
 
-        <section v-else-if="currentScreen === 'ageGate'" class="screen-panel">
-          <div class="screen-content screen-content--centered">
-            <div class="intro-block">
-              <span class="eyebrow">心理陪伴</span>
-              <h1 class="screen-title">欢迎，请问你的年龄段是？</h1>
-              <p class="screen-description">
-                我们会根据你的年龄自动调整陪伴方式和安全提醒，让体验更合适。
-              </p>
-            </div>
-
-            <div class="option-stack">
-              <button
-                v-for="option in ageOptions"
-                :key="option.id"
-                :class="['pill-option', { 'pill-option--active': selectedAge === option.id }]"
-                type="button"
-                @click="selectedAge = option.id"
-              >
-                <span>{{ option.label }}</span>
+          <label class="field">
+            <span>验证码</span>
+            <div class="captcha-line">
+              <button class="captcha-image" type="button" :disabled="isCaptchaLoading" @click="refreshCaptcha">
+                <img v-if="captchaImageDataUrl" :src="captchaImageDataUrl" alt="验证码" />
+                <span v-else>{{ isCaptchaLoading ? "加载中" : "刷新" }}</span>
               </button>
+              <input v-model="captchaCode" type="text" autocomplete="off" placeholder="验证码" />
             </div>
+          </label>
 
-            <p class="micro-copy">13-17 岁将自动进入青少年保护模式</p>
+          <p v-if="authError" class="notice notice--error">{{ authError }}</p>
+
+          <button class="primary-action" type="submit" :disabled="!canSubmitAuth || isAuthenticating">
+            {{ isAuthenticating ? "处理中..." : authMode === "login" ? "登录" : "创建账户" }}
+          </button>
+          <button class="secondary-action" type="button" @click="enterDemoMode">先看演示</button>
+        </form>
+      </section>
+
+      <section v-else-if="stage === 'onboarding'" class="app-screen onboarding-screen">
+        <header class="screen-header">
+          <span class="top-label">{{ selectedAgeLabel }} · {{ modeLabel }}</span>
+          <h1>你希望我怎么陪你？</h1>
+          <p>先选一种交流语气，再选一个这段时间更需要的方向。</p>
+        </header>
+
+        <div class="choice-section">
+          <h2>陪伴风格</h2>
+          <button
+            v-for="option in styleOptions"
+            :key="option.id"
+            :class="['choice-row', { active: selectedStyle === option.id }]"
+            type="button"
+            @click="selectedStyle = option.id"
+          >
+            <strong>{{ option.label }}</strong>
+            <span>{{ option.description }}</span>
+          </button>
+        </div>
+
+        <div class="choice-section">
+          <h2>当前目标</h2>
+          <button
+            v-for="option in goalOptions"
+            :key="option.id"
+            :class="['choice-row', { active: selectedGoal === option.id }]"
+            type="button"
+            @click="selectedGoal = option.id"
+          >
+            <strong>{{ option.label }}</strong>
+            <span>{{ option.description }}</span>
+          </button>
+        </div>
+
+        <footer class="sticky-actions">
+          <button class="primary-action" type="button" :disabled="!canContinueOnboarding" @click="finishOnboarding()">
+            进入首页
+          </button>
+          <button class="text-action" type="button" @click="finishOnboarding(true)">以后再选</button>
+        </footer>
+      </section>
+
+      <section v-else class="app-screen main-screen">
+        <header class="app-header">
+          <div>
+            <span class="top-label">{{ modeLabel }}</span>
+            <h1 v-if="activeTab === 'home'">晚上好，{{ userName }}</h1>
+            <h1 v-else-if="activeTab === 'chat'">{{ activeThread?.title || "对话" }}</h1>
+            <h1 v-else>我的</h1>
           </div>
+          <button class="sos-button" type="button" @click="openSafety">SOS</button>
+        </header>
 
-          <div class="footer-panel footer-panel--single">
-            <button class="primary-button" :disabled="!selectedAge" type="button" @click="goToOnboarding">
-              下一步
+        <p v-if="apiError" class="notice notice--error">{{ apiError }}</p>
+
+        <section v-if="activeTab === 'home'" class="tab-page">
+          <button class="mood-card" type="button" @click="startQuickCheckIn">
+            <span>现在开始</span>
+            <strong>我有点难受，想倾诉</strong>
+            <small>点一下进入对话，我会先听你说。</small>
+          </button>
+
+          <section class="summary-card">
+            <div class="card-title">
+              <h2>最近状态</h2>
+              <span>{{ moodTrend?.top_tags?.join(" / ") || "暂无标签" }}</span>
+            </div>
+            <p>{{ moodSummary }}</p>
+          </section>
+
+          <section class="section-block">
+            <div class="section-title">
+              <h2>继续聊</h2>
+              <button type="button" @click="createThread()">新建</button>
+            </div>
+            <button
+              v-for="thread in threads"
+              :key="thread.thread_id"
+              class="thread-card"
+              type="button"
+              @click="selectThread(thread.thread_id)"
+            >
+              <div>
+                <strong>{{ thread.title }}</strong>
+                <p>{{ thread.last_summary || "还没有摘要，打开后继续。" }}</p>
+              </div>
+              <span :class="['risk-pill', riskClass(thread.last_risk_level)]">{{ riskLabel(thread.last_risk_level) }}</span>
             </button>
-          </div>
+            <p v-if="threads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
+          </section>
         </section>
 
-        <section v-else-if="currentScreen === 'onboarding'" class="screen-panel">
-          <div class="screen-header">
-            <span class="step-pill">Step 2 of 3</span>
-            <h1 class="screen-title">你希望我主要怎么陪你？</h1>
-            <p class="screen-description">先选一种陪伴风格，再选一个这段时间你更需要的方向。</p>
-          </div>
-
-          <div class="screen-content screen-content--scroll">
-            <section class="section-block">
-              <div class="section-copy">
-                <h2 class="section-title">陪伴风格</h2>
-                <p class="section-description">不做死板表单，先挑一个你更舒服的交流方式。</p>
-              </div>
-
-              <div class="selection-grid selection-grid--two">
-                <button
-                  v-for="option in styleOptions"
-                  :key="option.id"
-                  :class="['choice-card', { 'choice-card--active': selectedStyle === option.id }]"
-                  type="button"
-                  @click="selectedStyle = option.id"
-                >
-                  <strong>{{ option.label }}</strong>
-                  <span>{{ option.description }}</span>
-                </button>
-              </div>
-            </section>
-
-            <section class="section-block">
-              <div class="section-copy">
-                <h2 class="section-title">使用目的</h2>
-                <p class="section-description">告诉我你现在更希望得到哪一类支持。</p>
-              </div>
-
-              <div class="selection-grid">
-                <button
-                  v-for="option in goalOptions"
-                  :key="option.id"
-                  :class="['choice-card', { 'choice-card--active': selectedGoal === option.id }]"
-                  type="button"
-                  @click="selectedGoal = option.id"
-                >
-                  <strong>{{ option.label }}</strong>
-                  <span>{{ option.description }}</span>
-                </button>
-              </div>
-            </section>
-          </div>
-
-          <div class="footer-panel">
-            <button class="primary-button" :disabled="!canEnterHome" type="button" @click="finishOnboarding()">
-              继续
-            </button>
-            <button class="text-button" type="button" @click="finishOnboarding(true)">以后再选</button>
-          </div>
-        </section>
-
-        <section v-else-if="currentScreen === 'home'" class="screen-panel screen-panel--main">
-          <header class="top-bar">
-            <div class="title-group">
-              <p class="eyebrow eyebrow--compact">今天也在这里陪你</p>
-              <h1 class="screen-title screen-title--compact">{{ greeting }}，{{ userName }}</h1>
-              <span class="mode-badge">{{ modeLabel }}</span>
-            </div>
-
-            <button class="sos-button" type="button" @click="openSafety">SOS</button>
-          </header>
-
-          <div class="screen-content screen-content--scroll screen-content--main">
-            <button class="hero-card" type="button" @click="startQuickCheckIn">
-              <div class="hero-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M12 4.75c.9 2.37 2.77 4.24 5.14 5.14C14.77 10.8 12.9 12.67 12 15.04c-.9-2.37-2.77-4.24-5.14-5.15C9.23 8.99 11.1 7.12 12 4.75Z"
-                    fill="currentColor"
-                  />
-                  <path d="M18.25 4.75 19 6.5l1.75.75L19 8l-.75 1.75L17.5 8l-1.75-.75 1.75-.75.75-1.75Z" fill="currentColor" />
-                </svg>
-              </div>
-
-              <div class="hero-copy">
-                <span class="card-kicker">快捷入口</span>
-                <h2>我现在有点难受，想倾诉</h2>
-                <p>点一下就开始对话。我会先陪你把情绪放下来，再慢慢整理发生了什么。</p>
-              </div>
-
-              <span class="hero-arrow">→</span>
-            </button>
-
-            <section class="surface-card">
-              <div class="card-header">
-                <div>
-                  <span class="card-kicker">继续上次对话</span>
-                  <h2 class="card-title">上次你提到最近睡眠不太稳定...</h2>
-                </div>
-
-                <button class="icon-button" type="button" @click="goToTab('chat')">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M13 6.5 18.5 12 13 17.5M5.5 12h12.5"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="1.8"
-                    />
-                  </svg>
-                </button>
-              </div>
-
-              <p class="surface-copy">{{ latestUserSummary }}</p>
-            </section>
-
-            <section class="surface-card">
-              <span class="card-kicker">当前设定</span>
-              <div v-if="currentPreferenceChips.length" class="chip-row">
-                <span v-for="chip in currentPreferenceChips" :key="chip" class="soft-chip">{{ chip }}</span>
-              </div>
-              <p v-else class="surface-copy">还没有设置偏好，我会先用温和、少打断的方式陪你。</p>
-            </section>
-          </div>
-
-          <nav class="bottom-nav">
+        <section v-else-if="activeTab === 'chat'" class="tab-page chat-page">
+          <div v-if="threads.length > 0" class="thread-tabs">
             <button
-              :class="['nav-button', { 'nav-button--active': activeTab === 'home' }]"
+              v-for="thread in threads"
+              :key="thread.thread_id"
+              :class="{ active: activeThreadId === thread.thread_id }"
               type="button"
-              @click="goToTab('home')"
+              @click="selectThread(thread.thread_id)"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M4.75 10.5 12 4.75l7.25 5.75V18a1.75 1.75 0 0 1-1.75 1.75H6.5A1.75 1.75 0 0 1 4.75 18v-7.5Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>首页</span>
+              {{ thread.title }}
             </button>
-
-            <button
-              :class="['nav-button', { 'nav-button--active': activeTab === 'chat' }]"
-              type="button"
-              @click="goToTab('chat')"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M6.5 7.25h11A1.75 1.75 0 0 1 19.25 9v6A1.75 1.75 0 0 1 17.5 16.75h-6l-3.75 3v-3H6.5A1.75 1.75 0 0 1 4.75 15V9A1.75 1.75 0 0 1 6.5 7.25Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>对话</span>
-            </button>
-
-            <button
-              :class="['nav-button', { 'nav-button--active': activeTab === 'profile' }]"
-              type="button"
-              @click="goToTab('profile')"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 12.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM6.75 18.25a5.25 5.25 0 0 1 10.5 0"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>我的</span>
-            </button>
-          </nav>
-        </section>
-
-        <section v-else-if="currentScreen === 'chat'" class="screen-panel screen-panel--main screen-panel--chat">
-          <header class="chat-header">
-            <button class="icon-button" type="button" @click="goToTab('home')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M14.5 6.5 9 12l5.5 5.5"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-            </button>
-
-            <div class="chat-title">
-              <h1>宁语</h1>
-              <p>你可以慢慢说，我会先听你说完。</p>
-            </div>
-
-            <button class="sos-button" type="button" @click="openSafety">SOS</button>
-          </header>
+          </div>
 
           <div ref="messageListRef" class="message-list">
+            <div v-if="messages.length === 0" class="empty-chat">
+              <h2>从一句话开始</h2>
+              <p>把此刻最明显的感受写下来就可以。</p>
+            </div>
             <article
               v-for="message in messages"
               :key="message.id"
-              :class="[
-                'message-bubble',
-                message.role === 'assistant' ? 'message-bubble--assistant' : 'message-bubble--user',
-              ]"
+              :class="['message', message.role === 'user' ? 'message--user' : 'message--assistant']"
             >
-              <span>{{ message.text }}</span>
-              <span v-if="message.streaming" class="stream-cursor" aria-hidden="true"></span>
+              <p>{{ message.text || "..." }}</p>
+              <span v-if="message.streaming" class="typing-dot"></span>
             </article>
           </div>
 
-          <div class="quick-action-row">
-            <button
-              v-for="action in quickActions"
-              :key="action"
-              class="quick-pill"
-              type="button"
-              @click="submitMessage(action)"
-            >
+          <div class="quick-actions">
+            <button v-for="action in quickActions" :key="action" type="button" @click="submitMessage(action)">
               {{ action }}
             </button>
           </div>
 
           <form class="composer" @submit.prevent="submitMessage()">
-            <input v-model="composerText" type="text" placeholder="把此刻最难受的感受写下来..." />
-            <button class="composer-send" type="submit" :disabled="!composerText.trim() || isSending">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M5 12 19 5l-3 14-4.5-5-6.5-2Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-            </button>
+            <input v-model="composerText" type="text" placeholder="写下此刻的感受..." />
+            <button type="submit" :disabled="!composerText.trim() || isSending">{{ isSending ? "..." : "发送" }}</button>
           </form>
-
-          <nav class="bottom-nav">
-            <button class="nav-button" type="button" @click="goToTab('home')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M4.75 10.5 12 4.75l7.25 5.75V18a1.75 1.75 0 0 1-1.75 1.75H6.5A1.75 1.75 0 0 1 4.75 18v-7.5Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>首页</span>
-            </button>
-
-            <button class="nav-button nav-button--active" type="button" @click="goToTab('chat')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M6.5 7.25h11A1.75 1.75 0 0 1 19.25 9v6A1.75 1.75 0 0 1 17.5 16.75h-6l-3.75 3v-3H6.5A1.75 1.75 0 0 1 4.75 15V9A1.75 1.75 0 0 1 6.5 7.25Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>对话</span>
-            </button>
-
-            <button class="nav-button" type="button" @click="goToTab('profile')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 12.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM6.75 18.25a5.25 5.25 0 0 1 10.5 0"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>我的</span>
-            </button>
-          </nav>
         </section>
 
-        <section v-else-if="currentScreen === 'profile'" class="screen-panel screen-panel--main">
-          <header class="top-bar">
-            <div class="title-group">
-              <p class="eyebrow eyebrow--compact">个人设置</p>
-              <h1 class="screen-title screen-title--compact">我的偏好</h1>
-              <span class="mode-badge">{{ modeLabel }}</span>
+        <section v-else class="tab-page profile-page">
+          <section class="profile-card">
+            <div class="avatar">{{ userName.slice(0, 1) }}</div>
+            <div>
+              <h2>{{ userName }}</h2>
+              <p>{{ selectedAgeLabel }} · {{ modeLabel }}</p>
             </div>
+          </section>
 
-            <button class="sos-button" type="button" @click="openSafety">SOS</button>
-          </header>
+          <section class="summary-card">
+            <div class="card-title">
+              <h2>陪伴设置</h2>
+              <span>自动保存</span>
+            </div>
+            <p>{{ selectedStyleLabel }} · {{ selectedGoalLabel }}</p>
+          </section>
 
-          <div class="screen-content screen-content--scroll screen-content--main">
-            <section class="surface-card">
-              <span class="card-kicker">当前资料</span>
-
-              <div class="profile-row">
-                <span>年龄段</span>
-                <strong>{{ selectedAgeLabel }}</strong>
-              </div>
-
-              <div class="profile-row">
-                <span>陪伴风格</span>
-                <strong>{{ selectedStyleLabel }}</strong>
-              </div>
-
-              <div class="profile-row">
-                <span>当前目标</span>
-                <strong>{{ selectedGoalLabel }}</strong>
-              </div>
-            </section>
-
-            <section class="surface-card">
-              <span class="card-kicker">保护说明</span>
-              <p class="surface-copy">
-                13-17 岁用户会自动启用更积极的风险提醒和现实求助建议，以保证体验更安全。
-              </p>
-              <button class="secondary-button" type="button" @click="resetExperience">退出登录</button>
-            </section>
+          <div class="choice-section compact">
+            <h2>风格</h2>
+            <button
+              v-for="option in styleOptions"
+              :key="option.id"
+              :class="['choice-row', { active: selectedStyle === option.id }]"
+              type="button"
+              @click="selectedStyle = option.id"
+            >
+              <strong>{{ option.label }}</strong>
+              <span>{{ option.description }}</span>
+            </button>
           </div>
 
-          <nav class="bottom-nav">
-            <button class="nav-button" type="button" @click="goToTab('home')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M4.75 10.5 12 4.75l7.25 5.75V18a1.75 1.75 0 0 1-1.75 1.75H6.5A1.75 1.75 0 0 1 4.75 18v-7.5Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>首页</span>
-            </button>
+          <section class="section-block">
+            <div class="section-title">
+              <h2>记忆摘要</h2>
+            </div>
+            <article v-for="item in memories" :key="item.memory_id" class="memory-item">{{ item.content }}</article>
+            <p v-if="memories.length === 0" class="empty-copy">还没有记忆摘要。</p>
+          </section>
 
-            <button class="nav-button" type="button" @click="goToTab('chat')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M6.5 7.25h11A1.75 1.75 0 0 1 19.25 9v6A1.75 1.75 0 0 1 17.5 16.75h-6l-3.75 3v-3H6.5A1.75 1.75 0 0 1 4.75 15V9A1.75 1.75 0 0 1 6.5 7.25Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>对话</span>
-            </button>
-
-            <button class="nav-button nav-button--active" type="button" @click="goToTab('profile')">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 12.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM6.75 18.25a5.25 5.25 0 0 1 10.5 0"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-width="1.8"
-                />
-              </svg>
-              <span>我的</span>
-            </button>
-          </nav>
+          <button class="secondary-action logout-action" type="button" @click="logout">
+            {{ isDemoMode ? "退出演示" : "退出登录" }}
+          </button>
         </section>
 
-        <section v-else class="screen-panel screen-panel--safety">
-          <header class="safety-header">
-            <button class="ghost-button" type="button" @click="closeSafety">返回</button>
-          </header>
+        <nav class="bottom-nav" aria-label="底部导航">
+          <button :class="{ active: activeTab === 'home' }" type="button" @click="activeTab = 'home'">首页</button>
+          <button :class="{ active: activeTab === 'chat' }" type="button" @click="activeTab = 'chat'">对话</button>
+          <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
+        </nav>
+      </section>
 
-          <div class="screen-content screen-content--centered safety-content">
-            <div class="intro-block intro-block--tight">
-              <span class="eyebrow eyebrow--warning">安全支持</span>
-              <h1 class="screen-title">如果你现在觉得不安全，请不要一个人扛着。</h1>
-              <p class="screen-description">
-                先优先联系现实中的人。你不需要独自撑住这一刻，我会把选择放在你面前。
-              </p>
-            </div>
+      <section v-if="isSafetyOpen" class="safety-screen" role="dialog" aria-modal="true">
+        <header>
+          <button class="text-action" type="button" @click="closeSafety">返回</button>
+          <span>SOS</span>
+        </header>
+        <div class="safety-content">
+          <h1>如果你现在觉得不安全，请不要一个人扛着。</h1>
+          <p>先联系现实中的人。你不需要独自处理这一刻。</p>
+          <button class="alert-action" type="button" @click="safetyAction = 'trusted'">联系可信任的人</button>
+          <button class="secondary-action" type="button" @click="safetyAction = 'resources'">查看本地求助资源</button>
+          <button class="secondary-action" type="button" @click="safetyAction = 'breathing'">做 60 秒稳定呼吸</button>
 
-            <div class="action-stack">
-              <button class="amber-button" type="button" @click="safetyAction = 'trusted'">
-                联系现实中的可信任的大人
-              </button>
-              <button class="warm-button" type="button" @click="safetyAction = 'resources'">查看本地求助资源</button>
-              <button class="outline-button outline-button--amber" type="button" @click="safetyAction = 'breathing'">
-                做 60 秒稳定呼吸练习
-              </button>
-            </div>
-
-            <div v-if="safetyAction" class="safety-card">
-              <template v-if="safetyAction === 'trusted'">
-                <h2>现在可以直接发出这句话</h2>
-                <p>“我现在状态不太好，能不能陪我一下？我想现在就联系你。”</p>
-              </template>
-
-              <template v-else-if="safetyAction === 'resources'">
-                <h2>优先考虑这些现实支持</h2>
-                <p>家人或其他可信任的大人、学校心理老师/辅导员、以及当地急救或心理援助热线。</p>
-              </template>
-
-              <template v-else>
-                <h2>60 秒呼吸节奏</h2>
-                <p>吸气 4 秒，停 1 秒，呼气 6 秒。重复 3 次，先把身体从绷紧里拉回来一点。</p>
-              </template>
-            </div>
-          </div>
-        </section>
-      </div>
+          <article v-if="safetyAction" class="safety-note">
+            <template v-if="safetyAction === 'trusted'">
+              <strong>可以直接发出这句话</strong>
+              <p>“我现在状态不太好，能不能陪我一下？我想现在就联系你。”</p>
+            </template>
+            <template v-else-if="safetyAction === 'resources'">
+              <strong>优先考虑现实支持</strong>
+              <p>家人、可信任的大人、学校心理老师、当地急救或心理援助热线。</p>
+            </template>
+            <template v-else>
+              <strong>60 秒节奏</strong>
+              <p>吸气 4 秒，停 1 秒，呼气 6 秒，重复 3 次。</p>
+            </template>
+          </article>
+        </div>
+      </section>
     </section>
   </main>
 </template>
 
 <style>
-.app-shell {
+.app-canvas {
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.device-frame {
-  width: min(100%, 430px);
-  min-height: min(880px, calc(100vh - 48px));
-  border-radius: 36px;
-  background: #dbe4ea;
-  padding: 14px;
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.16);
-}
-
-.device-inner {
-  min-height: 100%;
-  border-radius: 28px;
-  overflow: hidden;
-  background: var(--app-background);
-  display: flex;
-  flex-direction: column;
-}
-
-.status-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  letter-spacing: 0.03em;
-}
-
-.status-icons {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(100, 116, 139, 0.8);
-}
-
-.status-dot--wide {
-  width: 14px;
-}
-
-.status-battery {
-  width: 18px;
-  height: 10px;
-  border-radius: 4px;
-  border: 1.5px solid rgba(100, 116, 139, 0.8);
-  position: relative;
-}
-
-.status-battery::after {
-  content: "";
-  position: absolute;
-  right: -4px;
-  top: 2px;
-  width: 2px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(100, 116, 139, 0.8);
-}
-
-.screen-panel {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  animation: screen-enter 0.28s ease;
-}
-
-.screen-panel--main {
-  background: var(--app-background);
-}
-
-.screen-panel--chat {
-  background: #f8fafc;
-}
-
-.screen-panel--safety {
-  background: var(--amber-background);
-}
-
-.screen-panel--auth {
+  display: grid;
+  place-items: center;
   background:
-    radial-gradient(circle at 16% 12%, rgba(20, 184, 166, 0.14), transparent 34%),
-    linear-gradient(180deg, #fffaf2 0%, #f0fdfa 100%);
+    radial-gradient(circle at 20% 0%, rgba(213, 235, 226, 0.8), transparent 28%),
+    linear-gradient(180deg, #f7f6f1 0%, #edf3ef 100%);
 }
 
-.screen-header,
-.top-bar,
-.chat-header,
-.safety-header {
-  padding: 12px 24px 0;
+.phone-shell {
+  position: relative;
+  width: min(100%, 430px);
+  height: min(100vh, 900px);
+  min-height: 760px;
+  overflow: hidden;
+  background: var(--app-bg);
+  color: var(--text-main);
+  box-shadow: 0 24px 70px rgba(38, 57, 52, 0.18);
 }
 
-.screen-content {
-  padding: 24px;
-}
-
-.screen-content--centered {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 28px;
-}
-
-.screen-content--scroll {
-  flex: 1;
-  min-height: 0;
+.app-screen,
+.boot-screen,
+.safety-screen {
+  height: 100%;
   overflow-y: auto;
 }
 
-.screen-content--main {
-  padding-top: 8px;
-}
-
-.intro-block {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.intro-block--tight {
-  gap: 14px;
-}
-
-.auth-content {
-  justify-content: flex-start;
-  padding-top: 42px;
-}
-
-.auth-card {
-  border: 1px solid rgba(20, 184, 166, 0.14);
-  border-radius: 30px;
-  background: rgba(255, 255, 255, 0.82);
-  padding: 18px;
-  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(18px);
-}
-
-.auth-tabs {
+.boot-screen {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 6px;
-  border-radius: 999px;
-  background: #f8fafc;
-}
-
-.auth-tab {
-  border-radius: 999px;
-  padding: 11px 14px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-weight: 800;
-}
-
-.auth-tab--active {
-  background: #ffffff;
-  color: var(--accent-strong);
-  box-shadow: var(--soft-shadow);
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
+  place-content: center;
   gap: 14px;
-  margin-top: 18px;
+  padding: 32px;
+  text-align: center;
 }
 
-.auth-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.auth-input {
-  width: 100%;
-  border: 1px solid var(--border-soft);
-  border-radius: 20px;
-  background: #ffffff;
-  padding: 14px 16px;
-  color: var(--text-primary);
-  box-shadow: var(--soft-shadow);
-}
-
-.auth-age-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.captcha-row {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 10px;
+.brand-dot,
+.top-label {
+  width: fit-content;
+  display: inline-flex;
   align-items: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.auth-screen,
+.onboarding-screen {
+  padding: 28px 22px;
+}
+
+.auth-hero {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.auth-hero h1,
+.screen-header h1,
+.app-header h1,
+.safety-content h1 {
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.16;
+  letter-spacing: 0;
+}
+
+.auth-hero p,
+.screen-header p,
+.summary-card p,
+.thread-card p,
+.profile-card p,
+.safety-content p,
+.empty-copy,
+.empty-chat p,
+.memory-item {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--surface-muted);
+  margin-bottom: 18px;
+}
+
+.segmented button,
+.bottom-nav button {
+  min-height: 44px;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.segmented button.active,
+.bottom-nav button.active {
+  background: #ffffff;
+  color: var(--teal-dark);
+  box-shadow: var(--shadow-soft);
+}
+
+.auth-form,
+.choice-section,
+.tab-page,
+.section-block {
+  display: grid;
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span,
+.choice-section h2,
+.section-title h2,
+.card-title h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.field input,
+.composer input {
+  min-height: 52px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 0 14px;
+  color: var(--text-main);
+}
+
+.captcha-line {
+  display: grid;
+  grid-template-columns: 124px 1fr;
+  gap: 10px;
 }
 
 .captcha-image {
-  width: 150px;
-  height: 52px;
-  overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid rgba(20, 184, 166, 0.18);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 13px;
-  font-weight: 800;
-  box-shadow: var(--soft-shadow);
+  min-height: 52px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid var(--line);
 }
 
 .captcha-image img {
-  display: block;
-  width: 100%;
-  height: 100%;
+  max-width: 112px;
+  max-height: 44px;
 }
 
-.captcha-input {
-  text-transform: uppercase;
+.age-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
-.auth-error {
-  margin: 0;
+.age-option,
+.choice-row {
+  min-height: 76px;
+  border: 1px solid var(--line);
   border-radius: 18px;
-  background: #fff7ed;
-  padding: 12px 14px;
-  color: var(--amber-text-strong);
+  background: #ffffff;
+  padding: 14px;
+  display: grid;
+  gap: 5px;
+  text-align: left;
+}
+
+.age-option.active,
+.choice-row.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.age-option strong,
+.choice-row strong,
+.thread-card strong {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.age-option span,
+.choice-row span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.primary-action,
+.secondary-action,
+.alert-action {
+  min-height: 52px;
+  border-radius: 17px;
+  padding: 0 16px;
+  font-weight: 800;
+}
+
+.primary-action {
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.primary-action:disabled {
+  background: #c7d5cf;
+  color: #f8faf8;
+  cursor: not-allowed;
+}
+
+.secondary-action {
+  background: #ffffff;
+  color: var(--text-main);
+  border: 1px solid var(--line);
+}
+
+.alert-action {
+  background: var(--amber);
+  color: #4b3215;
+}
+
+.text-action {
+  width: fit-content;
+  background: transparent;
+  color: var(--teal-dark);
+  font-weight: 800;
+}
+
+.notice {
+  margin: 0;
+  border-radius: 14px;
+  padding: 11px 12px;
   font-size: 13px;
   line-height: 1.5;
 }
 
-.auth-note {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  line-height: 1.7;
-  text-align: center;
+.notice--error {
+  background: #fff1e7;
+  color: #9a4a25;
 }
 
-.eyebrow {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.screen-header {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 22px;
 }
 
-.eyebrow--compact {
-  padding: 0;
-  background: transparent;
-  color: var(--text-tertiary);
+.choice-section.compact {
+  gap: 10px;
 }
 
-.eyebrow--warning {
-  background: #fff7ed;
-  color: var(--amber-text-strong);
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  background: linear-gradient(180deg, rgba(250, 249, 246, 0), var(--app-bg) 28%);
 }
 
-.screen-title {
-  margin: 0;
-  font-size: 30px;
-  line-height: 1.2;
-  letter-spacing: -0.03em;
+.main-screen {
+  padding: 20px 18px 96px;
 }
 
-.screen-title--compact {
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.app-header h1 {
+  margin-top: 9px;
   font-size: 28px;
 }
 
-.screen-description {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.7;
-}
-
-.option-stack,
-.action-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pill-option {
-  width: 100%;
-  border: 1px solid var(--border-soft);
-  background: var(--surface);
-  color: var(--text-primary);
-  padding: 18px 20px;
-  border-radius: 999px;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 700;
-  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
-}
-
-.pill-option--active {
-  border-color: var(--accent-strong);
-  background: var(--accent);
-  color: #ffffff;
-}
-
-.micro-copy {
-  margin: 0;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.footer-panel {
-  padding: 16px 24px calc(24px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: linear-gradient(to top, rgba(250, 249, 246, 0.96), rgba(250, 249, 246, 0));
-}
-
-.footer-panel--single {
-  gap: 0;
-}
-
-.primary-button,
-.secondary-button,
-.amber-button,
-.warm-button,
-.outline-button,
-.ghost-button,
-.text-button,
-.sos-button,
-.icon-button,
-.nav-button,
-.quick-pill,
-.composer-send,
-.hero-card,
-.choice-card {
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.primary-button,
-.secondary-button,
-.amber-button,
-.warm-button,
-.outline-button,
-.ghost-button {
-  width: 100%;
-  border-radius: 999px;
-  padding: 16px 18px;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.primary-button {
-  background: var(--accent);
-  color: #ffffff;
-  box-shadow: 0 12px 24px rgba(13, 148, 136, 0.2);
-}
-
-.primary-button:disabled,
-.composer-send:disabled {
-  background: #cbd5e1;
-  color: #f8fafc;
-  box-shadow: none;
-}
-
-.text-button {
-  width: auto;
-  align-self: center;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.step-pill {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: #ffffff;
-  box-shadow: var(--soft-shadow);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.section-block {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.section-block + .section-block {
-  margin-top: 28px;
-}
-
-.section-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.section-title {
-  margin: 0;
-  font-size: 18px;
-}
-
-.section-description {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.selection-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.selection-grid--two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.choice-card {
-  border: 1px solid var(--border-soft);
-  background: var(--surface);
-  border-radius: 24px;
-  padding: 18px 16px;
-  text-align: left;
-  box-shadow: var(--soft-shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.choice-card strong {
-  font-size: 15px;
-}
-
-.choice-card span {
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.choice-card--active {
-  border-color: #14b8a6;
-  background: var(--accent-soft);
-  box-shadow: 0 16px 30px rgba(20, 184, 166, 0.14);
-}
-
-.top-bar,
-.chat-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.title-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mode-badge {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .sos-button {
-  width: auto;
+  min-width: 56px;
+  height: 40px;
   border-radius: 999px;
-  padding: 10px 14px;
-  background: #fff7ed;
-  border: 1px solid #fcd9a8;
-  color: var(--amber-text-strong);
-  font-size: 13px;
+  background: #fff2d7;
+  color: #9b5d12;
+  font-weight: 900;
+}
+
+.mood-card {
+  min-height: 164px;
+  border-radius: 28px;
+  padding: 22px;
+  text-align: left;
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  background: linear-gradient(135deg, #dff3ec, #f0f7e7);
+  color: var(--text-main);
+  box-shadow: var(--shadow-soft);
+}
+
+.mood-card span,
+.mood-card small {
+  color: var(--teal-dark);
   font-weight: 800;
 }
 
-.hero-card {
-  width: 100%;
-  border-radius: 28px;
-  border: 1px solid rgba(15, 118, 110, 0.08);
-  background: linear-gradient(90deg, #f0fdfa 0%, #ecfdf5 100%);
-  padding: 20px;
+.mood-card strong {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.summary-card,
+.profile-card,
+.thread-card,
+.memory-item {
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+.card-title,
+.section-title {
   display: flex;
+  justify-content: space-between;
+  gap: 12px;
   align-items: center;
-  gap: 16px;
-  box-shadow: 0 18px 38px rgba(15, 118, 110, 0.1);
 }
 
-.hero-icon {
-  flex: 0 0 auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 18px;
+.card-title span,
+.section-title button {
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thread-card {
+  width: 100%;
   display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.88);
-  color: var(--accent-strong);
-}
-
-.hero-icon svg {
-  width: 26px;
-  height: 26px;
-}
-
-.hero-copy {
-  flex: 1;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
   text-align: left;
 }
 
-.hero-copy h2,
-.card-title {
-  margin: 6px 0 8px;
-  font-size: 20px;
-  line-height: 1.35;
-}
-
-.hero-copy p,
-.surface-copy {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.hero-arrow {
-  color: var(--accent-strong);
-  font-size: 24px;
-}
-
-.surface-card {
-  background: var(--surface);
-  border-radius: 24px;
-  padding: 20px;
-  box-shadow: var(--card-shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.card-kicker {
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-}
-
-.icon-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: #f8fafc;
-  color: var(--text-primary);
-}
-
-.icon-button svg,
-.nav-button svg,
-.composer-send svg {
-  width: 20px;
-  height: 20px;
-}
-
-.chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.soft-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: var(--text-secondary);
+.thread-card p {
+  margin-top: 5px;
   font-size: 13px;
-  font-weight: 700;
 }
 
-.soft-chip--button {
-  border: 1px solid transparent;
+.risk-pill {
+  align-self: start;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 900;
 }
 
-.soft-chip--active {
-  border-color: rgba(13, 148, 136, 0.24);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+.risk--steady {
+  background: #e8f4ee;
+  color: #28745d;
 }
 
-.bottom-nav {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.risk--watch {
+  background: #edf0d9;
+  color: #7a6d26;
+}
+
+.risk--warning {
+  background: #fff2d7;
+  color: #9b5d12;
+}
+
+.risk--critical {
+  background: #ffe7dd;
+  color: #a33d21;
+}
+
+.chat-page {
+  height: calc(100dvh - 268px);
+  min-height: 440px;
+  grid-template-rows: auto 1fr auto auto;
+}
+
+.thread-tabs,
+.quick-actions {
+  display: flex;
   gap: 8px;
-  padding: 14px 18px calc(16px + env(safe-area-inset-bottom));
-  border-top: 1px solid rgba(226, 232, 240, 0.9);
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(16px);
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
-.nav-button {
-  border-radius: 20px;
-  padding: 10px 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+.thread-tabs button,
+.quick-actions button {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: #ffffff;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
+  font-weight: 800;
   font-size: 12px;
-  font-weight: 700;
 }
 
-.nav-button--active {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.chat-title {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 4px;
-  padding-top: 4px;
-}
-
-.chat-title h1 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.chat-title p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
+.thread-tabs button.active {
+  color: var(--teal-dark);
+  background: var(--mint-soft);
+  border-color: var(--teal);
 }
 
 .message-list {
-  flex: 1;
-  min-height: 0;
   overflow-y: auto;
-  padding: 18px 20px 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-right: 2px;
 }
 
-.message-bubble {
-  max-width: 80%;
-  padding: 14px 16px;
-  border-radius: 24px;
-  font-size: 15px;
-  line-height: 1.7;
+.message {
+  position: relative;
+  max-width: 84%;
+  border-radius: 22px;
+  padding: 13px 15px;
 }
 
-.stream-cursor {
-  display: inline-block;
-  width: 0.45em;
-  height: 1.1em;
-  margin-left: 3px;
-  border-radius: 999px;
-  vertical-align: -0.16em;
-  background: var(--accent);
-  animation: stream-cursor-blink 0.9s ease-in-out infinite;
+.message p {
+  margin: 0;
+  line-height: 1.65;
 }
 
-.message-bubble--assistant {
+.message--assistant {
   align-self: flex-start;
   background: #ffffff;
-  border: 1px solid #edf2f7;
-  color: var(--text-primary);
-  border-top-left-radius: 10px;
-  box-shadow: var(--soft-shadow);
+  border-top-left-radius: 7px;
 }
 
-.message-bubble--user {
+.message--user {
   align-self: flex-end;
-  background: var(--accent);
+  background: var(--teal);
   color: #ffffff;
-  border-top-right-radius: 10px;
+  border-top-right-radius: 7px;
 }
 
-.message-bubble--user .stream-cursor {
-  background: #ffffff;
-}
-
-.quick-action-row {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 0 20px 14px;
-}
-
-.quick-action-row::-webkit-scrollbar,
-.message-list::-webkit-scrollbar,
-.screen-content--scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.quick-pill {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 10px 14px;
-  background: #ffffff;
-  border: 1px solid #dbe7ea;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 700;
+.typing-dot {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  animation: blink 0.8s infinite alternate;
 }
 
 .composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.composer button {
+  min-width: 64px;
+  border-radius: 16px;
+  background: var(--teal);
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.composer button:disabled {
+  background: #c7d5cf;
+}
+
+.empty-chat {
+  margin: auto;
+  text-align: center;
+}
+
+.profile-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 20px 14px;
+  gap: 14px;
 }
 
-.composer input {
-  flex: 1;
-  height: 52px;
-  border-radius: 999px;
-  border: 1px solid var(--border-soft);
-  background: #ffffff;
-  padding: 0 18px;
-  color: var(--text-primary);
-  font-size: 15px;
-  box-shadow: var(--soft-shadow);
-}
-
-.composer input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.composer-send {
-  flex: 0 0 auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #ffffff;
+.avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 22px;
   display: grid;
   place-items: center;
-  box-shadow: 0 12px 24px rgba(13, 148, 136, 0.22);
+  background: var(--teal);
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 900;
 }
 
-.profile-row {
+.profile-card h2 {
+  margin: 0 0 4px;
+}
+
+.logout-action {
+  margin-top: 4px;
+}
+
+.bottom-nav {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 16px 40px rgba(38, 57, 52, 0.12);
+}
+
+.safety-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--safety-bg);
+  padding: 22px;
+}
+
+.safety-screen header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-
-.profile-row strong {
-  color: var(--text-primary);
-  font-size: 15px;
-}
-
-.secondary-button {
-  background: #f8fafc;
-  color: var(--text-primary);
-  border: 1px solid var(--border-soft);
-}
-
-.safety-header {
-  display: flex;
-  justify-content: flex-start;
-}
-
-.ghost-button {
-  width: auto;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--amber-text-strong);
+  align-items: center;
+  font-weight: 900;
+  color: #8a5517;
 }
 
 .safety-content {
-  gap: 22px;
+  min-height: calc(100% - 42px);
+  display: grid;
+  align-content: center;
+  gap: 14px;
 }
 
-.amber-button {
-  background: #f59e0b;
-  color: #ffffff;
-  box-shadow: 0 14px 28px rgba(245, 158, 11, 0.24);
+.safety-note {
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 16px;
 }
 
-.warm-button {
-  background: #ffffff;
-  color: var(--amber-text-strong);
-  border: 1px solid #fcd9a8;
+.safety-note p {
+  margin-bottom: 0;
 }
 
-.outline-button {
-  background: transparent;
-  border: 1px solid var(--border-soft);
-  color: var(--text-primary);
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.45);
+  outline-offset: 2px;
 }
 
-.outline-button--amber {
-  border-color: #f3c77f;
-  color: var(--amber-text-strong);
-}
-
-.safety-card {
-  width: 100%;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.85);
-  padding: 20px;
-  box-shadow: 0 18px 34px rgba(180, 83, 9, 0.12);
-}
-
-.safety-card h2 {
-  margin: 0 0 10px;
-  font-size: 18px;
-}
-
-.safety-card p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.7;
-}
-
-.pill-option:hover,
-.primary-button:not(:disabled):hover,
-.secondary-button:hover,
-.amber-button:hover,
-.warm-button:hover,
-.outline-button:hover,
-.ghost-button:hover,
-.text-button:hover,
-.sos-button:hover,
-.icon-button:hover,
-.quick-pill:hover,
-.composer-send:not(:disabled):hover,
-.hero-card:hover,
-.choice-card:hover,
-.nav-button:hover {
-  transform: translateY(-1px);
-}
-
-@keyframes screen-enter {
+@keyframes blink {
   from {
-    opacity: 0;
-    transform: translateY(10px);
+    opacity: 0.35;
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
-@keyframes stream-cursor-blink {
-  0%,
-  100% {
-    opacity: 0.18;
+@media (max-width: 520px) {
+  .app-canvas {
+    display: block;
   }
 
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (max-width: 640px) {
-  .app-shell {
-    padding: 0;
-  }
-
-  .device-frame {
+  .phone-shell {
     width: 100%;
+    height: 100vh;
     min-height: 100vh;
-    border-radius: 0;
-    padding: 0;
     box-shadow: none;
-    background: transparent;
   }
 
-  .device-inner {
-    border-radius: 0;
-  }
-}
-
-@media (max-width: 360px) {
-  .screen-title {
-    font-size: 28px;
-  }
-
-  .selection-grid--two {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-card {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .captcha-row {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-arrow {
-    display: none;
+  .chat-page {
+    height: calc(100dvh - 268px);
   }
 }
 </style>

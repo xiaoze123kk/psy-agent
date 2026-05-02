@@ -1,17 +1,16 @@
 :root {
-  --app-background: #faf9f6;
-  --surface: #ffffff;
-  --accent: #0d9488;
-  --accent-strong: #0f766e;
-  --accent-soft: #f0fdfa;
-  --text-primary: #1f2937;
-  --text-secondary: #64748b;
-  --text-tertiary: #94a3b8;
-  --border-soft: #e2e8f0;
-  --soft-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-  --card-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
-  --amber-background: #fffbeb;
-  --amber-text-strong: #b45309;
+  --app-bg: #faf9f6;
+  --surface-muted: #eef4f0;
+  --mint-soft: #e3f5ef;
+  --teal: #0f766e;
+  --teal-dark: #115e59;
+  --amber: #f6c86f;
+  --safety-bg: #fff7e8;
+  --text-main: #1f2937;
+  --text-muted: #64748b;
+  --line: #dce7e2;
+  --shadow-soft: 0 12px 30px rgba(38, 57, 52, 0.08);
+  font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", sans-serif;
 }
 
 * {
@@ -21,14 +20,14 @@
 html,
 body,
 #app {
-  margin: 0;
   min-height: 100%;
+  margin: 0;
 }
 
 body {
-  background: var(--app-background);
-  color: var(--text-primary);
-  font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: var(--app-bg);
+  color: var(--text-main);
+  font-family: inherit;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
