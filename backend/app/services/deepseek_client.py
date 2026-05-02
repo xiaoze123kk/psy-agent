@@ -22,7 +22,13 @@ class DeepSeekClient:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    async def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.6) -> str | None:
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.6,
+        max_tokens: int = 420,
+    ) -> str | None:
         if not self.is_configured:
             return None
 
@@ -30,7 +36,7 @@ class DeepSeekClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": 420,
+            "max_tokens": max_tokens,
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",

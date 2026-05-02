@@ -38,6 +38,16 @@ interface ChatMessage {
   streaming?: boolean;
 }
 
+interface KnowledgeChatMessage {
+  id: number;
+  role: ChatRole;
+  text: string;
+  answer?: AskKnowledgeResponse["answer"];
+  relatedArticles?: KnowledgeSearchItem[];
+  riskLevel?: RiskLevel | null;
+  streaming?: boolean;
+}
+
 const ACCESS_TOKEN_KEY = "counseling_access_token";
 const REFRESH_TOKEN_KEY = "counseling_refresh_token";
 const USER_ID_KEY = "counseling_user_id";
@@ -70,6 +80,7 @@ const goalOptions: SelectOption[] = [
 ];
 
 const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
+const knowledgePromptChips = ["焦虑发作时怎么办", "睡前脑子停不下来", "什么是边界感", "我是不是太敏感了"];
 
 const demoThreads: ThreadListItem[] = [
   {
@@ -183,14 +194,21 @@ const memories = ref<MemoryItem[]>([]);
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const knowledgeItems = ref<KnowledgeSearchItem[]>([]);
 const selectedKnowledgeArticle = ref<KnowledgeArticleResponse | null>(null);
-const knowledgeAnswer = ref<AskKnowledgeResponse | null>(null);
+const knowledgeMessages = ref<KnowledgeChatMessage[]>([
+  {
+    id: 1,
+    role: "assistant",
+    text: "今天想弄清楚哪件事？焦虑、睡眠、关系、情绪调节，都可以慢慢说。",
+  },
+]);
 const quickActions = ref([...defaultQuickActions]);
 const composerText = ref("");
-const knowledgeQuery = ref("焦虑");
-const knowledgeQuestion = ref("");
+const knowledgeDraft = ref("");
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
+const knowledgeMessageSeed = ref(2);
 const messageListRef = ref<HTMLElement | null>(null);
+const knowledgeListRef = ref<HTMLElement | null>(null);
 const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
 
 const apiClient = new ApiClient({
@@ -235,6 +253,16 @@ watch(
     await nextTick();
     if (messageListRef.value) {
       messageListRef.value.scrollTop = messageListRef.value.scrollHeight;
+    }
+  },
+);
+
+watch(
+  () => knowledgeMessages.value.map((message) => `${message.id}:${message.text}`).join("\n"),
+  async () => {
+    await nextTick();
+    if (knowledgeListRef.value) {
+      knowledgeListRef.value.scrollTop = knowledgeListRef.value.scrollHeight;
     }
   },
 );
@@ -664,17 +692,25 @@ async function startQuickCheckIn() {
   await submitMessage("我现在有点难受，想倾诉");
 }
 
-async function searchKnowledge(query = knowledgeQuery.value) {
+function addKnowledgeMessage(message: Omit<KnowledgeChatMessage, "id">) {
+  const id = knowledgeMessageSeed.value;
+  knowledgeMessages.value = [...knowledgeMessages.value, { ...message, id }];
+  knowledgeMessageSeed.value += 1;
+  return id;
+}
+
+function updateKnowledgeMessage(id: number, patch: Partial<KnowledgeChatMessage>) {
+  knowledgeMessages.value = knowledgeMessages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
+}
+
+async function searchKnowledge(query = "焦虑") {
   try {
     isKnowledgeLoading.value = true;
     apiError.value = "";
     const response = await api.searchKnowledge(query.trim());
     knowledgeItems.value = response.items;
-    if (response.items[0]) {
-      await openKnowledgeArticle(response.items[0].article_id);
-    } else {
+    if (!response.items[0]) {
       selectedKnowledgeArticle.value = null;
-      knowledgeAnswer.value = null;
     }
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "知识库加载失败。";
@@ -688,8 +724,6 @@ async function openKnowledgeArticle(articleId: string) {
     isKnowledgeLoading.value = true;
     apiError.value = "";
     selectedKnowledgeArticle.value = await api.getKnowledgeArticle(articleId);
-    knowledgeAnswer.value = null;
-    knowledgeQuestion.value = selectedKnowledgeArticle.value.title;
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "知识详情加载失败。";
   } finally {
@@ -697,29 +731,50 @@ async function openKnowledgeArticle(articleId: string) {
   }
 }
 
-async function askKnowledge() {
-  const question = (knowledgeQuestion.value || selectedKnowledgeArticle.value?.title || knowledgeQuery.value).trim();
+async function askKnowledge(questionText = knowledgeDraft.value) {
+  const question = questionText.trim();
   if (!question) return;
+  knowledgeDraft.value = "";
+  addKnowledgeMessage({ role: "user", text: question });
+  const assistantId = addKnowledgeMessage({ role: "assistant", text: "我先查一下知识库。", streaming: true });
   try {
     isKnowledgeLoading.value = true;
     apiError.value = "";
-    knowledgeAnswer.value = await api.askKnowledge({
+    const response = await api.askKnowledge({
       question,
       use_my_context: Boolean(accessToken.value),
       thread_id: activeThreadId.value || null,
     });
-    if (knowledgeAnswer.value.risk_level === "L2" || knowledgeAnswer.value.risk_level === "L3") {
+    knowledgeItems.value = response.related_articles;
+    updateKnowledgeMessage(assistantId, {
+      text: response.answer.summary_30s,
+      answer: response.answer,
+      relatedArticles: response.related_articles,
+      riskLevel: response.risk_level,
+      streaming: false,
+    });
+    if (response.risk_level === "L2" || response.risk_level === "L3") {
       openSafety();
     }
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "知识问答失败。";
+    updateKnowledgeMessage(assistantId, {
+      text: "这次没有拿到稳定的知识库回答，可以换个更具体的问题再试一次。",
+      streaming: false,
+    });
   } finally {
     isKnowledgeLoading.value = false;
   }
 }
 
 async function continueKnowledgeChat() {
-  const topic = selectedKnowledgeArticle.value?.title || knowledgeQuestion.value || knowledgeQuery.value;
+  const topic =
+    [...knowledgeMessages.value]
+      .reverse()
+      .find((message) => message.role === "user")
+      ?.text.trim() ||
+    selectedKnowledgeArticle.value?.title ||
+    "";
   if (!topic.trim()) return;
   await submitMessage(`我想继续聊聊这个心理知识：${topic}`);
 }
@@ -880,7 +935,7 @@ onMounted(async () => {
             <span class="top-label">{{ modeLabel }}</span>
             <h1 v-if="activeTab === 'home'">晚上好，{{ userName }}</h1>
             <h1 v-else-if="activeTab === 'chat'">{{ activeThread?.title || "对话" }}</h1>
-            <h1 v-else-if="activeTab === 'knowledge'">知识库</h1>
+            <h1 v-else-if="activeTab === 'knowledge'">知识问答</h1>
             <h1 v-else>我的</h1>
           </div>
           <button class="sos-button" type="button" @click="openSafety">SOS</button>
@@ -966,68 +1021,81 @@ onMounted(async () => {
         </section>
 
         <section v-else-if="activeTab === 'knowledge'" class="tab-page knowledge-page">
-          <form class="knowledge-search" @submit.prevent="searchKnowledge()">
-            <input v-model="knowledgeQuery" type="search" placeholder="搜索焦虑、睡眠、关系、边界感" />
-            <button type="submit" :disabled="isKnowledgeLoading">{{ isKnowledgeLoading ? "..." : "搜索" }}</button>
-          </form>
+          <section class="knowledge-agent">
+            <div class="knowledge-agent__avatar">知</div>
+            <div>
+              <span>知识问答</span>
+              <h2>今天想弄清楚什么？</h2>
+            </div>
+          </section>
 
-          <div class="knowledge-layout">
-            <section class="knowledge-list" aria-label="知识条目">
-              <button
-                v-for="item in knowledgeItems"
-                :key="item.article_id"
-                :class="['knowledge-item', { active: selectedKnowledgeArticle?.article_id === item.article_id }]"
-                type="button"
-                @click="openKnowledgeArticle(item.article_id)"
-              >
-                <strong>{{ item.title }}</strong>
-                <span>{{ item.summary_30s }}</span>
-              </button>
-              <p v-if="knowledgeItems.length === 0 && !isKnowledgeLoading" class="empty-copy">暂时没有匹配条目。</p>
-            </section>
-
-            <article v-if="selectedKnowledgeArticle" class="summary-card knowledge-detail">
-              <div class="card-title">
-                <h2>{{ selectedKnowledgeArticle.title }}</h2>
-                <span>{{ selectedKnowledgeArticle.category }}</span>
-              </div>
-              <section>
-                <strong>30 秒看懂</strong>
-                <p>{{ selectedKnowledgeArticle.summary_30s }}</p>
-              </section>
-              <section>
-                <strong>3 分钟解释</strong>
-                <p>{{ selectedKnowledgeArticle.explanation_3min }}</p>
-              </section>
-              <section>
-                <strong>可以怎么做</strong>
-                <ul>
-                  <li v-for="action in selectedKnowledgeArticle.actions" :key="action">{{ action }}</li>
-                </ul>
-              </section>
-              <section>
-                <strong>什么时候找现实帮助</strong>
-                <ul>
-                  <li v-for="item in selectedKnowledgeArticle.seek_help_when" :key="item">{{ item }}</li>
-                </ul>
-              </section>
+          <div ref="knowledgeListRef" class="knowledge-chat" aria-label="知识问答消息">
+            <article
+              v-for="message in knowledgeMessages"
+              :key="message.id"
+              :class="['knowledge-message', message.role === 'user' ? 'knowledge-message--user' : 'knowledge-message--assistant']"
+            >
+              <p>{{ message.text }}</p>
+              <template v-if="message.answer">
+                <p class="knowledge-explanation">{{ message.answer.explanation_3min }}</p>
+                <section v-if="message.answer.actions.length" class="knowledge-section">
+                  <strong>可以先做</strong>
+                  <ul>
+                    <li v-for="action in message.answer.actions" :key="action">{{ action }}</li>
+                  </ul>
+                </section>
+                <section v-if="message.answer.seek_help_when.length" class="knowledge-section knowledge-section--safety">
+                  <strong>需要现实支持时</strong>
+                  <ul>
+                    <li v-for="item in message.answer.seek_help_when" :key="item">{{ item }}</li>
+                  </ul>
+                </section>
+                <section v-if="message.relatedArticles?.length" class="knowledge-sources" aria-label="回答来源">
+                  <span>来源</span>
+                  <button
+                    v-for="item in message.relatedArticles"
+                    :key="item.article_id"
+                    type="button"
+                    @click="openKnowledgeArticle(item.article_id)"
+                  >
+                    {{ item.title }}
+                  </button>
+                </section>
+                <button class="text-action knowledge-continue" type="button" @click="continueKnowledgeChat">
+                  带到咨询对话里聊
+                </button>
+              </template>
+              <span v-if="message.streaming" class="typing-dot"></span>
             </article>
           </div>
 
-          <form class="knowledge-ask" @submit.prevent="askKnowledge">
-            <input v-model="knowledgeQuestion" type="text" placeholder="问一个和这个主题有关的问题" />
-            <button type="submit" :disabled="isKnowledgeLoading">{{ isKnowledgeLoading ? "..." : "问一下" }}</button>
-          </form>
+          <div class="knowledge-prompts">
+            <button
+              v-for="prompt in knowledgePromptChips"
+              :key="prompt"
+              type="button"
+              :disabled="isKnowledgeLoading"
+              @click="askKnowledge(prompt)"
+            >
+              {{ prompt }}
+            </button>
+          </div>
 
-          <article v-if="knowledgeAnswer" class="summary-card knowledge-answer">
+          <article v-if="selectedKnowledgeArticle" class="knowledge-drawer">
             <div class="card-title">
-              <h2>回答</h2>
-              <span>{{ knowledgeAnswer.risk_level }}</span>
+              <h2>{{ selectedKnowledgeArticle.title }}</h2>
+              <button type="button" @click="selectedKnowledgeArticle = null">收起</button>
             </div>
-            <p>{{ knowledgeAnswer.answer.summary_30s }}</p>
-            <p>{{ knowledgeAnswer.answer.explanation_3min }}</p>
-            <button class="secondary-action" type="button" @click="continueKnowledgeChat">继续聊聊这个主题</button>
+            <p>{{ selectedKnowledgeArticle.summary_30s }}</p>
+            <p>{{ selectedKnowledgeArticle.explanation_3min }}</p>
           </article>
+
+          <form class="knowledge-composer" @submit.prevent="askKnowledge()">
+            <input v-model="knowledgeDraft" type="text" placeholder="直接问：我最近总是焦虑怎么办？" />
+            <button type="submit" :disabled="!knowledgeDraft.trim() || isKnowledgeLoading">
+              {{ isKnowledgeLoading ? "..." : "发送" }}
+            </button>
+          </form>
         </section>
 
         <section v-else class="tab-page profile-page">
@@ -1249,8 +1317,7 @@ onMounted(async () => {
 
 .field input,
 .composer input,
-.knowledge-search input,
-.knowledge-ask input {
+.knowledge-composer input {
   min-height: 52px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1508,11 +1575,24 @@ onMounted(async () => {
 }
 
 .thread-tabs,
-.quick-actions {
+.quick-actions,
+.knowledge-prompts {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.thread-tabs,
+.quick-actions,
+.knowledge-prompts {
+  scrollbar-width: none;
+}
+
+.thread-tabs::-webkit-scrollbar,
+.quick-actions::-webkit-scrollbar,
+.knowledge-prompts::-webkit-scrollbar {
+  display: none;
 }
 
 .thread-tabs button,
@@ -1596,23 +1676,182 @@ onMounted(async () => {
 }
 
 .knowledge-page {
-  gap: 12px;
+  height: calc(100dvh - 268px);
+  min-height: 440px;
+  grid-template-rows: auto 1fr auto auto auto;
+  gap: 10px;
 }
 
-.knowledge-search,
-.knowledge-ask {
+.knowledge-agent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(30, 118, 103, 0.14);
+  border-radius: 20px;
+  padding: 13px;
+  background: linear-gradient(135deg, #ffffff, #edf7ef);
+}
+
+.knowledge-agent__avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: #174f48;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.knowledge-agent span,
+.knowledge-sources span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-agent h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.knowledge-chat {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 2px;
+}
+
+.knowledge-message {
+  position: relative;
+  max-width: 92%;
+  border-radius: 20px;
+  padding: 13px 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.knowledge-message p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.knowledge-message--assistant {
+  align-self: flex-start;
+  background: #ffffff;
+  border-top-left-radius: 7px;
+}
+
+.knowledge-message--user {
+  align-self: flex-end;
+  background: var(--teal);
+  color: #ffffff;
+  border-top-right-radius: 7px;
+}
+
+.knowledge-explanation {
+  margin-top: 8px !important;
+  color: var(--text-muted);
+}
+
+.knowledge-section {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-section strong {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.knowledge-section ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.knowledge-section--safety {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.knowledge-sources {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.knowledge-sources button,
+.knowledge-prompts button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-sources button {
+  padding: 7px 9px;
+}
+
+.knowledge-continue {
+  margin-top: 10px;
+}
+
+.knowledge-prompts {
+  min-width: 0;
+}
+
+.knowledge-prompts button {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+}
+
+.knowledge-prompts button:disabled {
+  opacity: 0.58;
+}
+
+.knowledge-drawer {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.knowledge-drawer p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.knowledge-drawer button {
+  background: transparent;
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-composer {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
 }
 
-.knowledge-search input,
-.knowledge-ask input {
+.knowledge-composer input {
   min-width: 0;
 }
 
-.knowledge-search button,
-.knowledge-ask button {
+.knowledge-composer button {
   min-width: 64px;
   border-radius: 16px;
   background: var(--teal);
@@ -1620,60 +1859,8 @@ onMounted(async () => {
   font-weight: 900;
 }
 
-.knowledge-search button:disabled,
-.knowledge-ask button:disabled {
+.knowledge-composer button:disabled {
   background: #c7d5cf;
-}
-
-.knowledge-list {
-  display: grid;
-  gap: 10px;
-}
-
-.knowledge-item {
-  width: 100%;
-  min-height: 84px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: #ffffff;
-  padding: 14px;
-  display: grid;
-  gap: 6px;
-  text-align: left;
-}
-
-.knowledge-item.active {
-  border-color: var(--teal);
-  background: var(--mint-soft);
-}
-
-.knowledge-item strong,
-.knowledge-detail strong {
-  color: var(--text-main);
-}
-
-.knowledge-item span {
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.knowledge-detail,
-.knowledge-answer {
-  display: grid;
-  gap: 12px;
-}
-
-.knowledge-detail section {
-  display: grid;
-  gap: 6px;
-}
-
-.knowledge-detail ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-muted);
-  line-height: 1.65;
 }
 
 .empty-chat {
@@ -1782,7 +1969,8 @@ input:focus-visible {
     box-shadow: none;
   }
 
-  .chat-page {
+  .chat-page,
+  .knowledge-page {
     height: calc(100dvh - 268px);
   }
 }
