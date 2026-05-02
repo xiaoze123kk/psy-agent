@@ -3,10 +3,20 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ApiClient } from "./api/client";
 import { CounselingApi } from "./api/endpoints";
-import type { AgeRange, MemoryItem, MessageItem, MoodTrendResponse, ThreadListItem, UserMode } from "./types/api";
+import type {
+  AgeRange,
+  AskKnowledgeResponse,
+  KnowledgeArticleResponse,
+  KnowledgeSearchItem,
+  MemoryItem,
+  MessageItem,
+  MoodTrendResponse,
+  ThreadListItem,
+  UserMode,
+} from "./types/api";
 
 type Stage = "auth" | "onboarding" | "app";
-type Tab = "home" | "chat" | "profile";
+type Tab = "home" | "chat" | "knowledge" | "profile";
 type AgeOptionId = "13-15" | "16-17" | "18-24" | "25+";
 type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
@@ -144,6 +154,7 @@ const isBooting = ref(true);
 const isAuthenticating = ref(false);
 const isCaptchaLoading = ref(false);
 const isLoadingApp = ref(false);
+const isKnowledgeLoading = ref(false);
 const isSending = ref(false);
 const isSafetyOpen = ref(false);
 
@@ -170,8 +181,13 @@ const threads = ref<ThreadListItem[]>([]);
 const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
 const moodTrend = ref<MoodTrendResponse | null>(null);
+const knowledgeItems = ref<KnowledgeSearchItem[]>([]);
+const selectedKnowledgeArticle = ref<KnowledgeArticleResponse | null>(null);
+const knowledgeAnswer = ref<AskKnowledgeResponse | null>(null);
 const quickActions = ref([...defaultQuickActions]);
 const composerText = ref("");
+const knowledgeQuery = ref("焦虑");
+const knowledgeQuestion = ref("");
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
 const messageListRef = ref<HTMLElement | null>(null);
@@ -226,6 +242,12 @@ watch(
 watch([selectedStyle, selectedGoal], ([style, goal]) => {
   style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
   goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+});
+
+watch(activeTab, (tab) => {
+  if (tab === "knowledge" && knowledgeItems.value.length === 0) {
+    void searchKnowledge();
+  }
 });
 
 watch(authMode, () => {
@@ -642,6 +664,66 @@ async function startQuickCheckIn() {
   await submitMessage("我现在有点难受，想倾诉");
 }
 
+async function searchKnowledge(query = knowledgeQuery.value) {
+  try {
+    isKnowledgeLoading.value = true;
+    apiError.value = "";
+    const response = await api.searchKnowledge(query.trim());
+    knowledgeItems.value = response.items;
+    if (response.items[0]) {
+      await openKnowledgeArticle(response.items[0].article_id);
+    } else {
+      selectedKnowledgeArticle.value = null;
+      knowledgeAnswer.value = null;
+    }
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "知识库加载失败。";
+  } finally {
+    isKnowledgeLoading.value = false;
+  }
+}
+
+async function openKnowledgeArticle(articleId: string) {
+  try {
+    isKnowledgeLoading.value = true;
+    apiError.value = "";
+    selectedKnowledgeArticle.value = await api.getKnowledgeArticle(articleId);
+    knowledgeAnswer.value = null;
+    knowledgeQuestion.value = selectedKnowledgeArticle.value.title;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "知识详情加载失败。";
+  } finally {
+    isKnowledgeLoading.value = false;
+  }
+}
+
+async function askKnowledge() {
+  const question = (knowledgeQuestion.value || selectedKnowledgeArticle.value?.title || knowledgeQuery.value).trim();
+  if (!question) return;
+  try {
+    isKnowledgeLoading.value = true;
+    apiError.value = "";
+    knowledgeAnswer.value = await api.askKnowledge({
+      question,
+      use_my_context: Boolean(accessToken.value),
+      thread_id: activeThreadId.value || null,
+    });
+    if (knowledgeAnswer.value.risk_level === "L2" || knowledgeAnswer.value.risk_level === "L3") {
+      openSafety();
+    }
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "知识问答失败。";
+  } finally {
+    isKnowledgeLoading.value = false;
+  }
+}
+
+async function continueKnowledgeChat() {
+  const topic = selectedKnowledgeArticle.value?.title || knowledgeQuestion.value || knowledgeQuery.value;
+  if (!topic.trim()) return;
+  await submitMessage(`我想继续聊聊这个心理知识：${topic}`);
+}
+
 function openSafety() {
   safetyAction.value = null;
   isSafetyOpen.value = true;
@@ -798,6 +880,7 @@ onMounted(async () => {
             <span class="top-label">{{ modeLabel }}</span>
             <h1 v-if="activeTab === 'home'">晚上好，{{ userName }}</h1>
             <h1 v-else-if="activeTab === 'chat'">{{ activeThread?.title || "对话" }}</h1>
+            <h1 v-else-if="activeTab === 'knowledge'">知识库</h1>
             <h1 v-else>我的</h1>
           </div>
           <button class="sos-button" type="button" @click="openSafety">SOS</button>
@@ -882,6 +965,71 @@ onMounted(async () => {
           </form>
         </section>
 
+        <section v-else-if="activeTab === 'knowledge'" class="tab-page knowledge-page">
+          <form class="knowledge-search" @submit.prevent="searchKnowledge()">
+            <input v-model="knowledgeQuery" type="search" placeholder="搜索焦虑、睡眠、关系、边界感" />
+            <button type="submit" :disabled="isKnowledgeLoading">{{ isKnowledgeLoading ? "..." : "搜索" }}</button>
+          </form>
+
+          <div class="knowledge-layout">
+            <section class="knowledge-list" aria-label="知识条目">
+              <button
+                v-for="item in knowledgeItems"
+                :key="item.article_id"
+                :class="['knowledge-item', { active: selectedKnowledgeArticle?.article_id === item.article_id }]"
+                type="button"
+                @click="openKnowledgeArticle(item.article_id)"
+              >
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.summary_30s }}</span>
+              </button>
+              <p v-if="knowledgeItems.length === 0 && !isKnowledgeLoading" class="empty-copy">暂时没有匹配条目。</p>
+            </section>
+
+            <article v-if="selectedKnowledgeArticle" class="summary-card knowledge-detail">
+              <div class="card-title">
+                <h2>{{ selectedKnowledgeArticle.title }}</h2>
+                <span>{{ selectedKnowledgeArticle.category }}</span>
+              </div>
+              <section>
+                <strong>30 秒看懂</strong>
+                <p>{{ selectedKnowledgeArticle.summary_30s }}</p>
+              </section>
+              <section>
+                <strong>3 分钟解释</strong>
+                <p>{{ selectedKnowledgeArticle.explanation_3min }}</p>
+              </section>
+              <section>
+                <strong>可以怎么做</strong>
+                <ul>
+                  <li v-for="action in selectedKnowledgeArticle.actions" :key="action">{{ action }}</li>
+                </ul>
+              </section>
+              <section>
+                <strong>什么时候找现实帮助</strong>
+                <ul>
+                  <li v-for="item in selectedKnowledgeArticle.seek_help_when" :key="item">{{ item }}</li>
+                </ul>
+              </section>
+            </article>
+          </div>
+
+          <form class="knowledge-ask" @submit.prevent="askKnowledge">
+            <input v-model="knowledgeQuestion" type="text" placeholder="问一个和这个主题有关的问题" />
+            <button type="submit" :disabled="isKnowledgeLoading">{{ isKnowledgeLoading ? "..." : "问一下" }}</button>
+          </form>
+
+          <article v-if="knowledgeAnswer" class="summary-card knowledge-answer">
+            <div class="card-title">
+              <h2>回答</h2>
+              <span>{{ knowledgeAnswer.risk_level }}</span>
+            </div>
+            <p>{{ knowledgeAnswer.answer.summary_30s }}</p>
+            <p>{{ knowledgeAnswer.answer.explanation_3min }}</p>
+            <button class="secondary-action" type="button" @click="continueKnowledgeChat">继续聊聊这个主题</button>
+          </article>
+        </section>
+
         <section v-else class="tab-page profile-page">
           <section class="profile-card">
             <div class="avatar">{{ userName.slice(0, 1) }}</div>
@@ -929,6 +1077,7 @@ onMounted(async () => {
         <nav class="bottom-nav" aria-label="底部导航">
           <button :class="{ active: activeTab === 'home' }" type="button" @click="activeTab = 'home'">首页</button>
           <button :class="{ active: activeTab === 'chat' }" type="button" @click="activeTab = 'chat'">对话</button>
+          <button :class="{ active: activeTab === 'knowledge' }" type="button" @click="activeTab = 'knowledge'">知识</button>
           <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
         </nav>
       </section>
@@ -1099,7 +1248,9 @@ onMounted(async () => {
 }
 
 .field input,
-.composer input {
+.composer input,
+.knowledge-search input,
+.knowledge-ask input {
   min-height: 52px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1444,6 +1595,87 @@ onMounted(async () => {
   background: #c7d5cf;
 }
 
+.knowledge-page {
+  gap: 12px;
+}
+
+.knowledge-search,
+.knowledge-ask {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.knowledge-search input,
+.knowledge-ask input {
+  min-width: 0;
+}
+
+.knowledge-search button,
+.knowledge-ask button {
+  min-width: 64px;
+  border-radius: 16px;
+  background: var(--teal);
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.knowledge-search button:disabled,
+.knowledge-ask button:disabled {
+  background: #c7d5cf;
+}
+
+.knowledge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.knowledge-item {
+  width: 100%;
+  min-height: 84px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+
+.knowledge-item.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.knowledge-item strong,
+.knowledge-detail strong {
+  color: var(--text-main);
+}
+
+.knowledge-item span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.knowledge-detail,
+.knowledge-answer {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-detail section {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-detail ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
 .empty-chat {
   margin: auto;
   text-align: center;
@@ -1481,7 +1713,7 @@ onMounted(async () => {
   right: 14px;
   bottom: 14px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   padding: 8px;
   border-radius: 24px;

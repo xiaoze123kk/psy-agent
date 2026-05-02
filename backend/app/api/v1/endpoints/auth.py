@@ -46,6 +46,12 @@ def _default_nickname(username: str) -> str:
     return username[:20] or "user"
 
 
+def _dev_email_placeholder(username: str) -> str | None:
+    if not settings.database_url.startswith("sqlite"):
+        return None
+    return f"{username}@local.invalid"
+
+
 def _verify_captcha(captcha_id: str, captcha_code: str) -> None:
     if not captcha_store.verify(captcha_id, captcha_code):
         raise HTTPException(
@@ -171,6 +177,7 @@ async def register(
     user_mode = infer_user_mode(payload.age_range)
     user = User(
         username=username,
+        email=_dev_email_placeholder(username),
         password_hash=hash_password(payload.password),
     )
     db.add(user)
