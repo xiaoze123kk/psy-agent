@@ -1,7 +1,11 @@
 import { ApiClient, type SseEventHandler } from "./client";
 import type {
+  AskKnowledgeRequest,
+  AskKnowledgeResponse,
   CaptchaResponse,
   CurrentUserResponse,
+  KnowledgeArticleResponse,
+  KnowledgeSearchResponse,
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
@@ -71,6 +75,21 @@ export class CounselingApi {
 
   listMemories(): Promise<ListMemoriesResponse> {
     return this.client.get<ListMemoriesResponse>("/api/v1/memories");
+  }
+
+  searchKnowledge(query: string, options: { category?: string; audience?: string } = {}): Promise<KnowledgeSearchResponse> {
+    const params = new URLSearchParams({ q: query });
+    if (options.category) params.set("category", options.category);
+    if (options.audience) params.set("audience", options.audience);
+    return this.client.get<KnowledgeSearchResponse>(`/api/v1/knowledge/search?${params.toString()}`);
+  }
+
+  getKnowledgeArticle(articleId: string): Promise<KnowledgeArticleResponse> {
+    return this.client.get<KnowledgeArticleResponse>(`/api/v1/knowledge/articles/${articleId}`);
+  }
+
+  askKnowledge(payload: AskKnowledgeRequest): Promise<AskKnowledgeResponse> {
+    return this.client.post<AskKnowledgeResponse, AskKnowledgeRequest>("/api/v1/knowledge/ask", payload);
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {

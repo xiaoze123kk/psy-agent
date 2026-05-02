@@ -1,14 +1,14 @@
 version: 1
 name: counseling-agent-frontend-sdk-contract
-sprint: Sprint 1
+sprint: Sprint 2 knowledge MVP
 description: |
-  心理咨询 Agent Sprint 1 前端 API 契约。
+  心理咨询 Agent 前端 API 契约。
 
   目标是支撑如下前端闭环：
-  登录/注册 -> 年龄模式落库 -> 首页创建会话 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆/情绪打点。
+  登录/注册 -> 年龄模式落库 -> 首页创建会话 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆/情绪打点 -> 知识库搜索/详情/问答。
 
   本契约不包含后续 Sprint 或占位能力：
-  knowledge、tests、voice、streamMessage、mood trends。
+  tests、voice、完整 RAG、mood trends。
 
 client:
   className: CounselingApi
@@ -33,6 +33,9 @@ client:
       - deleteMemory
       - clearMemories
       - createMoodLog
+      - searchKnowledge
+      - getKnowledgeArticle
+      - askKnowledge
       - createCrisisEvent
     note: 当前后端脚手架尚未强制校验 token，但联调时前端仍应按正式 Bearer 方式传递。
   baseUrl:
@@ -46,8 +49,8 @@ scope:
     - memory
     - mood
     - safety
-  excluded:
     - knowledge
+  excluded:
     - tests
     - voice
     - stream chat
@@ -57,9 +60,13 @@ implementationStatus:
   currentSdkImplementedMethods:
     - startThread
     - sendMessage
+    - streamMessage
     - listMemories
     - getMoodTrend
-  note: 当前 `frontend/src/api/endpoints.ts` 只实现了部分方法；本文档定义的是 Sprint 1 应联调的完整前端 API 契约。
+    - searchKnowledge
+    - getKnowledgeArticle
+    - askKnowledge
+  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库 MVP 所需方法。
 
 flows:
   sprint1Demo:
@@ -81,6 +88,12 @@ flows:
       when: 我的页查看基础记忆
     - step: createMoodLog
       when: 用户完成基础情绪记录
+    - step: searchKnowledge
+      when: 用户进入知识页或搜索主题
+    - step: getKnowledgeArticle
+      when: 用户打开知识详情
+    - step: askKnowledge
+      when: 用户围绕知识主题继续提问
 
 methods:
   - methodName: register
@@ -208,6 +221,44 @@ methods:
     http:
       method: POST
       path: /api/v1/moods
+
+  - methodName: searchKnowledge
+    summary: 搜索知识库文章
+    requestType: SearchKnowledgeQuery
+    responseType: KnowledgeSearchResponse
+    authRequired: false
+    uiEntry:
+      - 知识页
+    http:
+      method: GET
+      path: /api/v1/knowledge/search
+
+  - methodName: getKnowledgeArticle
+    summary: 获取知识文章详情
+    requestType: none
+    responseType: KnowledgeArticleResponse
+    authRequired: false
+    pathParams:
+      - name: articleId
+        mapsTo: article_id
+        type: string
+    uiEntry:
+      - 知识页
+    http:
+      method: GET
+      pathTemplate: /api/v1/knowledge/articles/{article_id}
+
+  - methodName: askKnowledge
+    summary: 围绕知识库做结构化问答
+    requestType: AskKnowledgeRequest
+    responseType: AskKnowledgeResponse
+    authRequired: false
+    uiEntry:
+      - 知识页
+      - 对话页知识上下文入口
+    http:
+      method: POST
+      path: /api/v1/knowledge/ask
 
   - methodName: getSafetyResources
     summary: 获取 SOS 资源列表
@@ -509,6 +560,143 @@ types:
         format: date-time
       mood_score: { type: integer }
 
+  SearchKnowledgeQuery:
+    type: object
+    fields:
+      q:
+        type: string
+        required: false
+      category:
+        type: string
+        required: false
+      audience:
+        type: string
+        required: false
+
+  KnowledgeSearchItem:
+    type: object
+    required:
+      - article_id
+      - slug
+      - title
+      - category
+      - audience
+      - summary_30s
+      - tags
+    fields:
+      article_id: { type: string }
+      slug: { type: string }
+      title: { type: string }
+      category: { type: string }
+      audience: { type: string }
+      summary_30s: { type: string }
+      tags:
+        type: array
+        items: { type: string }
+
+  KnowledgeSearchResponse:
+    type: object
+    required:
+      - items
+    fields:
+      items:
+        type: array
+        items:
+          type: KnowledgeSearchItem
+
+  KnowledgeArticleResponse:
+    type: object
+    required:
+      - article_id
+      - slug
+      - title
+      - category
+      - audience
+      - summary_30s
+      - explanation_3min
+      - common_misunderstandings
+      - actions
+      - seek_help_when
+      - source_refs
+      - tags
+      - updated_at
+    fields:
+      article_id: { type: string }
+      slug: { type: string }
+      title: { type: string }
+      category: { type: string }
+      audience: { type: string }
+      summary_30s: { type: string }
+      explanation_3min: { type: string }
+      advanced_text:
+        type: string
+        required: false
+      common_misunderstandings:
+        type: array
+        items: { type: string }
+      actions:
+        type: array
+        items: { type: string }
+      seek_help_when:
+        type: array
+        items: { type: string }
+      source_refs:
+        type: array
+        items: { type: object }
+      tags:
+        type: array
+        items: { type: string }
+      updated_at:
+        type: string
+        format: date-time
+
+  AskKnowledgeRequest:
+    type: object
+    required:
+      - question
+    fields:
+      question: { type: string }
+      use_my_context:
+        type: boolean
+        required: false
+      thread_id:
+        type: string
+        required: false
+
+  KnowledgeAnswer:
+    type: object
+    required:
+      - summary_30s
+      - explanation_3min
+      - actions
+      - seek_help_when
+    fields:
+      summary_30s: { type: string }
+      explanation_3min: { type: string }
+      actions:
+        type: array
+        items: { type: string }
+      seek_help_when:
+        type: array
+        items: { type: string }
+
+  AskKnowledgeResponse:
+    type: object
+    required:
+      - answer
+      - related_articles
+      - continue_chat_payload
+      - risk_level
+    fields:
+      answer: { type: KnowledgeAnswer }
+      related_articles:
+        type: array
+        items:
+          type: KnowledgeSearchItem
+      continue_chat_payload:
+        type: object
+      risk_level: { type: RiskLevel }
+
   GetSafetyResourcesQuery:
     type: object
     fields:
@@ -583,6 +771,8 @@ integrationRules:
   - rule: 当 sendMessage 返回 risk_level 为 L2 或 L3 时，前端必须展示 SOS 入口，并调用 createCrisisEvent 记录事件。
   - rule: 首页续聊能力依赖 assistant_message.session_summary，Sprint 1 没有单独的会话摘要查询接口。
   - rule: getSafetyResources 可在未登录状态下调用，便于 SOS 页面兜底展示。
+  - rule: askKnowledge 返回 risk_level 为 L2 或 L3 时，前端必须停止普通知识展示路径并打开 SOS/安全提示。
+  - rule: 知识结果继续聊天时，应把标题或 article_id 带入对话上下文，但不得把知识回答包装成诊断。
 
 errorHandling:
   behavior: throw-on-non-2xx

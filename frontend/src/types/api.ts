@@ -162,3 +162,59 @@ export interface MoodTrendResponse {
   daily: Array<Record<string, unknown>>;
   summary: string;
 }
+
+export interface KnowledgeSearchItem {
+  article_id: string;
+  slug: string;
+  title: string;
+  category: string;
+  audience: string;
+  summary_30s: string;
+  tags: string[];
+}
+
+export interface KnowledgeSearchResponse {
+  items: KnowledgeSearchItem[];
+}
+
+export interface KnowledgeArticleResponse {
+  article_id: string;
+  slug: string;
+  title: string;
+  category: string;
+  audience: string;
+  summary_30s: string;
+  explanation_3min: string;
+  advanced_text: string | null;
+  common_misunderstandings: string[];
+  actions: string[];
+  seek_help_when: string[];
+  source_refs: Array<Record<string, unknown>>;
+  tags: string[];
+  updated_at: string;
+}
+
+export interface AskKnowledgeRequest {
+  question: string;
+  use_my_context?: boolean;
+  thread_id?: string | null;
+}
+
+export interface KnowledgeAnswer {
+  summary_30s: string;
+  explanation_3min: string;
+  actions: string[];
+  seek_help_when: string[];
+}
+
+export interface AskKnowledgeResponse {
+  answer: KnowledgeAnswer;
+  related_articles: KnowledgeSearchItem[];
+  continue_chat_payload: {
+    mode: string;
+    context_type: string;
+    article_id?: string | null;
+    thread_id?: string | null;
+  };
+  risk_level: "L0" | "L1" | "L2" | "L3";
+}

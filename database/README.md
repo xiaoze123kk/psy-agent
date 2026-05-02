@@ -16,6 +16,7 @@ Run the first migration against your database:
 psql "$DATABASE_URL" -f migrations/0001_init.sql
 psql "$DATABASE_URL" -f migrations/0002_refresh_tokens.sql
 psql "$DATABASE_URL" -f migrations/0003_username_auth.sql
+psql "$DATABASE_URL" -f migrations/0004_knowledge.sql
 ```
 
 Local PostgreSQL example:
@@ -24,6 +25,7 @@ Local PostgreSQL example:
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0001_init.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0002_refresh_tokens.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0003_username_auth.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0004_knowledge.sql
 ```
 
 ## Notes

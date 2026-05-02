@@ -147,6 +147,27 @@ class MoodLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class KnowledgeArticle(Base):
+    __tablename__ = "knowledge_articles"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    audience: Mapped[str] = mapped_column(String(16), default="all", index=True)
+    summary_30s: Mapped[str] = mapped_column(Text)
+    explanation_3min: Mapped[str] = mapped_column(Text)
+    advanced_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    common_misunderstandings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    actions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    seek_help_when: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_refs: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="published", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class RiskEvent(Base):
     __tablename__ = "risk_events"
 
