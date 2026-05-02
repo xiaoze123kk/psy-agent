@@ -9,12 +9,6 @@ def route_by_risk(state: AgentState) -> str:
 
 def route_by_intent(state: AgentState) -> str:
     intent = state.get("intent", "other")
-    if intent == "knowledge_qa":
-        return "knowledge_retrieve"
-    if intent == "test_interpretation":
-        return "test_context"
-    if intent == "anime_match":
-        return "anime_context"
     if intent == "soothe":
         return "soothing_response"
     if intent == "light_counseling":

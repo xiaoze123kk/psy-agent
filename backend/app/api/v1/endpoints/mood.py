@@ -1,35 +1,98 @@
-from datetime import datetime
+from __future__ import annotations
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_user
+from app.db.models import MoodLog, User
+from app.db.session import get_db_session
+from app.schemas.mood import DailyMoodPoint, MoodLogRequest, MoodLogResponse, MoodTrendResponse
+
 
 router = APIRouter(prefix="/moods", tags=["mood"])
 
 
-class MoodLogRequest(BaseModel):
-    mood_score: int = Field(ge=1, le=5)
-    anxiety_score: int | None = Field(default=None, ge=1, le=5)
-    energy_score: int | None = Field(default=None, ge=1, le=5)
-    sleep_quality: int | None = Field(default=None, ge=1, le=5)
-    mood_tags: list[str] = []
-    note: str | None = None
+@router.post("", response_model=MoodLogResponse)
+async def create_mood_log(
+    payload: MoodLogRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MoodLogResponse:
+    log = MoodLog(
+        user_id=current_user.id,
+        mood_score=payload.mood_score,
+        anxiety_score=payload.anxiety_score,
+        energy_score=payload.energy_score,
+        sleep_quality=payload.sleep_quality,
+        mood_tags=list(payload.mood_tags),
+        note=payload.note,
+        source="checkin",
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return MoodLogResponse(log_id=log.id, created_at=log.created_at, mood_score=log.mood_score)
 
 
-@router.post("")
-async def create_mood_log(payload: MoodLogRequest) -> dict[str, object]:
-    return {
-        "log_id": "demo-log-id",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "mood_score": payload.mood_score,
-    }
+@router.get("/trends", response_model=MoodTrendResponse)
+async def get_mood_trend(
+    range: str = "7d",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MoodTrendResponse:
+    days = 30 if range == "30d" else 7
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    logs = list(
+        db.scalars(
+            select(MoodLog)
+            .where(MoodLog.user_id == current_user.id, MoodLog.created_at >= since)
+            .order_by(MoodLog.created_at.asc())
+        )
+    )
 
+    if not logs:
+        return MoodTrendResponse(
+            range=range,
+            avg_mood_score=0,
+            top_tags=[],
+            daily=[],
+            summary="当前时间范围内还没有情绪记录。",
+        )
 
-@router.get("/trends")
-async def get_mood_trend(range: str = "7d") -> dict[str, object]:
-    return {
-        "range": range,
-        "avg_mood_score": 3.2,
-        "top_tags": ["anxious", "tired"],
-        "daily": [],
-        "summary": "Trend endpoint scaffold.",
-    }
+    avg_mood = round(sum(log.mood_score for log in logs) / len(logs), 2)
+    tag_counter: Counter[str] = Counter()
+    daily_scores: dict[str, list[int]] = defaultdict(list)
+    daily_tags: dict[str, Counter[str]] = defaultdict(Counter)
+
+    for log in logs:
+        day = log.created_at.astimezone(timezone.utc).date().isoformat()
+        daily_scores[day].append(log.mood_score)
+        for tag in log.mood_tags or []:
+            tag_counter[tag] += 1
+            daily_tags[day][tag] += 1
+
+    daily = [
+        DailyMoodPoint(
+            date=day,
+            mood_score=round(sum(scores) / len(scores), 2),
+            tags=[tag for tag, _ in daily_tags[day].most_common(3)],
+        )
+        for day, scores in sorted(daily_scores.items())
+    ]
+    top_tags = [tag for tag, _ in tag_counter.most_common(5)]
+
+    summary = f"最近 {days} 天共记录 {len(logs)} 次情绪，平均情绪分为 {avg_mood}。"
+    if top_tags:
+        summary += f" 高频标签主要是：{'、'.join(top_tags[:3])}。"
+
+    return MoodTrendResponse(
+        range=range,
+        avg_mood_score=avg_mood,
+        top_tags=top_tags,
+        daily=daily,
+        summary=summary,
+    )

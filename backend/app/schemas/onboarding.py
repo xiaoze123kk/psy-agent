@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from app.schemas.common import MemoryMode
+
+
+class OnboardingRequest(BaseModel):
+    nickname: str = Field(min_length=1, max_length=80)
+    usage_goals: list[str] = Field(default_factory=list)
+    companion_style: str = "gentle"
+    memory_mode: MemoryMode = MemoryMode.summary_only
+    voice_enabled: bool = False
+    initial_mood_score: int | None = Field(default=None, ge=1, le=5)
+    initial_mood_tags: list[str] = Field(default_factory=list)
+    initial_mood_note: str | None = None
+
+
+class OnboardingResponse(BaseModel):
+    ok: bool
+    profile_completed: bool

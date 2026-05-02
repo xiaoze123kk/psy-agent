@@ -1,0 +1,47 @@
+:root {
+  --app-bg: #faf9f6;
+  --surface-muted: #eef4f0;
+  --mint-soft: #e3f5ef;
+  --teal: #0f766e;
+  --teal-dark: #115e59;
+  --amber: #f6c86f;
+  --safety-bg: #fff7e8;
+  --text-main: #1f2937;
+  --text-muted: #64748b;
+  --line: #dce7e2;
+  --shadow-soft: 0 12px 30px rgba(38, 57, 52, 0.08);
+  font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--text-main);
+  font-family: inherit;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+input {
+  outline: none;
+}

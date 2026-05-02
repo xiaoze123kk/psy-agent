@@ -1,15 +1,15 @@
 openapi: 3.1.0
 info:
   title: Counseling Agent Backend API
-  version: 1.0.0-sprint1
+  version: 1.1.0-sprint2-knowledge
   description: |
-    心理咨询 Agent Sprint 1 后端接口文档。
+    心理咨询 Agent 后端接口文档。
 
-    本文档只覆盖 Sprint 1 明确交付的闭环接口：
-    鉴权、文本对话、记忆管理、情绪记录、安全资源与危机事件。
+    本文档覆盖 Sprint 1 闭环接口，以及 Sprint 2 知识库 MVP：
+    鉴权、文本对话、记忆管理、情绪记录、安全资源、危机事件、知识搜索、知识详情与知识问答。
 
     以下脚手架或后续 Sprint 占位能力不纳入本次正式契约：
-    knowledge、tests、voice、SSE stream、mood trends。
+    tests、voice、完整 RAG、mood trends。
 servers:
   - url: http://localhost:8000
     description: 本地开发环境
@@ -28,6 +28,8 @@ tags:
     description: 基础情绪记录
   - name: safety
     description: SOS 资源与危机事件记录
+  - name: knowledge
+    description: 知识库搜索、详情和结构化问答
 paths:
   /health:
     get:
@@ -457,6 +459,93 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /api/v1/knowledge/search:
+    get:
+      tags: [knowledge]
+      summary: 搜索知识文章
+      operationId: searchKnowledge
+      description: |
+        Sprint 2 知识库 MVP 使用数据库文章和简单关键词召回，不依赖 Elasticsearch。
+      parameters:
+        - in: query
+          name: q
+          required: false
+          schema:
+            type: string
+            default: ""
+          description: 搜索关键词
+        - in: query
+          name: category
+          required: false
+          schema:
+            type: string
+          description: emotion / relationship / sleep / self_help / teen / safety
+        - in: query
+          name: audience
+          required: false
+          schema:
+            type: string
+            enum: [all, teen, adult]
+      responses:
+        "200":
+          description: 知识文章列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/knowledge/articles/{article_id}:
+    get:
+      tags: [knowledge]
+      summary: 获取知识文章详情
+      operationId: getKnowledgeArticle
+      parameters:
+        - in: path
+          name: article_id
+          required: true
+          schema:
+            type: string
+          description: 支持文章 UUID 或 slug
+      responses:
+        "200":
+          description: 知识文章详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeArticleResponse"
+        "404":
+          description: 知识文章不存在
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/knowledge/ask:
+    post:
+      tags: [knowledge]
+      summary: 结合知识库回答问题
+      operationId: askKnowledge
+      description: |
+        返回固定结构的科普/自助回答。若识别到 L2/L3 风险，必须中断普通知识问答并返回 crisis 上下文。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskKnowledgeRequest"
+            example:
+              question: 焦虑依恋和太喜欢一个人有什么区别？
+              use_my_context: true
+      responses:
+        "200":
+          description: 结构化知识回答
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskKnowledgeResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
 components:
   securitySchemes:
     BearerAuth:
@@ -788,6 +877,154 @@ components:
         - log_id
         - created_at
         - mood_score
+
+    KnowledgeSearchItem:
+      type: object
+      properties:
+        article_id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        audience:
+          type: string
+        summary_30s:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - article_id
+        - slug
+        - title
+        - category
+        - audience
+        - summary_30s
+        - tags
+
+    KnowledgeSearchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSearchItem"
+      required:
+        - items
+
+    KnowledgeArticleResponse:
+      allOf:
+        - $ref: "#/components/schemas/KnowledgeSearchItem"
+        - type: object
+          properties:
+            explanation_3min:
+              type: string
+            advanced_text:
+              type: string
+              nullable: true
+            common_misunderstandings:
+              type: array
+              items:
+                type: string
+            actions:
+              type: array
+              items:
+                type: string
+            seek_help_when:
+              type: array
+              items:
+                type: string
+            source_refs:
+              type: array
+              items:
+                type: object
+            updated_at:
+              type: string
+              format: date-time
+          required:
+            - explanation_3min
+            - common_misunderstandings
+            - actions
+            - seek_help_when
+            - source_refs
+            - updated_at
+
+    AskKnowledgeRequest:
+      type: object
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 800
+        use_my_context:
+          type: boolean
+          default: true
+        thread_id:
+          type: string
+          nullable: true
+      required:
+        - question
+
+    KnowledgeAnswer:
+      type: object
+      properties:
+        summary_30s:
+          type: string
+        explanation_3min:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
+        seek_help_when:
+          type: array
+          items:
+            type: string
+      required:
+        - summary_30s
+        - explanation_3min
+        - actions
+        - seek_help_when
+
+    ContinueChatPayload:
+      type: object
+      properties:
+        mode:
+          type: string
+        context_type:
+          type: string
+        article_id:
+          type: string
+          nullable: true
+        thread_id:
+          type: string
+          nullable: true
+      required:
+        - mode
+        - context_type
+
+    AskKnowledgeResponse:
+      type: object
+      properties:
+        answer:
+          $ref: "#/components/schemas/KnowledgeAnswer"
+        related_articles:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSearchItem"
+        continue_chat_payload:
+          $ref: "#/components/schemas/ContinueChatPayload"
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+      required:
+        - answer
+        - related_articles
+        - continue_chat_payload
+        - risk_level
 
     SafetyResourceItem:
       type: object

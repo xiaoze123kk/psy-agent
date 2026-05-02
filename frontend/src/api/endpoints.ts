@@ -1,18 +1,65 @@
-import { ApiClient } from "./client";
+import { ApiClient, type SseEventHandler } from "./client";
 import type {
+  AskKnowledgeRequest,
+  AskKnowledgeResponse,
+  CaptchaResponse,
+  CurrentUserResponse,
+  KnowledgeArticleResponse,
+  KnowledgeSearchResponse,
   ListMemoriesResponse,
+  LoginRequest,
+  LoginResponse,
+  LogoutRequest,
+  MessageListResponse,
   MoodTrendResponse,
+  RefreshTokenRequest,
+  RefreshTokenResponse,
+  RegisterRequest,
+  RegisterResponse,
   SendMessageRequest,
   SendMessageResponse,
   StartThreadRequest,
   StartThreadResponse,
+  ThreadListResponse,
 } from "../types/api";
 
 export class CounselingApi {
   constructor(private readonly client: ApiClient) {}
 
+  getCaptcha(): Promise<CaptchaResponse> {
+    return this.client.get<CaptchaResponse>("/api/v1/auth/captcha");
+  }
+
+  register(payload: RegisterRequest): Promise<RegisterResponse> {
+    return this.client.post<RegisterResponse, RegisterRequest>("/api/v1/auth/register", payload);
+  }
+
+  login(payload: LoginRequest): Promise<LoginResponse> {
+    return this.client.post<LoginResponse, LoginRequest>("/api/v1/auth/login", payload);
+  }
+
+  refreshToken(payload: RefreshTokenRequest): Promise<RefreshTokenResponse> {
+    return this.client.post<RefreshTokenResponse, RefreshTokenRequest>("/api/v1/auth/refresh", payload);
+  }
+
+  logout(payload: LogoutRequest): Promise<void> {
+    return this.client.post<void, LogoutRequest>("/api/v1/auth/logout", payload);
+  }
+
+  getCurrentUser(): Promise<CurrentUserResponse> {
+    return this.client.get<CurrentUserResponse>("/api/v1/auth/me");
+  }
+
   startThread(payload: StartThreadRequest): Promise<StartThreadResponse> {
     return this.client.post<StartThreadResponse, StartThreadRequest>("/api/v1/chat/threads", payload);
+  }
+
+  listThreads(): Promise<ThreadListResponse> {
+    return this.client.get<ThreadListResponse>("/api/v1/chat/threads");
+  }
+
+  listMessages(threadId: string): Promise<MessageListResponse> {
+    return this.client.get<MessageListResponse>(`/api/v1/chat/threads/${threadId}/messages`);
   }
 
   sendMessage(threadId: string, payload: SendMessageRequest): Promise<SendMessageResponse> {
@@ -22,8 +69,27 @@ export class CounselingApi {
     );
   }
 
+  streamMessage(threadId: string, payload: SendMessageRequest, onEvent: SseEventHandler): Promise<void> {
+    return this.client.streamPost<SendMessageRequest>(`/api/v1/chat/threads/${threadId}/stream`, payload, onEvent);
+  }
+
   listMemories(): Promise<ListMemoriesResponse> {
     return this.client.get<ListMemoriesResponse>("/api/v1/memories");
+  }
+
+  searchKnowledge(query: string, options: { category?: string; audience?: string } = {}): Promise<KnowledgeSearchResponse> {
+    const params = new URLSearchParams({ q: query });
+    if (options.category) params.set("category", options.category);
+    if (options.audience) params.set("audience", options.audience);
+    return this.client.get<KnowledgeSearchResponse>(`/api/v1/knowledge/search?${params.toString()}`);
+  }
+
+  getKnowledgeArticle(articleId: string): Promise<KnowledgeArticleResponse> {
+    return this.client.get<KnowledgeArticleResponse>(`/api/v1/knowledge/articles/${articleId}`);
+  }
+
+  askKnowledge(payload: AskKnowledgeRequest): Promise<AskKnowledgeResponse> {
+    return this.client.post<AskKnowledgeResponse, AskKnowledgeRequest>("/api/v1/knowledge/ask", payload);
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {

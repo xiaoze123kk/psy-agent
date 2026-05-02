@@ -1,15 +1,74 @@
-from typing import Literal
+from __future__ import annotations
+
+from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.common import InputType, RiskLevel, ThreadMode, UserMode
+
 
 class StartThreadRequest(BaseModel):
-    mode: Literal["companion", "knowledge", "test", "crisis"] = "companion"
+    mode: ThreadMode = ThreadMode.companion
     title: str | None = None
 
 
+class StartThreadResponse(BaseModel):
+    thread_id: str
+    langgraph_thread_id: str
+    mode: str
+    title: str
+    updated_at: datetime
+
+
+class ThreadListItem(BaseModel):
+    thread_id: str
+    title: str
+    mode: str
+    last_summary: str | None
+    last_risk_level: str
+    updated_at: datetime
+
+
+class ThreadListResponse(BaseModel):
+    items: list[ThreadListItem]
+
+
 class SendMessageRequest(BaseModel):
-    user_id: str
+    user_id: str | None = None
     content: str
-    input_type: Literal["text", "voice", "test", "system"] = "text"
-    user_mode: Literal["teen", "adult"] = "adult"
+    input_type: InputType = InputType.text
+    user_mode: UserMode | None = None
+
+
+class AssistantMessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    assistant_text: str
+    risk_level: RiskLevel
+    intent: str
+    suggested_actions: list[str]
+    session_summary: str
+    should_write_memory: bool
+    created_at: datetime
+
+
+class SendMessageResponse(BaseModel):
+    thread_id: str
+    message_id: str
+    assistant_message_id: str
+    assistant_message: AssistantMessageResponse
+
+
+class MessageItemResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    input_type: str
+    risk_level: str | None
+    metadata: dict
+    created_at: datetime
+
+
+class MessageListResponse(BaseModel):
+    items: list[MessageItemResponse]

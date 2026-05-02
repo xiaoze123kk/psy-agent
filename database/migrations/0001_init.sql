@@ -2,7 +2,15 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE EXTENSION IF NOT EXISTS vector;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+        CREATE EXTENSION IF NOT EXISTS vector;
+    ELSE
+        RAISE NOTICE 'pgvector extension is not installed; fallback embedding type will be used.';
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
@@ -111,14 +119,33 @@ CREATE TABLE IF NOT EXISTS user_memories (
     expires_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS memory_embeddings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
-    memory_id UUID NOT NULL REFERENCES user_memories (id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    embedding vector (1536),
-    embedding_model VARCHAR(80) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        EXECUTE $sql$
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+                memory_id UUID NOT NULL REFERENCES user_memories (id) ON DELETE CASCADE,
+                user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                embedding vector (1536),
+                embedding_model VARCHAR(80) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        $sql$;
+    ELSE
+        EXECUTE $sql$
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+                memory_id UUID NOT NULL REFERENCES user_memories (id) ON DELETE CASCADE,
+                user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                embedding DOUBLE PRECISION[] NULL,
+                embedding_model VARCHAR(80) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        $sql$;
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS mood_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
