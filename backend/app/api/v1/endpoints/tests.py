@@ -1,8 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.db.session import get_db_session
 from app.db.models import User
 from app.schemas.tests import (
     AnswerResponse,
@@ -28,8 +30,9 @@ router = APIRouter(prefix="/tests", tags=["tests"])
 @router.get("/history", response_model=TestHistoryResponse)
 async def test_history(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> TestHistoryResponse:
-    return get_history(current_user.id)
+    return get_history(current_user.id, db)
 
 
 @router.get("", response_model=TestListResponse)
@@ -49,8 +52,9 @@ async def read_test(test_id: str) -> TestDetailResponse:
 async def start_test_attempt(
     test_id: str,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> StartAttemptResponse:
-    result = start_attempt(current_user.id, test_id)
+    result = start_attempt(current_user.id, test_id, db)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test not found.")
     return result
@@ -61,8 +65,9 @@ async def answer_question(
     attempt_id: str,
     payload: SubmitAnswerRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> AnswerResponse:
-    ok = submit_answer(attempt_id, payload.question_index, payload.option_id)
+    ok = submit_answer(attempt_id, payload.question_index, payload.option_id, db)
     if not ok:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid attempt or answer.")
     return AnswerResponse(ok=True)
@@ -72,8 +77,9 @@ async def answer_question(
 async def finish_attempt(
     attempt_id: str,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> CompleteAttemptResponse:
-    result = complete_attempt(attempt_id)
+    result = complete_attempt(attempt_id, db)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

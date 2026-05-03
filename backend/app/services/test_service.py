@@ -1,8 +1,11 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import uuid4
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db.models import TestAttempt, TestHistory
 from app.schemas.tests import (
     CompleteAttemptResponse,
     ContinueChatContext,
@@ -175,10 +178,6 @@ _SIXTEEN_TYPE_RESULTS: dict[str, dict] = {
     },
 }
 
-_attempts: dict[str, dict] = {}
-_history: list[dict] = []
-
-
 def _question_to_schema(q: dict) -> TestQuestion:
     return TestQuestion(
         index=q["index"],
@@ -222,30 +221,26 @@ def get_test(test_id: str) -> TestDetailResponse | None:
     )
 
 
-def start_attempt(user_id: str, test_id: str) -> StartAttemptResponse | None:
+def start_attempt(user_id: str, test_id: str, db: Session) -> StartAttemptResponse | None:
     t = _find_test(test_id)
     if t is None:
         return None
-    attempt_id = str(uuid4())
-    _attempts[attempt_id] = {
-        "user_id": user_id,
-        "test_id": test_id,
-        "answers": {},
-        "status": "in_progress",
-        "created_at": datetime.now(timezone.utc),
-    }
+    attempt = TestAttempt(user_id=user_id, test_id=test_id)
+    db.add(attempt)
+    db.commit()
+    db.refresh(attempt)
     return StartAttemptResponse(
-        attempt_id=attempt_id,
+        attempt_id=attempt.id,
         test_id=test_id,
         questions=[_question_to_schema(q) for q in t["questions"]],
     )
 
 
-def submit_answer(attempt_id: str, question_index: int, option_id: str) -> bool:
-    attempt = _attempts.get(attempt_id)
-    if attempt is None or attempt["status"] != "in_progress":
+def submit_answer(attempt_id: str, question_index: int, option_id: str, db: Session) -> bool:
+    attempt = db.scalar(select(TestAttempt).where(TestAttempt.id == attempt_id))
+    if attempt is None or attempt.status != "in_progress":
         return False
-    t = _find_test(attempt["test_id"])
+    t = _find_test(attempt.test_id)
     if t is None:
         return False
     valid_indices = {q["index"] for q in t["questions"]}
@@ -255,7 +250,10 @@ def submit_answer(attempt_id: str, question_index: int, option_id: str) -> bool:
     valid_options = {opt["id"] for opt in question["options"]}
     if option_id not in valid_options:
         return False
-    attempt["answers"][question_index] = option_id
+    answers = dict(attempt.answers)
+    answers[question_index] = option_id
+    attempt.answers = answers
+    db.commit()
     return True
 
 
@@ -351,36 +349,39 @@ def _compute_sixteen_type_result(test: dict, answers: dict[int, str]) -> dict:
     }
 
 
-def complete_attempt(attempt_id: str) -> CompleteAttemptResponse | None:
-    attempt = _attempts.get(attempt_id)
-    if attempt is None or attempt["status"] != "in_progress":
+def complete_attempt(attempt_id: str, db: Session) -> CompleteAttemptResponse | None:
+    attempt = db.scalar(select(TestAttempt).where(TestAttempt.id == attempt_id))
+    if attempt is None or attempt.status != "in_progress":
         return None
-    t = _find_test(attempt["test_id"])
+    t = _find_test(attempt.test_id)
     if t is None:
         return None
     expected_count = len(t["questions"])
-    if len(attempt["answers"]) < expected_count:
+    if len(attempt.answers) < expected_count:
         return None
 
     if t["test_id"] == _SIXTEEN_TYPE_TEST_ID:
-        result_data = _compute_sixteen_type_result(t, attempt["answers"])
+        result_data = _compute_sixteen_type_result(t, attempt.answers)
     else:
-        result_data = _compute_state_result(t, attempt["answers"])
+        result_data = _compute_state_result(t, attempt.answers)
 
-    attempt["status"] = "completed"
-    attempt["completed_at"] = datetime.now(timezone.utc)
-    attempt["result_code"] = result_data["result_code"]
-    attempt["result_label"] = result_data["result_label"]
+    now = datetime.now(timezone.utc)
+    attempt.status = "completed"
+    attempt.completed_at = now
+    attempt.result_code = result_data["result_code"]
+    attempt.result_label = result_data["result_label"]
 
-    _history.append({
-        "attempt_id": attempt_id,
-        "test_id": attempt["test_id"],
-        "test_title": t["title"],
-        "result_code": result_data["result_code"],
-        "result_label": result_data["result_label"],
-        "completed_at": attempt["completed_at"],
-        "user_id": attempt["user_id"],
-    })
+    history = TestHistory(
+        user_id=attempt.user_id,
+        attempt_id=attempt_id,
+        test_id=attempt.test_id,
+        test_title=t["title"],
+        result_code=result_data["result_code"],
+        result_label=result_data["result_label"],
+        completed_at=now,
+    )
+    db.add(history)
+    db.commit()
 
     profile = result_data["profile"]
     return CompleteAttemptResponse(
@@ -397,18 +398,21 @@ def complete_attempt(attempt_id: str) -> CompleteAttemptResponse | None:
     )
 
 
-def get_history(user_id: str) -> TestHistoryResponse:
+def get_history(user_id: str, db: Session) -> TestHistoryResponse:
+    rows = db.scalars(
+        select(TestHistory)
+        .where(TestHistory.user_id == user_id)
+        .order_by(TestHistory.completed_at.desc())
+    ).all()
     items = [
         TestHistoryItem(
-            attempt_id=h["attempt_id"],
-            test_id=h["test_id"],
-            test_title=h["test_title"],
-            result_code=h["result_code"],
-            result_label=h["result_label"],
-            completed_at=h["completed_at"],
+            attempt_id=h.attempt_id,
+            test_id=h.test_id,
+            test_title=h.test_title,
+            result_code=h.result_code,
+            result_label=h.result_label,
+            completed_at=h.completed_at,
         )
-        for h in _history
-        if h["user_id"] == user_id
+        for h in rows
     ]
-    items.sort(key=lambda item: item.completed_at, reverse=True)
     return TestHistoryResponse(items=items)

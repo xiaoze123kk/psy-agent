@@ -14,6 +14,7 @@ import type {
   MoodTrendResponse,
   StartAttemptResponse,
   TestDetailResponse,
+  TestHistoryItem,
   TestListItem,
   ThreadListItem,
   UserMode,
@@ -153,7 +154,7 @@ const demoMoodTrend: MoodTrendResponse = {
 };
 
 type TestCategory = "state" | "personality" | "anime";
-type TestView = "list" | "taking" | "result";
+type TestView = "list" | "taking" | "result" | "history";
 
 const testView = ref<TestView>("list");
 const selectedTestCategory = ref<TestCategory>("state");
@@ -167,6 +168,9 @@ const testResult = ref<CompleteAttemptResponse | null>(null);
 const isTestLoading = ref(false);
 const isConfirmingResult = ref(false);
 const isShowingIncomplete = ref(false);
+const testHistory = ref<TestHistoryItem[]>([]);
+const isHistoryLoading = ref(false);
+const selectedHistoryIndex = ref(-1);
 
 const demoTests: TestListItem[] = [
   { test_id: "state-check-v1", code: "daily_state", title: "今日情绪状态自评", test_type: "state", estimated_minutes: 1, audience: "all", status: "published" },
@@ -997,6 +1001,39 @@ function backToTestList() {
   currentQuestionIndex.value = 0;
 }
 
+function formatTestTime(isoStr: string): string {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day} ${h}:${min}`;
+}
+
+async function loadTestHistory() {
+  isHistoryLoading.value = true;
+  try {
+    if (isDemoMode.value || !accessToken.value) {
+      testHistory.value = [];
+      return;
+    }
+    const resp = await api.getTestHistory();
+    testHistory.value = resp.items;
+  } catch {
+    testHistory.value = [];
+  } finally {
+    isHistoryLoading.value = false;
+  }
+}
+
+function openTestHistory() {
+  testView.value = "history";
+  selectedHistoryIndex.value = -1;
+  loadTestHistory();
+}
+
 function continueTestChat() {
   if (!testResult.value) return;
   const resultText = `我完成了一个测试：${testResult.value.result_title}。结果摘要：${testResult.value.summary}。我想继续聊聊这个结果。`;
@@ -1259,12 +1296,13 @@ onMounted(async () => {
         </section>
 
         <section v-else-if="activeTab === 'tests'" class="tab-page tests-page">
+          <div v-if="testView === 'list' || testView === 'history'" class="test-category-tabs">
+            <button :class="{ active: selectedTestCategory === 'state' && testView === 'list' }" type="button" @click="selectedTestCategory = 'state'; testView = 'list'">今日状态</button>
+            <button :class="{ active: selectedTestCategory === 'personality' && testView === 'list' }" type="button" @click="selectedTestCategory = 'personality'; testView = 'list'">人格测试</button>
+            <button :class="{ active: selectedTestCategory === 'anime' && testView === 'list' }" type="button" @click="selectedTestCategory = 'anime'; testView = 'list'">动漫人物匹配</button>
+            <button :class="{ active: testView === 'history' }" type="button" @click="openTestHistory">历史</button>
+          </div>
           <div v-if="testView === 'list'" class="tests-list">
-            <div class="test-category-tabs">
-              <button :class="{ active: selectedTestCategory === 'state' }" type="button" @click="selectedTestCategory = 'state'">今日状态</button>
-              <button :class="{ active: selectedTestCategory === 'personality' }" type="button" @click="selectedTestCategory = 'personality'">人格测试</button>
-              <button :class="{ active: selectedTestCategory === 'anime' }" type="button" @click="selectedTestCategory = 'anime'">动漫人物匹配</button>
-            </div>
             <div class="test-card-list">
               <article v-for="test in filteredTests()" :key="test.test_id" class="test-card">
                 <h2>{{ test.title }}</h2>
@@ -1380,6 +1418,33 @@ onMounted(async () => {
               <button class="primary-action" type="button" @click="continueTestChat">继续聊聊这个结果</button>
               <button class="secondary-action" type="button" @click="backToTestList">返回测试列表</button>
             </footer>
+          </div>
+
+          <div v-else-if="testView === 'history'" class="tests-history">
+            <p v-if="isHistoryLoading" class="empty-copy">加载中...</p>
+            <div v-else-if="testHistory.length === 0" class="test-card-list">
+              <p class="empty-copy">暂无测试记录</p>
+              <button class="primary-action" type="button" @click="backToTestList">去做测试</button>
+            </div>
+            <div v-else class="test-card-list">
+              <article
+                v-for="(item, index) in testHistory"
+                :key="item.attempt_id"
+                class="test-card"
+              >
+                <h2>{{ item.test_title }}</h2>
+                <p class="test-card__duration">完成于 {{ formatTestTime(item.completed_at) }}</p>
+                <p class="test-card__result">{{ item.result_label }}</p>
+                <button
+                  class="secondary-action"
+                  type="button"
+                  @click="selectedHistoryIndex = selectedHistoryIndex === index ? -1 : index"
+                >{{ selectedHistoryIndex === index ? '收起' : '查看结果' }}</button>
+                <div v-if="selectedHistoryIndex === index" class="history-result-detail">
+                  <p class="result-code">{{ item.result_code }}</p>
+                </div>
+              </article>
+            </div>
           </div>
         </section>
 
@@ -2387,6 +2452,30 @@ input:focus-visible {
 
 .test-card .primary-action {
   width: fit-content;
+}
+
+.tests-history {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.test-card__result {
+  color: var(--text-muted);
+  font-size: 15px;
+  margin: 4px 0;
+}
+
+.result-code {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.history-result-detail {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--surface-muted);
+  border-radius: 8px;
 }
 
 .tests-taking {

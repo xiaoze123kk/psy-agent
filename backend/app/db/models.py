@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -200,3 +200,30 @@ class RefreshToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TestAttempt(Base):
+    __tablename__ = "test_attempts"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    test_id: Mapped[str] = mapped_column(String(64))
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="in_progress")
+    result_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TestHistory(Base):
+    __tablename__ = "test_history"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    attempt_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("test_attempts.id", ondelete="CASCADE"), index=True)
+    test_id: Mapped[str] = mapped_column(String(64))
+    test_title: Mapped[str] = mapped_column(String(160))
+    result_code: Mapped[str] = mapped_column(String(32))
+    result_label: Mapped[str] = mapped_column(String(80))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
