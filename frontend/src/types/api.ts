@@ -218,6 +218,13 @@ export interface KnowledgeSourceRef {
   score?: number | null;
 }
 
+export interface KnowledgeQuestionSuggestion {
+  original_question: string;
+  guessed_question: string;
+  confidence: "high" | "medium";
+  matched_term: string;
+}
+
 export interface AskKnowledgeResponse {
   answer: KnowledgeAnswer;
   related_articles: KnowledgeSearchItem[];
@@ -225,6 +232,7 @@ export interface AskKnowledgeResponse {
   scope_status: "in_scope" | "out_of_scope";
   confidence: "high" | "medium" | "low";
   source_refs: KnowledgeSourceRef[];
+  question_suggestion: KnowledgeQuestionSuggestion | null;
   gap_id: string | null;
   continue_chat_payload: {
     mode: string;
@@ -263,4 +271,79 @@ export interface ResolveKnowledgeGapRequest {
 export interface KnowledgeGapMutationResponse {
   gap_id: string;
   status: string;
+}
+
+export type KnowledgeQuizMode = "10" | "50" | "100";
+export type KnowledgeQuizQuestionType = "single_choice" | "true_false" | "image";
+
+export interface KnowledgeQuizOption {
+  key: string;
+  text: string;
+}
+
+export interface KnowledgeQuizVisual {
+  kind: string;
+  title: string;
+  lines: string[];
+}
+
+export interface KnowledgeQuizQuestion {
+  question_id: string;
+  type: KnowledgeQuizQuestionType;
+  topic: string;
+  difficulty: number;
+  stem: string;
+  options: KnowledgeQuizOption[];
+  visual: KnowledgeQuizVisual | null;
+  source_title: string;
+  source_url: string;
+}
+
+export interface StartKnowledgeQuizRequest {
+  mode: KnowledgeQuizMode;
+}
+
+export interface KnowledgeQuizSessionResponse {
+  session_id: string;
+  mode: KnowledgeQuizMode;
+  total: number;
+  questions: KnowledgeQuizQuestion[];
+}
+
+export interface SubmitKnowledgeQuizAnswer {
+  question_id: string;
+  answer: string;
+}
+
+export interface SubmitKnowledgeQuizRequest {
+  session_id: string;
+  answers: SubmitKnowledgeQuizAnswer[];
+}
+
+export interface KnowledgeQuizReviewItem {
+  question_id: string;
+  question: KnowledgeQuizQuestion;
+  is_correct: boolean;
+  user_answer: string | null;
+  correct_answer: string;
+  explanation: string;
+  source_title: string;
+  source_url: string;
+}
+
+export interface KnowledgeQuizResultResponse {
+  session_id: string;
+  mode: KnowledgeQuizMode;
+  total: number;
+  correct: number;
+  accuracy: number;
+  title: string;
+  title_description: string;
+  review: KnowledgeQuizReviewItem[];
+}
+
+export interface KnowledgeQuizBankStatsResponse {
+  total: number;
+  by_type: Record<string, number>;
+  by_topic: Record<string, number>;
 }

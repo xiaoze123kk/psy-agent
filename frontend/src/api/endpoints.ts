@@ -7,6 +7,9 @@ import type {
   KnowledgeArticleResponse,
   KnowledgeGapListResponse,
   KnowledgeGapMutationResponse,
+  KnowledgeQuizBankStatsResponse,
+  KnowledgeQuizResultResponse,
+  KnowledgeQuizSessionResponse,
   KnowledgeSearchResponse,
   ListMemoriesResponse,
   LoginRequest,
@@ -21,8 +24,10 @@ import type {
   ResolveKnowledgeGapRequest,
   SendMessageRequest,
   SendMessageResponse,
+  StartKnowledgeQuizRequest,
   StartThreadRequest,
   StartThreadResponse,
+  SubmitKnowledgeQuizRequest,
   ThreadListResponse,
 } from "../types/api";
 
@@ -105,6 +110,18 @@ export class CounselingApi {
       `/api/v1/knowledge/gaps/${gapId}/resolve`,
       payload,
     );
+  }
+
+  getKnowledgeQuizStats(): Promise<KnowledgeQuizBankStatsResponse> {
+    return this.client.get<KnowledgeQuizBankStatsResponse>("/api/v1/knowledge/quiz/stats");
+  }
+
+  startKnowledgeQuiz(payload: StartKnowledgeQuizRequest): Promise<KnowledgeQuizSessionResponse> {
+    return this.client.post<KnowledgeQuizSessionResponse, StartKnowledgeQuizRequest>("/api/v1/knowledge/quiz/start", payload);
+  }
+
+  submitKnowledgeQuiz(payload: SubmitKnowledgeQuizRequest): Promise<KnowledgeQuizResultResponse> {
+    return this.client.post<KnowledgeQuizResultResponse, SubmitKnowledgeQuizRequest>("/api/v1/knowledge/quiz/submit", payload);
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {

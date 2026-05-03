@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 
@@ -39,6 +40,13 @@ DISTRESS_TERMS: tuple[str, ...] = (
     "低落",
     "孤独",
     "烦躁",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
+    "发脾气",
+    "暴怒",
+    "火大",
     "自卑",
     "睡不着",
     "失眠",
@@ -53,6 +61,11 @@ PSYCHOLOGY_TERMS: tuple[str, ...] = (
     "心理健康",
     "情绪",
     "压力",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
+    "发脾气",
     "睡眠",
     "睡前",
     "脑子停不下来",
@@ -60,8 +73,20 @@ PSYCHOLOGY_TERMS: tuple[str, ...] = (
     "恐慌",
     "惊恐",
     "抑郁",
+    "抑郁症",
+    "兴趣下降",
     "强迫",
     "强迫症",
+    "双相",
+    "躁郁",
+    "躁狂",
+    "轻躁狂",
+    "饮食障碍",
+    "厌食",
+    "贪食",
+    "暴食",
+    "边缘型人格",
+    "bpd",
     "创伤",
     "应激",
     "ptsd",
@@ -177,6 +202,10 @@ INTERNAL_STATE_TERMS: tuple[str, ...] = (
     "情绪",
     "状态",
     "感受",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
     "累",
     "烦",
     "怕",
@@ -196,21 +225,55 @@ QUERY_STOP_PHRASES: tuple[str, ...] = (
 )
 
 SYNONYM_GROUPS: dict[str, tuple[str, ...]] = {
-    "创伤后应激障碍": ("ptsd", "创伤后应激障碍", "创伤后应激", "创伤后压力", "创伤", "闪回", "噩梦"),
-    "强迫": ("ocd", "强迫症", "强迫障碍", "强迫", "反复检查"),
-    "注意缺陷多动": ("adhd", "注意缺陷多动", "注意力缺陷", "多动", "注意力不集中"),
+    "创伤后应激障碍": ("ptsd", "pstd", "创伤后应激障碍", "创伤后应激", "创伤后压力", "创伤", "创上", "闪回", "噩梦"),
+    "抑郁": ("抑郁", "抑欲", "抑豫", "抑郁症", "低落", "兴趣下降", "无望", "开心不起来"),
+    "强迫": ("ocd", "ocb", "强迫症", "强迫障碍", "强迫", "强破", "反复检查"),
+    "注意缺陷多动": ("adhd", "ahdh", "注意缺陷多动", "注意力缺陷", "多动", "注意力不集中"),
+    "双相": ("双相", "躁郁", "躁狂", "轻躁狂", "心境障碍", "精力很高", "睡很少"),
+    "饮食障碍": ("饮食障碍", "厌食", "贪食", "暴食", "爆食", "身体形象", "催吐", "过度运动"),
+    "边缘型人格": ("bpd", "边缘型人格", "边缘型人格障碍", "情绪不稳定", "害怕被抛下", "空虚感", "解离", "解理"),
+    "压力焦虑": ("压力", "鸭梨", "压力源", "焦虑", "焦绿", "焦滤", "交虑", "叫虑", "担心", "紧绷", "应对压力"),
     "认知行为疗法": ("cbt", "认知行为疗法", "认知行为治疗", "认知重评", "认知偏差", "自动想法"),
     "辩证行为疗法": ("dbt", "辩证行为疗法", "情绪调节", "痛苦耐受"),
+    "愤怒调节": ("愤怒", "怒火", "生气", "易怒", "发脾气", "暴怒", "火大", "控制不住怒火", "情绪调节"),
     "眼动脱敏再加工": ("emdr", "眼动脱敏", "眼动脱敏再加工", "创伤治疗"),
-    "失眠": ("睡不着", "失眠", "睡前", "脑子停不下来", "入睡困难"),
-    "惊恐": ("心慌", "惊恐", "恐慌", "惊恐发作", "身体警报", "呼吸"),
-    "反刍": ("内耗", "反刍", "反复想", "想太多", "复盘停不下来", "脑子停不下来"),
-    "边界": ("边界感", "边界", "拒绝", "讨好", "关系边界"),
+    "失眠": ("睡不着", "睡不卓", "失眠", "失棉", "失绵", "睡前", "脑子停不下来", "入睡困难"),
+    "惊恐": ("心慌", "惊恐", "惊孔", "恐慌", "恐荒", "惊恐发作", "身体警报", "呼吸"),
+    "反刍": ("内耗", "内号", "反刍", "反处", "反厨", "反复想", "想太多", "复盘停不下来", "脑子停不下来"),
+    "边界": ("边界感", "边界", "边届", "边介", "拒绝", "讨好", "关系边界"),
     "焦虑依恋": ("焦虑依恋", "依恋", "安全感", "关系焦虑"),
     "心理耗竭": ("耗竭", "倦怠", "心理耗竭", "burnout", "精力恢复不过来"),
 }
 
+TYPO_CORRECTIONS: dict[str, str] = {
+    "pstd": "ptsd",
+    "ocb": "ocd",
+    "ahdh": "adhd",
+    "创上": "创伤",
+    "抑欲": "抑郁",
+    "抑豫": "抑郁",
+    "强破": "强迫",
+    "爆食": "暴食",
+    "解理": "解离",
+    "鸭梨": "压力",
+    "焦绿": "焦虑",
+    "焦滤": "焦虑",
+    "交虑": "焦虑",
+    "叫虑": "焦虑",
+    "睡不卓": "睡不着",
+    "失棉": "失眠",
+    "失绵": "失眠",
+    "惊孔": "惊恐",
+    "恐荒": "恐慌",
+    "内号": "内耗",
+    "反处": "反刍",
+    "反厨": "反刍",
+    "边届": "边界",
+    "边介": "边界",
+}
 
+
+@lru_cache(maxsize=8192)
 def normalize_knowledge_text(text: str) -> str:
     compact = " ".join(text.strip().lower().split())
     punctuation = "？！，。；：（）【】《》、“”‘’"
@@ -251,7 +314,7 @@ def _without_stop_phrases(text: str) -> str:
 
 
 def expand_knowledge_query(query: str) -> ExpandedKnowledgeQuery:
-    normalized = normalize_knowledge_text(query)
+    normalized = normalize_knowledge_text(apply_known_typo_corrections(query)[0])
     strong_terms: list[str] = []
     weak_terms: list[str] = []
 
@@ -286,7 +349,7 @@ def expand_knowledge_query(query: str) -> ExpandedKnowledgeQuery:
 
 
 def classify_knowledge_scope(question: str) -> KnowledgeScopeStatus:
-    normalized = normalize_knowledge_text(question)
+    normalized = normalize_knowledge_text(apply_known_typo_corrections(question)[0])
     if not normalized:
         return "out_of_scope"
 
@@ -303,3 +366,17 @@ def classify_knowledge_scope(question: str) -> KnowledgeScopeStatus:
     if contains_any(normalized, OUT_OF_SCOPE_TERMS):
         return "out_of_scope"
     return "out_of_scope"
+
+
+def apply_known_typo_corrections(question: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+    corrected = normalize_knowledge_text(question)
+    replacements: list[tuple[str, str]] = []
+    for alias, canonical in TYPO_CORRECTIONS.items():
+        normalized_alias = normalize_knowledge_text(alias)
+        if not normalized_alias or normalized_alias == canonical:
+            continue
+        if normalized_alias not in corrected:
+            continue
+        corrected = corrected.replace(normalized_alias, canonical)
+        replacements.append((alias, canonical))
+    return corrected, tuple(replacements)

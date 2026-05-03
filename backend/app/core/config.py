@@ -52,6 +52,7 @@ class Settings:
     deepseek_chat_model: str
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
+    knowledge_llm_answers_enabled: bool
 
 
 def _default_database_url() -> str:
@@ -74,6 +75,8 @@ def load_settings() -> Settings:
             os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         ),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
+        knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
+        in {"1", "true", "yes", "on"},
     )
 
 
