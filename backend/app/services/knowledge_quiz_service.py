@@ -126,6 +126,118 @@ IMAGE_VARIANTS: tuple[str, ...] = (
     "这张卡片更像在提醒哪类心理知识点？",
 )
 
+GENERAL_DISTRACTORS: tuple[str, ...] = (
+    "只要暂时转移注意力，就不需要再观察变化。",
+    "先把问题压下去，等完全撑不住时再处理。",
+    "把所有反应都归因于性格不好或意志力不够。",
+    "不看持续时间和生活影响，只凭一次表现下结论。",
+    "把网上看到的描述直接套成自己的诊断。",
+    "先要求自己立刻恢复正常，不需要任何支持。",
+    "只要别人说没事，就不用继续关注自己的状态。",
+    "用羞辱、责备或比较的方式推动自己改变。",
+    "把困扰藏起来，不和任何现实中的可信任的人说。",
+    "只寻找最严重解释，直到自己更紧张。",
+    "把一次测验结果当成最终判断。",
+    "认为求助会证明自己失败，所以必须独自处理。",
+)
+
+CATEGORY_DISTRACTORS: dict[str, tuple[str, ...]] = {
+    "emotion": (
+        "情绪一出现就必须马上消除，否则说明自己失控。",
+        "只分析道理，不需要注意身体紧绷、心跳或睡眠变化。",
+        "把强烈情绪当成事实本身，立刻按冲动行动。",
+        "要求自己永远保持平静，才算情绪管理成功。",
+        "反复压住感受，不给它任何被命名和整理的机会。",
+    ),
+    "relationship": (
+        "只要对方不高兴，就说明自己的边界一定错了。",
+        "为了维持关系，长期忽略自己的不舒服和需要。",
+        "用冷处理或威胁代替清楚表达。",
+        "把一次冲突直接等同于关系已经失败。",
+        "只关注谁对谁错，不看安全、尊重和具体请求。",
+    ),
+    "sleep": (
+        "越睡不着越要强迫自己立刻入睡。",
+        "白天状态被影响也不用记录，晚上再硬撑就好。",
+        "把睡眠问题完全看成自控力差。",
+        "睡前继续高刺激内容，直到困到撑不住。",
+        "只看昨晚睡得怎样，不看一段时间的趋势。",
+    ),
+    "self_help": (
+        "自助练习越多越好，不需要根据承受度调整。",
+        "只要知道技巧名称，就等于已经改变了模式。",
+        "练习时更痛苦也继续硬做，不用停下来评估。",
+        "把工具当成必须完美完成的任务。",
+        "只做记录，不把下一步缩小到可执行范围。",
+    ),
+    "safety": (
+        "先答应替对方保密，再慢慢观察。",
+        "有风险信号时仍优先保持礼貌，不打扰别人。",
+        "等问题自己缓解后再考虑现实支持。",
+        "把安全风险当成普通情绪波动处理。",
+        "只在聊天里安慰，不连接现实中的人或服务。",
+    ),
+    "teen": (
+        "只用成绩好坏判断自己的价值。",
+        "遇到压力时完全不告诉可信任的大人。",
+        "把一次考试或一次冲突看成无法改变的结论。",
+        "为了不麻烦别人，长期隐瞒睡眠和情绪变化。",
+        "只靠熬夜补救，不调整任务和支持资源。",
+    ),
+}
+
+VARIANT_DISTRACTORS: dict[str, tuple[str, ...]] = {
+    "概念理解": (
+        "把它简化成想太多、太敏感或不够努力。",
+        "只记住标签，不看具体情境、持续时间和影响。",
+        "认为同一个词在每个人身上都会完全一样。",
+        "把心理科普当成诊断书使用。",
+    ),
+    "第一步": (
+        "先反复搜索最严重后果，直到完全安心。",
+        "马上要求自己改变所有习惯。",
+        "先证明自己不该有这种感受。",
+        "直接做高强度挑战，不给自己稳定的缓冲。",
+    ),
+    "常见误区": (
+        "先看具体表现持续多久、是否影响生活。",
+        "把困扰放回压力、身体和关系情境里理解。",
+        "需要时可以寻求现实或专业支持。",
+        "强烈感受不等于人有问题，也不等于必须立刻行动。",
+    ),
+    "求助信号": (
+        "只是偶尔想起这个词，但没有困扰或功能影响。",
+        "一次短暂波动后能自然恢复，也没有安全风险。",
+        "只是想了解概念，暂时不影响睡眠、学习、工作或关系。",
+        "能正常生活，并且已经有稳定支持和恢复方式。",
+    ),
+    "自助边界": (
+        "自助材料可以直接替代医生、治疗师或危机服务。",
+        "只要看完科普，就能自己完成诊断和治疗。",
+        "遇到安全风险时，继续独自做练习就够了。",
+        "所有建议都应该立即照做，不需要结合自身情况。",
+    ),
+    "支持他人": (
+        "马上分析对方哪里做错了。",
+        "告诉对方别想太多，很快就会好。",
+        "替对方下诊断，再要求对方按你的判断行动。",
+        "把对方的困扰转成自己的经历，打断对方表达。",
+    ),
+}
+
+IMAGE_DISTRACTORS: tuple[str, ...] = (
+    "先给自己贴一个确定诊断标签。",
+    "继续忍着，不告诉任何现实中的人。",
+    "把困扰完全归因于意志力不足。",
+    "只看最坏结果，直到确认没有任何风险。",
+    "马上要求自己恢复正常，不记录触发线索。",
+    "忽略身体和情绪信号，只靠讲道理压下去。",
+    "把一次反应当成固定人格缺陷。",
+    "先责备自己，再逼自己完成更多任务。",
+    "只在网上反复搜索，不连接现实支持。",
+    "把求助理解成软弱，所以继续独自硬扛。",
+)
+
 
 def _with_answer(options: list[str], correct_index: int) -> tuple[tuple[str, str], ...]:
     keys = ("A", "B", "C", "D")
@@ -136,25 +248,82 @@ def _correct_key(correct_index: int) -> str:
     return ("A", "B", "C", "D")[correct_index]
 
 
+def _topic_distractors(topic: QuizTopic) -> tuple[str, ...]:
+    return (
+        f"只要出现“{topic.topic}”相关困扰，就说明一定有严重问题。",
+        f"把“{topic.topic}”完全看成个人缺点，不需要考虑压力和支持。",
+        f"遇到“{topic.topic}”相关困扰时，先在网上给自己确定诊断。",
+        f"只记住“{topic.topic}”这个标签，不记录具体场景和变化。",
+        f"别人说“{topic.topic}”没什么，就不必在意自己的真实影响。",
+    )
+
+
+def _misconception_option(topic: QuizTopic, variant_index: int) -> str:
+    options = (
+        f"把“{topic.topic}”简单理解成想太多、太敏感或不够努力。",
+        f"认为只要知道“{topic.topic}”这个标签，就不需要看具体影响。",
+        f"把“{topic.topic}”当成必须独自硬扛、不能求助的问题。",
+        f"认为“{topic.topic}”出现一两次，就可以直接给自己或别人下诊断。",
+        f"把“{topic.topic}”完全归因于性格缺陷，而不看压力、身体和环境。",
+        f"觉得“{topic.topic}”只能靠意志力解决，不需要现实支持。",
+    )
+    return options[variant_index % len(options)]
+
+
+def _sample_distractors(seed: str, correct: str, candidates: tuple[str, ...], count: int = 3) -> list[str]:
+    unique_candidates = list(dict.fromkeys(item for item in candidates if item and item != correct))
+    if len(unique_candidates) < count:
+        raise ValueError("Not enough unique distractors.")
+    digest = sha256(seed.encode("utf-8")).hexdigest()
+    rng = random.Random(int(digest[:16], 16))
+    return rng.sample(unique_candidates, count)
+
+
+def _single_choice_distractors(topic: QuizTopic, variant_name: str, correct: str, variant_index: int) -> list[str]:
+    if variant_name == "常见误区":
+        candidates = (
+            topic.fact,
+            topic.action,
+            topic.misconception,
+            topic.seek_help,
+            f"可以先观察“{topic.topic}”持续多久、是否影响睡眠、学习、工作或关系。",
+            f"理解“{topic.topic}”时，要把具体场景、身体反应和现实支持一起看。",
+            f"如果“{topic.topic}”相关困扰明显影响生活，可以考虑连接专业支持。",
+        ) + VARIANT_DISTRACTORS[variant_name]
+        return _sample_distractors(f"single:{topic.key}:{variant_name}:{variant_index}", correct, candidates)
+
+    candidates = (
+        _topic_distractors(topic)
+        + VARIANT_DISTRACTORS[variant_name]
+        + CATEGORY_DISTRACTORS.get(topic.category, ())
+        + GENERAL_DISTRACTORS
+    )
+    return _sample_distractors(f"single:{topic.key}:{variant_name}:{variant_index}", correct, candidates)
+
+
+def _image_distractors(topic: QuizTopic, variant_index: int) -> list[str]:
+    candidates = (
+        _topic_distractors(topic)
+        + CATEGORY_DISTRACTORS.get(topic.category, ())
+        + IMAGE_DISTRACTORS
+        + GENERAL_DISTRACTORS
+    )
+    return _sample_distractors(f"image:{topic.key}:{variant_index}", topic.action, candidates)
+
+
 def _single_choice_question(topic: QuizTopic, variant_index: int) -> QuizQuestion:
     variant_name, stem_template = SINGLE_VARIANTS[variant_index % len(SINGLE_VARIANTS)]
     correct_index = (variant_index + len(topic.key)) % 4
     correct_options = {
         "概念理解": topic.fact,
         "第一步": topic.action,
-        "常见误区": f"需要避免把它理解成：{topic.misconception}",
+        "常见误区": _misconception_option(topic, variant_index),
         "求助信号": topic.seek_help,
-        "自助边界": "知识问答只能做科普和自助整理，不能替代诊断、治疗或用药建议。",
-        "支持他人": "先接住感受、关注安全，再鼓励对方连接现实支持。",
+        "自助边界": f"关于“{topic.topic}”的知识问答只能做科普和自助整理，不能替代诊断、治疗或用药建议。",
+        "支持他人": f"先接住对方关于“{topic.topic}”的感受，关注安全，再鼓励对方连接现实支持。",
     }
     correct = correct_options[variant_name]
-    distractors = [
-        "马上给自己或别人下诊断结论。",
-        "忽略持续时间和功能影响，只看一两次表现。",
-        "用责备、羞辱或硬扛的方式处理。",
-        "把所有问题都解释成性格缺陷。",
-    ]
-    options = [correct, *distractors[:3]]
+    options = [correct, *_single_choice_distractors(topic, variant_name, correct, variant_index)]
     return QuizQuestion(
         question_id=f"quiz-{topic.key}-single-{variant_index:02d}",
         type="single_choice",
@@ -163,7 +332,12 @@ def _single_choice_question(topic: QuizTopic, variant_index: int) -> QuizQuestio
         stem=stem_template.format(topic=topic.topic),
         options=_with_answer(options, correct_index),
         correct_answer=_correct_key(correct_index),
-        explanation=f"更准确的理解是：{correct} 这类题只用于心理健康科普，不替代专业判断。",
+        explanation=(
+            f"需要避开的说法是：{correct} "
+            f"更准确的理解是：{topic.misconception}"
+            if variant_name == "常见误区"
+            else f"更准确的理解是：{correct} 这类题只用于心理健康科普，不替代专业判断。"
+        ),
         source_title=topic.source_title,
         source_url=topic.source_url,
     )
@@ -197,12 +371,7 @@ def _true_false_question(topic: QuizTopic, variant_index: int) -> QuizQuestion:
 
 def _image_question(topic: QuizTopic, variant_index: int) -> QuizQuestion:
     correct_index = (variant_index * 2 + len(topic.topic)) % 4
-    options = [
-        topic.action,
-        "先给自己贴一个确定诊断标签。",
-        "继续忍着，不告诉任何现实中的人。",
-        "把困扰完全归因于意志力不足。",
-    ]
+    options = [topic.action, *_image_distractors(topic, variant_index)]
     return QuizQuestion(
         question_id=f"quiz-{topic.key}-image-{variant_index:02d}",
         type="image",

@@ -40,6 +40,22 @@ class KnowledgeQuizTests(unittest.TestCase):
                 self.assertEqual(actual, counts)
                 self.assertTrue(session.session_id.startswith(f"knowledge-quiz:{mode}:"))
 
+    def test_single_and_image_options_are_not_reused_as_fixed_sets(self) -> None:
+        questions = [question for question in _select_questions("10", "option-diversity") if question.type != "true_false"]
+        option_sets = [tuple(text for _, text in question.options) for question in questions]
+
+        self.assertEqual(len(option_sets), len(set(option_sets)))
+        for options in option_sets:
+            self.assertEqual(len(options), len(set(options)))
+
+    def test_misconception_questions_have_clear_wrong_statement_answer(self) -> None:
+        misconception_questions = [question for question in QUIZ_BANK if "哪一种说法更需要避免" in question.stem]
+
+        self.assertTrue(misconception_questions)
+        for question in misconception_questions:
+            correct_text = dict(question.options)[question.correct_answer]
+            self.assertTrue(correct_text.startswith(("把", "认为", "觉得")))
+
     def test_submit_quiz_scores_reconstructed_session(self) -> None:
         session = start_knowledge_quiz("10")
         _, mode, seed = session.session_id.split(":")
