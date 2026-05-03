@@ -218,6 +218,13 @@ export interface KnowledgeSourceRef {
   score?: number | null;
 }
 
+export interface KnowledgeQuestionSuggestion {
+  original_question: string;
+  guessed_question: string;
+  confidence: "high" | "medium";
+  matched_term: string;
+}
+
 export interface AskKnowledgeResponse {
   answer: KnowledgeAnswer;
   related_articles: KnowledgeSearchItem[];
@@ -225,6 +232,7 @@ export interface AskKnowledgeResponse {
   scope_status: "in_scope" | "out_of_scope";
   confidence: "high" | "medium" | "low";
   source_refs: KnowledgeSourceRef[];
+  question_suggestion: KnowledgeQuestionSuggestion | null;
   gap_id: string | null;
   continue_chat_payload: {
     mode: string;

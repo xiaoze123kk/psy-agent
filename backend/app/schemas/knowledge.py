@@ -68,6 +68,13 @@ class KnowledgeSourceRefResponse(BaseModel):
     score: int | None = None
 
 
+class KnowledgeQuestionSuggestion(BaseModel):
+    original_question: str
+    guessed_question: str
+    confidence: Literal["high", "medium"]
+    matched_term: str
+
+
 class AskKnowledgeResponse(BaseModel):
     answer: KnowledgeAnswer
     related_articles: list[KnowledgeSearchItemResponse]
@@ -75,6 +82,7 @@ class AskKnowledgeResponse(BaseModel):
     scope_status: Literal["in_scope", "out_of_scope"] = "in_scope"
     confidence: Literal["high", "medium", "low"] = "high"
     source_refs: list[KnowledgeSourceRefResponse] = Field(default_factory=list)
+    question_suggestion: KnowledgeQuestionSuggestion | None = None
     gap_id: str | None = None
     continue_chat_payload: ContinueChatPayload
     risk_level: str = "L0"

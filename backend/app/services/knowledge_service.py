@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from uuid import UUID
 
 from sqlalchemy import desc, or_, select
@@ -17,6 +18,7 @@ from app.schemas.knowledge import (
     KnowledgeGapItemResponse,
     KnowledgeGapListResponse,
     KnowledgeGapMutationResponse,
+    KnowledgeQuestionSuggestion,
     KnowledgeSearchItemResponse,
     KnowledgeSearchResponse,
     KnowledgeSourceRefResponse,
@@ -25,10 +27,15 @@ from app.services.deepseek_client import deepseek_client
 from app.services.knowledge_taxonomy import (
     ExpandedKnowledgeQuery,
     KnowledgeScopeStatus,
+    OUT_OF_SCOPE_TERMS,
+    SEXUAL_KNOWLEDGE_TERMS,
+    apply_known_typo_corrections,
     classify_knowledge_scope,
+    contains_any,
     expand_knowledge_query,
     normalize_knowledge_text,
 )
+from app.services.knowledge_seed_expansion import EXPANDED_SEED_ARTICLES
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,13 @@ class ChunkHit:
 class GeneratedKnowledgeAnswer:
     answer: KnowledgeAnswer
     scope_status: KnowledgeScopeStatus = "in_scope"
+
+
+@dataclass(frozen=True)
+class QuestionGuess:
+    guessed_question: str
+    matched_term: str
+    confidence: str
 
 
 SEED_SOURCES: list[dict[str, object]] = [
@@ -367,6 +381,9 @@ SEED_ARTICLES.extend(
 )
 
 
+SEED_ARTICLES.extend(EXPANDED_SEED_ARTICLES)
+
+
 def _ensure_seed_sources(db: Session) -> dict[str, KnowledgeSource]:
     changed = False
     sources: dict[str, KnowledgeSource] = {}
@@ -475,25 +492,30 @@ def _sync_article_chunks(db: Session, article: KnowledgeArticle) -> bool:
 def ensure_seed_articles(db: Session) -> None:
     changed = False
     sources = _ensure_seed_sources(db)
-    internal_source = sources["internal_curated"]
     for payload in SEED_ARTICLES:
-        slug = str(payload["slug"])
+        raw_payload = dict(payload)
+        slug = str(raw_payload["slug"])
         article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
+        source_key = str(raw_payload.pop("source_key", "internal_curated"))
+        source = sources.get(source_key, sources["internal_curated"])
+        source_url = str(raw_payload.get("source_url") or source.base_url or "local://internal-curated")
+        license_name = str(raw_payload.get("license") or source.license or "internal-curated")
         payload = {
-            **payload,
-            "source_id": internal_source.id,
+            **raw_payload,
+            "source_id": source.id,
             "review_status": "published",
-            "license": "internal-curated",
-            "source_url": "local://internal-curated",
+            "license": license_name,
+            "source_url": source_url,
             "published_at": utcnow(),
         }
-        payload["source_refs"] = [
-            {
-                "source_name": internal_source.name,
-                "source_url": "local://internal-curated",
-                "license": "internal-curated",
-            }
-        ]
+        if not payload.get("source_refs"):
+            payload["source_refs"] = [
+                {
+                    "source_name": source.name,
+                    "source_url": source_url,
+                    "license": license_name,
+                }
+            ]
         if article is None:
             article = KnowledgeArticle(**payload)
             db.add(article)
@@ -583,6 +605,17 @@ def _score_article(article: KnowledgeArticle, query: str | ExpandedKnowledgeQuer
         score += 15
     if expanded.normalized in article_explanation:
         score += 8
+
+    primary_term = expanded.strong_terms[0] if expanded.strong_terms else ""
+    if len(primary_term) >= 3:
+        if primary_term in article_title:
+            score += 150
+        if any(primary_term == tag or primary_term in tag for tag in article_tags):
+            score += 130
+        if primary_term in article_summary:
+            score += 60
+        if primary_term in article_explanation:
+            score += 35
 
     for phrase in [article_title, *article_tags]:
         if phrase and phrase in expanded.normalized:
@@ -764,6 +797,171 @@ def _source_refs_as_dicts(refs: list[KnowledgeSourceRefResponse]) -> list[dict]:
 
 def _classify_knowledge_scope(question: str) -> KnowledgeScopeStatus:
     return classify_knowledge_scope(question)
+
+
+QUESTION_CLEANUP_PHRASES: tuple[str, ...] = (
+    "是什么",
+    "是啥",
+    "什么意思",
+    "啥意思",
+    "怎么办",
+    "怎么回事",
+    "有用吗",
+    "为什么",
+    "如何",
+    "怎么",
+)
+
+FUZZY_EXCLUDED_TERMS: set[str] = {
+    "心理",
+    "心理学",
+    "心理健康",
+    "情绪",
+    "关系",
+    "自助",
+    "求助",
+    "安全",
+    "风险",
+    "支持",
+    "all",
+}
+
+
+def _contains_explicit_out_of_scope_terms(question: str) -> bool:
+    normalized = normalize_knowledge_text(question)
+    return contains_any(normalized, SEXUAL_KNOWLEDGE_TERMS) or contains_any(normalized, OUT_OF_SCOPE_TERMS)
+
+
+def _known_typo_guess(question: str) -> QuestionGuess | None:
+    guessed_question, replacements = apply_known_typo_corrections(question)
+    if not replacements or guessed_question == normalize_knowledge_text(question):
+        return None
+
+    return QuestionGuess(
+        guessed_question=guessed_question,
+        matched_term=replacements[0][1],
+        confidence="high",
+    )
+
+
+def _suggestion_response(question: str, guess: QuestionGuess | None) -> KnowledgeQuestionSuggestion | None:
+    if guess is None:
+        return None
+    confidence = "high" if guess.confidence == "high" else "medium"
+    return KnowledgeQuestionSuggestion(
+        original_question=question,
+        guessed_question=guess.guessed_question,
+        confidence=confidence,
+        matched_term=guess.matched_term,
+    )
+
+
+def _clean_candidate_term(term: str) -> str:
+    normalized = normalize_knowledge_text(term)
+    for phrase in QUESTION_CLEANUP_PHRASES:
+        normalized = normalized.replace(phrase, " ")
+    return " ".join(normalized.split())
+
+
+def _iter_knowledge_terms(db: Session) -> list[str]:
+    ensure_seed_articles(db)
+    articles = db.scalars(
+        select(KnowledgeArticle).where(
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+        )
+    )
+    terms: set[str] = set()
+    for article in articles:
+        raw_terms = [article.title, *(article.tags or [])]
+        for raw_term in raw_terms:
+            term = _clean_candidate_term(str(raw_term))
+            if term in FUZZY_EXCLUDED_TERMS:
+                continue
+            if len(term) < 2 or len(term) > 18:
+                continue
+            terms.add(term)
+    return sorted(terms, key=lambda item: (-len(item), item))
+
+
+def _substring_windows(text: str, target_length: int) -> list[str]:
+    compact = text.replace(" ", "")
+    lengths = {target_length}
+    if target_length >= 4:
+        lengths.update({target_length - 1, target_length + 1})
+    elif target_length == 3:
+        lengths.add(2)
+
+    windows: set[str] = set()
+    for length in lengths:
+        if length <= 0 or length > len(compact):
+            continue
+        for index in range(0, len(compact) - length + 1):
+            windows.add(compact[index : index + length])
+    return list(windows)
+
+
+def _best_term_window(query: str, term: str) -> tuple[float, str]:
+    normalized_query = normalize_knowledge_text(query)
+    normalized_term = normalize_knowledge_text(term)
+    if not normalized_query or not normalized_term or normalized_term in normalized_query:
+        return 0.0, ""
+
+    best_score = 0.0
+    best_window = ""
+    if normalized_term.isascii():
+        tokens = [token for token in normalized_query.replace("-", " ").split() if token.isascii()]
+        tokens.extend(_substring_windows(normalized_query, len(normalized_term)))
+        candidates = tokens
+    else:
+        candidates = _substring_windows(normalized_query, len(normalized_term))
+
+    for candidate in candidates:
+        if not candidate or candidate == normalized_term:
+            continue
+        score = SequenceMatcher(None, candidate, normalized_term).ratio()
+        if score > best_score:
+            best_score = score
+            best_window = candidate
+    return best_score, best_window
+
+
+def _passes_fuzzy_threshold(term: str, score: float) -> bool:
+    if term.isascii():
+        return len(term) >= 3 and score >= 0.74
+    if len(term) >= 4:
+        return score >= 0.74
+    if len(term) == 3:
+        return score >= 0.67
+    return False
+
+
+def _fuzzy_question_guess(db: Session, question: str) -> QuestionGuess | None:
+    if _contains_explicit_out_of_scope_terms(question):
+        return None
+
+    normalized_question = normalize_knowledge_text(question)
+    best: tuple[float, str, str] | None = None
+    for term in _iter_knowledge_terms(db):
+        score, window = _best_term_window(normalized_question, term)
+        if not window or not _passes_fuzzy_threshold(term, score):
+            continue
+        if best is None or score > best[0] or (score == best[0] and len(term) > len(best[1])):
+            best = (score, term, window)
+
+    if best is None:
+        return None
+
+    score, term, window = best
+    guessed_question = normalized_question.replace(window, term, 1)
+    if guessed_question == normalized_question:
+        return None
+
+    return QuestionGuess(
+        guessed_question=guessed_question,
+        matched_term=term,
+        confidence="high" if score >= 0.86 else "medium",
+    )
 
 
 def _out_of_scope_knowledge_answer() -> KnowledgeAnswer:
@@ -1120,7 +1318,16 @@ async def ask_knowledge(
             risk_level=risk_level,
         )
 
-    scope_status = _classify_knowledge_scope(question)
+    question_guess = _known_typo_guess(question)
+    effective_question = question_guess.guessed_question if question_guess else question
+    scope_status = _classify_knowledge_scope(effective_question)
+    if scope_status == "out_of_scope" and not _contains_explicit_out_of_scope_terms(question):
+        fuzzy_guess = _fuzzy_question_guess(db, effective_question)
+        if fuzzy_guess is not None:
+            question_guess = fuzzy_guess
+            effective_question = fuzzy_guess.guessed_question
+            scope_status = _classify_knowledge_scope(effective_question)
+
     if scope_status == "out_of_scope":
         return AskKnowledgeResponse(
             answer=_out_of_scope_knowledge_answer(),
@@ -1138,7 +1345,9 @@ async def ask_knowledge(
             risk_level=risk_level,
         )
 
-    if _is_broad_psychology_request(question):
+    question_suggestion = _suggestion_response(question, question_guess)
+
+    if _is_broad_psychology_request(effective_question):
         hits = _broad_psychology_hits(db)
         articles = _unique_articles_from_hits(hits, limit=4)
         return AskKnowledgeResponse(
@@ -1148,6 +1357,7 @@ async def ask_knowledge(
             scope_status="in_scope",
             confidence="high",
             source_refs=_source_refs_from_hits(hits),
+            question_suggestion=question_suggestion,
             continue_chat_payload=ContinueChatPayload(
                 mode="knowledge",
                 context_type="knowledge_overview",
@@ -1157,8 +1367,17 @@ async def ask_knowledge(
             risk_level=risk_level,
         )
 
-    hits = _search_chunk_hits(db, query=question, limit=8)
+    hits = _search_chunk_hits(db, query=effective_question, limit=8)
     coverage_status, confidence, top_score = _coverage_from_hits(hits)
+    if coverage_status == "insufficient" and question_guess is None:
+        fuzzy_guess = _fuzzy_question_guess(db, effective_question)
+        if fuzzy_guess is not None:
+            question_guess = fuzzy_guess
+            effective_question = fuzzy_guess.guessed_question
+            question_suggestion = _suggestion_response(question, question_guess)
+            hits = _search_chunk_hits(db, query=effective_question, limit=8)
+            coverage_status, confidence, top_score = _coverage_from_hits(hits)
+
     source_refs = _source_refs_from_hits(hits)
     articles = _unique_articles_from_hits(hits, limit=4)
     related = [article_to_search_item(article) for article in articles]
@@ -1188,13 +1407,14 @@ async def ask_knowledge(
             scope_status="in_scope",
             confidence=confidence,
             source_refs=[],
+            question_suggestion=question_suggestion,
             gap_id=gap.id,
             continue_chat_payload=ContinueChatPayload(mode="knowledge", context_type="knowledge_fallback", thread_id=thread_id),
             risk_level=risk_level,
         )
 
     generated = await _generate_knowledge_answer(
-        question=question,
+        question=effective_question,
         hits=hits,
         use_my_context=use_my_context,
     )
@@ -1206,6 +1426,7 @@ async def ask_knowledge(
             scope_status="out_of_scope",
             confidence="low",
             source_refs=[],
+            question_suggestion=question_suggestion,
             gap_id=None,
             continue_chat_payload=ContinueChatPayload(
                 mode="knowledge",
@@ -1222,9 +1443,10 @@ async def ask_knowledge(
         scope_status="in_scope",
         confidence=confidence,
         source_refs=source_refs,
+        question_suggestion=question_suggestion,
         continue_chat_payload=ContinueChatPayload(
             mode="knowledge",
-            context_type="knowledge_article",
+            context_type="knowledge_article_guess" if question_suggestion else "knowledge_article",
             article_id=hits[0].article.id,
             thread_id=thread_id,
         ),

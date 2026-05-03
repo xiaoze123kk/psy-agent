@@ -45,6 +45,7 @@ interface KnowledgeChatMessage {
   answer?: AskKnowledgeResponse["answer"];
   relatedArticles?: KnowledgeSearchItem[];
   sourceRefs?: AskKnowledgeResponse["source_refs"];
+  questionSuggestion?: AskKnowledgeResponse["question_suggestion"];
   coverageStatus?: AskKnowledgeResponse["coverage_status"];
   scopeStatus?: AskKnowledgeResponse["scope_status"];
   confidence?: AskKnowledgeResponse["confidence"];
@@ -756,6 +757,7 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
       answer: response.answer,
       relatedArticles: response.related_articles,
       sourceRefs: response.source_refs,
+      questionSuggestion: response.question_suggestion,
       coverageStatus: response.coverage_status,
       scopeStatus: response.scope_status,
       confidence: response.confidence,
@@ -1047,6 +1049,11 @@ onMounted(async () => {
             >
               <p>{{ message.text }}</p>
               <template v-if="message.answer">
+                <div v-if="message.questionSuggestion" class="knowledge-guess">
+                  <span>猜你想问</span>
+                  <strong>{{ message.questionSuggestion.guessed_question }}</strong>
+                  <small>已按这个问题回答</small>
+                </div>
                 <div v-if="message.scopeStatus === 'out_of_scope'" class="knowledge-coverage knowledge-coverage--out-of-scope">
                   <span>范围外</span>
                   <small>心理知识限定</small>
@@ -1786,6 +1793,33 @@ onMounted(async () => {
 .knowledge-explanation {
   margin-top: 8px !important;
   color: var(--text-muted);
+}
+
+.knowledge-guess {
+  margin-top: 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(30, 118, 103, 0.16);
+  border-radius: 14px;
+  padding: 9px 10px;
+  background: #f4faf6;
+}
+
+.knowledge-guess span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-guess strong {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.knowledge-guess small {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .knowledge-coverage {
