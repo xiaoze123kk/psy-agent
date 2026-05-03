@@ -1,4 +1,4 @@
-export type UserMode = "teen" | "adult";
+﻿export type UserMode = "teen" | "adult";
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 
@@ -217,4 +217,88 @@ export interface AskKnowledgeResponse {
     thread_id?: string | null;
   };
   risk_level: "L0" | "L1" | "L2" | "L3";
+}
+
+export interface TestListItem {
+  test_id: string;
+  code: string;
+  title: string;
+  test_type: "state" | "personality" | "anime";
+  estimated_minutes: number;
+  audience: string;
+  status: string;
+}
+
+export interface TestListResponse {
+  items: TestListItem[];
+}
+
+export interface TestOption {
+  id: string;
+  text: string;
+  score: number;
+}
+
+export interface TestQuestion {
+  index: number;
+  text: string;
+  options: TestOption[];
+}
+
+export interface TestDetailResponse {
+  test_id: string;
+  code: string;
+  title: string;
+  questions: TestQuestion[];
+}
+
+export interface StartAttemptResponse {
+  attempt_id: string;
+  test_id: string;
+  questions: TestQuestion[];
+}
+
+export interface SubmitAnswerRequest {
+  question_index: number;
+  option_id: string;
+}
+
+export interface TestResultProfile {
+  sixteen_type_code?: string;
+  sixteen_type_label?: string;
+  traits: string[];
+  strengths: string[];
+  blind_spots: string[];
+  companion_style: string;
+}
+
+export interface ContinueChatContext {
+  mode: string;
+  context_type: string;
+}
+
+export interface CompleteAttemptResponse {
+  attempt_id: string;
+  test_code: string;
+  result_code: string;
+  result_title: string;
+  summary: string;
+  strengths: string[];
+  blind_spots: string[];
+  suggested_actions: string[];
+  continue_chat_context: ContinueChatContext;
+  profile: TestResultProfile;
+}
+
+export interface TestHistoryItem {
+  attempt_id: string;
+  test_id: string;
+  test_title: string;
+  result_code: string;
+  result_label: string;
+  completed_at: string;
+}
+
+export interface TestHistoryResponse {
+  items: TestHistoryItem[];
 }

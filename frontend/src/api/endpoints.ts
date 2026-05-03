@@ -1,8 +1,9 @@
-import { ApiClient, type SseEventHandler } from "./client";
+﻿import { ApiClient, type SseEventHandler } from "./client";
 import type {
   AskKnowledgeRequest,
   AskKnowledgeResponse,
   CaptchaResponse,
+  CompleteAttemptResponse,
   CurrentUserResponse,
   KnowledgeArticleResponse,
   KnowledgeSearchResponse,
@@ -18,8 +19,14 @@ import type {
   RegisterResponse,
   SendMessageRequest,
   SendMessageResponse,
+  StartAttemptResponse,
   StartThreadRequest,
   StartThreadResponse,
+  SubmitAnswerRequest,
+  TestDetailResponse,
+  TestHistoryResponse,
+  TestListItem,
+  TestListResponse,
   ThreadListResponse,
 } from "../types/api";
 
@@ -94,5 +101,29 @@ export class CounselingApi {
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {
     return this.client.get<MoodTrendResponse>(`/api/v1/moods/trends?range=${range}`);
+  }
+
+  listTests(): Promise<TestListResponse> {
+    return this.client.get<TestListResponse>("/api/v1/tests");
+  }
+
+  getTest(testId: string): Promise<TestDetailResponse> {
+    return this.client.get<TestDetailResponse>(`/api/v1/tests/${testId}`);
+  }
+
+  startAttempt(testId: string): Promise<StartAttemptResponse> {
+    return this.client.post<StartAttemptResponse, Record<string, never>>(`/api/v1/tests/${testId}/attempts`);
+  }
+
+  submitAnswer(attemptId: string, payload: SubmitAnswerRequest): Promise<void> {
+    return this.client.post<void, SubmitAnswerRequest>(`/api/v1/tests/attempts/${attemptId}/answers`, payload);
+  }
+
+  completeAttempt(attemptId: string): Promise<CompleteAttemptResponse> {
+    return this.client.post<CompleteAttemptResponse, Record<string, never>>(`/api/v1/tests/attempts/${attemptId}/complete`);
+  }
+
+  getTestHistory(): Promise<TestHistoryResponse> {
+    return this.client.get<TestHistoryResponse>("/api/v1/tests/history");
   }
 }

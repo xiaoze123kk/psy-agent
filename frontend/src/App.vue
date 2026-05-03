@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ApiClient } from "./api/client";
@@ -6,17 +6,21 @@ import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  CompleteAttemptResponse,
   KnowledgeArticleResponse,
   KnowledgeSearchItem,
   MemoryItem,
   MessageItem,
   MoodTrendResponse,
+  StartAttemptResponse,
+  TestDetailResponse,
+  TestListItem,
   ThreadListItem,
   UserMode,
 } from "./types/api";
 
 type Stage = "auth" | "onboarding" | "app";
-type Tab = "home" | "chat" | "knowledge" | "profile";
+type Tab = "home" | "chat" | "tests" | "knowledge" | "profile";
 type AgeOptionId = "13-15" | "16-17" | "18-24" | "25+";
 type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
@@ -148,6 +152,86 @@ const demoMoodTrend: MoodTrendResponse = {
   summary: "最近压力主要集中在睡眠和会前焦虑，适合优先减负。",
 };
 
+type TestCategory = "state" | "personality" | "anime";
+type TestView = "list" | "taking" | "result";
+
+const testView = ref<TestView>("list");
+const selectedTestCategory = ref<TestCategory>("state");
+const testItems = ref<TestListItem[]>([]);
+const currentTest = ref<TestDetailResponse | null>(null);
+const currentAttemptId = ref("");
+const currentQuestionIndex = ref(0);
+const selectedOptionId = ref("");
+const testAnswers = ref<Record<number, string>>({});
+const testResult = ref<CompleteAttemptResponse | null>(null);
+const isTestLoading = ref(false);
+const isConfirmingResult = ref(false);
+const isShowingIncomplete = ref(false);
+
+const demoTests: TestListItem[] = [
+  { test_id: "state-check-v1", code: "daily_state", title: "今日情绪状态自评", test_type: "state", estimated_minutes: 1, audience: "all", status: "published" },
+  { test_id: "sixteen-type-v1", code: "sixteen_type", title: "16 型人格探索", test_type: "personality", estimated_minutes: 3, audience: "all", status: "published" },
+  { test_id: "anime-match-v1", code: "anime_match", title: "测测你像哪个动漫角色", test_type: "anime", estimated_minutes: 5, audience: "all", status: "draft" },
+];
+
+const demoStateQuestions: TestDetailResponse = {
+  test_id: "state-check-v1",
+  code: "daily_state",
+  title: "今日情绪状态自评",
+  questions: [
+    { index: 0, text: "过去一周你的情绪状态整体如何？", options: [{ id: "a", text: "大部分时间比较平稳", score: 4 }, { id: "b", text: "偶尔会低落，但还能应付", score: 3 }, { id: "c", text: "经常感到低落，影响做事", score: 2 }, { id: "d", text: "几乎每天都很难受", score: 1 }] },
+    { index: 1, text: "过去一周你感到焦虑或紧张的程度？", options: [{ id: "a", text: "几乎没有明显焦虑", score: 4 }, { id: "b", text: "偶尔焦虑，但不影响日常", score: 3 }, { id: "c", text: "经常焦虑，开始影响睡眠或做事", score: 2 }, { id: "d", text: "大部分时间都很焦虑，难以放松", score: 1 }] },
+    { index: 2, text: "过去一周你对生活的整体满意度？", options: [{ id: "a", text: "总体还算满意", score: 4 }, { id: "b", text: "有些方面不太满意", score: 3 }, { id: "c", text: "很多方面都不太满意", score: 2 }, { id: "d", text: "几乎没有什么让我满意的", score: 1 }] },
+  ],
+};
+
+const demoTypeQuestions: TestDetailResponse = {
+  test_id: "sixteen-type-v1",
+  code: "sixteen_type",
+  title: "16 型人格探索",
+  questions: [
+    { index: 0, text: "在社交场合中，你通常：", options: [{ id: "a", text: "认识新朋友让你精力充沛", score: 4 }, { id: "b", text: "可以和少数熟悉的人聊很久", score: 3 }, { id: "c", text: "更喜欢安静观察", score: 2 }, { id: "d", text: "人多会让你很疲惫", score: 1 }] },
+    { index: 1, text: "周末你更倾向于：", options: [{ id: "a", text: "和朋友聚会或参加活动", score: 4 }, { id: "b", text: "约一两个好友小聚", score: 3 }, { id: "c", text: "在家做自己的事", score: 2 }, { id: "d", text: "一个人待着恢复能量", score: 1 }] },
+    { index: 2, text: "你更相信：", options: [{ id: "a", text: "亲眼看到的事实和具体经验", score: 4 }, { id: "b", text: "更多基于实际经验", score: 3 }, { id: "c", text: "更相信直觉和可能性", score: 2 }, { id: "d", text: "对抽象模式和未来走向很敏感", score: 1 }] },
+    { index: 3, text: "做决定时你更看重：", options: [{ id: "a", text: "逻辑分析和对错", score: 4 }, { id: "b", text: "先看逻辑再看人际关系", score: 3 }, { id: "c", text: "先考虑对周围人的影响", score: 2 }, { id: "d", text: "价值观与人的感受最重要", score: 1 }] },
+    { index: 4, text: "你对日程安排的态度：", options: [{ id: "a", text: "喜欢提前计划，按步骤执行", score: 4 }, { id: "b", text: "有计划但也接受调整", score: 3 }, { id: "c", text: "大概有个方向就好", score: 2 }, { id: "d", text: "跟着感觉走，不喜欢被约束", score: 1 }] },
+    { index: 5, text: "任务临近截止时你通常：", options: [{ id: "a", text: "早就做好了", score: 4 }, { id: "b", text: "按计划推进中", score: 3 }, { id: "c", text: "刚开始着手", score: 2 }, { id: "d", text: "在最后关头冲刺", score: 1 }] },
+  ],
+};
+
+const demoStateResult: CompleteAttemptResponse = {
+  attempt_id: "demo-state-attempt",
+  test_code: "daily_state",
+  result_code: "mild",
+  result_title: "有些波动，留意自我照顾",
+  summary: "最近你的情绪和焦虑有一些波动，还在可以调节的范围内。适当减负和规律作息会有帮助。",
+  strengths: ["你能主动关注自己的状态"],
+  blind_spots: ["别等到很累了才休息"],
+  suggested_actions: ["减少不必要的任务和压力源", "每天留出15分钟给自己放松", "和信任的人聊聊最近的状态"],
+  continue_chat_context: { mode: "test", context_type: "test_result" },
+  profile: { traits: ["情绪偶有起伏", "焦虑开始影响日常但不严重"], strengths: ["你能主动关注自己的状态"], blind_spots: ["别等到很累了才休息"], companion_style: "gentle" },
+};
+
+const demoTypeResult: CompleteAttemptResponse = {
+  attempt_id: "demo-type-attempt",
+  test_code: "sixteen_type",
+  result_code: "INFJ-like",
+  result_title: "洞察型陪伴者",
+  summary: "你对人的情绪很敏感，常常想得很深，也容易被他人情绪影响。这是自研非官方人格风格探索，把它当作了解自己的一面镜子，而不是一个固定的标签。",
+  strengths: ["善于洞察他人需求", "忠诚且有耐心", "富有创造力"],
+  blind_spots: ["容易忽略自己的需求", "过度反省", "难以拒绝别人"],
+  suggested_actions: ["把这个结果当作一面镜子而非标签", "选择一个你想加强的方向开始练习", "在接下来的对话中聊聊这个发现"],
+  continue_chat_context: { mode: "test", context_type: "test_result" },
+  profile: {
+    sixteen_type_code: "INFJ-like",
+    sixteen_type_label: "洞察型陪伴者",
+    traits: ["对他人的情绪很敏感", "容易想得很深", "压力下会过度消耗自己", "重视深层联结", "很有同理心"],
+    strengths: ["善于洞察他人需求", "忠诚且有耐心", "富有创造力"],
+    blind_spots: ["容易忽略自己的需求", "过度反省", "难以拒绝别人"],
+    companion_style: "先接住情绪，再轻轻拓宽视角",
+  },
+};
+
 function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
@@ -236,6 +320,10 @@ const canSubmitAuth = computed(
 const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
+const testHeaderTitle = computed(() => {
+  if (testView.value !== "result" || !testResult.value) return testView.value === "taking" && currentTest.value ? currentTest.value.title : "测试中心";
+  return testResult.value.result_title;
+});
 const moodSummary = computed(() => moodTrend.value?.summary || "还没有足够的状态数据，先从今天开始记录。");
 const contextText = computed(() =>
   [
@@ -273,6 +361,16 @@ watch([selectedStyle, selectedGoal], ([style, goal]) => {
 });
 
 watch(activeTab, (tab) => {
+
+  // 这里单独给演示模式做了一个分支，后续看看能不能合并
+
+  if (tab === "tests" && testItems.value.length === 0) {
+    if (isDemoMode.value || !accessToken.value) {
+      testItems.value = demoTests;
+    } else {
+      void loadTestList();
+    }
+  }
   if (tab === "knowledge" && knowledgeItems.value.length === 0) {
     void searchKnowledge();
   }
@@ -779,6 +877,145 @@ async function continueKnowledgeChat() {
   await submitMessage(`我想继续聊聊这个心理知识：${topic}`);
 }
 
+async function loadTestList() {
+  try {
+    isTestLoading.value = true;
+    const response = await api.listTests();
+    testItems.value = response.items;
+  } catch {
+    apiError.value = "测试列表加载失败。";
+  } finally {
+    isTestLoading.value = false;
+  }
+}
+
+function filteredTests(): TestListItem[] {
+  return testItems.value.filter((t) => t.test_type === selectedTestCategory.value);
+}
+
+async function startTest(testId: string) {
+  if (isDemoMode.value || !accessToken.value) {
+    currentTest.value = testId === "state-check-v1" ? demoStateQuestions : demoTypeQuestions;
+    currentAttemptId.value = `local-${testId}-${Date.now()}`;
+    testAnswers.value = {};
+    currentQuestionIndex.value = 0;
+    selectedOptionId.value = "";
+    testView.value = "taking";
+    return;
+  }
+  try {
+    isTestLoading.value = true;
+    const response = await api.startAttempt(testId);
+    currentTest.value = { test_id: response.test_id, code: "", title: "", questions: response.questions };
+    currentAttemptId.value = response.attempt_id;
+    testAnswers.value = {};
+    currentQuestionIndex.value = 0;
+    selectedOptionId.value = "";
+    testView.value = "taking";
+  } catch {
+    currentTest.value = testId === "state-check-v1" ? demoStateQuestions : demoTypeQuestions;
+    currentAttemptId.value = `local-${testId}-${Date.now()}`;
+    testAnswers.value = {};
+    currentQuestionIndex.value = 0;
+    testView.value = "taking";
+  } finally {
+    isTestLoading.value = false;
+  }
+}
+
+function selectOption(optionId: string) {
+  selectedOptionId.value = optionId;
+}
+
+function goToPrevQuestion() {
+  if (currentQuestionIndex.value > 0) {
+    currentQuestionIndex.value -= 1;
+    selectedOptionId.value = testAnswers.value[currentQuestionIndex.value] || "";
+  }
+}
+
+function goToNextQuestion() {
+  if (!currentTest.value) return;
+  testAnswers.value[currentQuestionIndex.value] = selectedOptionId.value;
+  if (!isDemoMode.value && accessToken.value) {
+    api.submitAnswer(currentAttemptId.value, { question_index: currentQuestionIndex.value, option_id: selectedOptionId.value }).catch(() => {});
+  }
+  if (currentQuestionIndex.value < currentTest.value.questions.length - 1) {
+    currentQuestionIndex.value += 1;
+    selectedOptionId.value = testAnswers.value[currentQuestionIndex.value] || "";
+  } else {
+    const unanswered = currentTest.value.questions.findIndex((q) => !testAnswers.value[q.index]);
+    if (unanswered !== -1) {
+      isShowingIncomplete.value = true;
+      return;
+    }
+    isConfirmingResult.value = true;
+  }
+}
+
+function jumpToUnanswered() {
+  if (!currentTest.value) return;
+  isShowingIncomplete.value = false;
+  const unanswered = currentTest.value.questions.findIndex((q) => !testAnswers.value[q.index]);
+  currentQuestionIndex.value = unanswered !== -1 ? unanswered : 0;
+  selectedOptionId.value = testAnswers.value[currentQuestionIndex.value] || "";
+}
+
+function confirmCompleteTest() {
+  isConfirmingResult.value = false;
+  completeTest();
+}
+
+function cancelCompleteTest() {
+  isConfirmingResult.value = false;
+}
+
+async function completeTest() {
+  if (isDemoMode.value || !accessToken.value || currentAttemptId.value.startsWith("local-")) {
+    testResult.value = currentTest.value?.test_id === "state-check-v1" ? { ...demoStateResult } : { ...demoTypeResult };
+    testView.value = "result";
+    return;
+  }
+  try {
+    isTestLoading.value = true;
+    testResult.value = await api.completeAttempt(currentAttemptId.value);
+    testView.value = "result";
+  } catch {
+    testResult.value = currentTest.value?.test_id === "state-check-v1" ? { ...demoStateResult } : { ...demoTypeResult };
+    testView.value = "result";
+  } finally {
+    isTestLoading.value = false;
+  }
+}
+
+function backToTestList() {
+  testView.value = "list";
+  testResult.value = null;
+  currentTest.value = null;
+  currentAttemptId.value = "";
+  testAnswers.value = {};
+  currentQuestionIndex.value = 0;
+}
+
+function continueTestChat() {
+  if (!testResult.value) return;
+  const resultText = `我完成了一个测试：${testResult.value.result_title}。结果摘要：${testResult.value.summary}。我想继续聊聊这个结果。`;
+  void (async () => {
+    await createThread(testResult.value?.result_title || "测试结果");
+    await submitMessage(resultText);
+    activeTab.value = "chat";
+  })();
+}
+
+function currentQuestion() {
+  return currentTest.value?.questions[currentQuestionIndex.value] ?? null;
+}
+
+function isLastQuestion() {
+  if (!currentTest.value) return false;
+  return currentQuestionIndex.value >= currentTest.value.questions.length - 1;
+}
+
 function openSafety() {
   safetyAction.value = null;
   isSafetyOpen.value = true;
@@ -935,6 +1172,7 @@ onMounted(async () => {
             <span class="top-label">{{ modeLabel }}</span>
             <h1 v-if="activeTab === 'home'">晚上好，{{ userName }}</h1>
             <h1 v-else-if="activeTab === 'chat'">{{ activeThread?.title || "对话" }}</h1>
+            <h1 v-else-if="activeTab === 'tests'">{{ testHeaderTitle }}</h1>
             <h1 v-else-if="activeTab === 'knowledge'">知识问答</h1>
             <h1 v-else>我的</h1>
           </div>
@@ -1018,6 +1256,131 @@ onMounted(async () => {
             <input v-model="composerText" type="text" placeholder="写下此刻的感受..." />
             <button type="submit" :disabled="!composerText.trim() || isSending">{{ isSending ? "..." : "发送" }}</button>
           </form>
+        </section>
+
+        <section v-else-if="activeTab === 'tests'" class="tab-page tests-page">
+          <div v-if="testView === 'list'" class="tests-list">
+            <div class="test-category-tabs">
+              <button :class="{ active: selectedTestCategory === 'state' }" type="button" @click="selectedTestCategory = 'state'">今日状态</button>
+              <button :class="{ active: selectedTestCategory === 'personality' }" type="button" @click="selectedTestCategory = 'personality'">人格测试</button>
+              <button :class="{ active: selectedTestCategory === 'anime' }" type="button" @click="selectedTestCategory = 'anime'">动漫人物匹配</button>
+            </div>
+            <div class="test-card-list">
+              <article v-for="test in filteredTests()" :key="test.test_id" class="test-card">
+                <h2>{{ test.title }}</h2>
+                <p class="test-card__duration">约 {{ test.estimated_minutes }} 分钟</p>
+                <button
+                  v-if="test.status === 'published'"
+                  class="primary-action"
+                  type="button"
+                  :disabled="isTestLoading"
+                  @click="startTest(test.test_id)"
+                >
+                  开始测试
+                </button>
+                <span v-else class="test-card__soon">即将推出</span>
+              </article>
+              <p v-if="filteredTests().length === 0 && !isTestLoading" class="empty-copy">该分类下暂时没有测试。</p>
+            </div>
+          </div>
+
+          <div v-else-if="testView === 'taking' && currentTest" class="tests-taking">
+            <div class="test-progress">
+              <span>{{ currentQuestionIndex + 1 }} / {{ currentTest.questions.length }}</span>
+              <button class="text-action" type="button" @click="backToTestList">退出</button>
+            </div>
+            <article class="test-question">
+              <h2>{{ currentQuestion()?.text }}</h2>
+              <div class="test-options">
+                <button
+                  v-for="option in currentQuestion()?.options"
+                  :key="option.id"
+                  :class="['test-option', { active: selectedOptionId === option.id }]"
+                  type="button"
+                  @click="selectOption(option.id)"
+                >
+                  {{ option.text }}
+                </button>
+              </div>
+            </article>
+            <div class="test-nav">
+              <button type="button" :disabled="currentQuestionIndex === 0" @click="goToPrevQuestion">上一题</button>
+              <button
+                type="button"
+                :class="{ 'primary-action': isLastQuestion() }"
+                :disabled="!selectedOptionId || isTestLoading"
+                @click="goToNextQuestion"
+              >{{ isLastQuestion() ? '查看结果' : '下一题' }}</button>
+            </div>
+
+            <div v-if="isConfirmingResult" class="confirm-overlay" @click.self="cancelCompleteTest">
+              <div class="confirm-dialog">
+                <h2>确认提交</h2>
+                <p>提交后作答情况无法修改，确定要提交吗？</p>
+                <div class="confirm-actions">
+                  <button class="secondary-action" type="button" @click="cancelCompleteTest">返回</button>
+                  <button class="primary-action" type="button" @click="confirmCompleteTest">提交</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="isShowingIncomplete" class="confirm-overlay" @click.self="isShowingIncomplete = false">
+              <div class="confirm-dialog">
+                <h2>未完成作答</h2>
+                <p>还有题目未完成，请完成后再查看结果</p>
+                <div class="confirm-actions">
+                  <button class="secondary-action" type="button" @click="isShowingIncomplete = false">返回</button>
+                  <button class="primary-action" type="button" @click="jumpToUnanswered">跳转</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="testView === 'result' && testResult" class="tests-result">
+            <article class="result-card">
+              <h1>{{ testResult.profile.sixteen_type_code ? `${testResult.profile.sixteen_type_code} · ` : '' }}{{ testResult.result_title }}</h1>
+              <p class="result-disclaimer">这不是对你的定义，而是一面镜子。</p>
+              <p class="result-summary">{{ testResult.summary }}</p>
+
+              <section v-if="testResult.profile.traits.length" class="result-section">
+                <strong>核心特征</strong>
+                <ul>
+                  <li v-for="trait in testResult.profile.traits" :key="trait">{{ trait }}</li>
+                </ul>
+              </section>
+
+              <section v-if="testResult.strengths.length" class="result-section">
+                <strong>优势</strong>
+                <ul>
+                  <li v-for="s in testResult.strengths" :key="s">{{ s }}</li>
+                </ul>
+              </section>
+
+              <section v-if="testResult.blind_spots.length" class="result-section">
+                <strong>盲点</strong>
+                <ul>
+                  <li v-for="b in testResult.blind_spots" :key="b">{{ b }}</li>
+                </ul>
+              </section>
+
+              <section v-if="testResult.suggested_actions.length" class="result-section">
+                <strong>建议行动</strong>
+                <ul>
+                  <li v-for="action in testResult.suggested_actions" :key="action">{{ action }}</li>
+                </ul>
+              </section>
+
+              <section v-if="testResult.profile.companion_style" class="result-section">
+                <strong>适合你的陪伴方式</strong>
+                <p>{{ testResult.profile.companion_style }}</p>
+              </section>
+            </article>
+
+            <footer class="sticky-actions">
+              <button class="primary-action" type="button" @click="continueTestChat">继续聊聊这个结果</button>
+              <button class="secondary-action" type="button" @click="backToTestList">返回测试列表</button>
+            </footer>
+          </div>
         </section>
 
         <section v-else-if="activeTab === 'knowledge'" class="tab-page knowledge-page">
@@ -1145,6 +1508,7 @@ onMounted(async () => {
         <nav class="bottom-nav" aria-label="底部导航">
           <button :class="{ active: activeTab === 'home' }" type="button" @click="activeTab = 'home'">首页</button>
           <button :class="{ active: activeTab === 'chat' }" type="button" @click="activeTab = 'chat'">对话</button>
+          <button :class="{ active: activeTab === 'tests' }" type="button" @click="activeTab = 'tests'">测试</button>
           <button :class="{ active: activeTab === 'knowledge' }" type="button" @click="activeTab = 'knowledge'">知识</button>
           <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
         </nav>
@@ -1900,7 +2264,7 @@ onMounted(async () => {
   right: 14px;
   bottom: 14px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
   padding: 8px;
   border-radius: 24px;
@@ -1955,6 +2319,229 @@ input:focus-visible {
   to {
     opacity: 1;
   }
+}
+
+.tests-page {
+  padding: 0 0 80px;
+}
+
+.test-category-tabs {
+  display: flex;
+  gap: 0;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.test-category-tabs button {
+  flex: 1;
+  min-height: 36px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.test-category-tabs button.active {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.test-card-list {
+  display: grid;
+  gap: 14px;
+  padding: 16px 22px;
+}
+
+.test-card {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--surface-muted);
+}
+
+.test-card h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.test-card__duration {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.test-card__soon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: #f0f0ed;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.test-card .primary-action {
+  width: fit-content;
+}
+
+.tests-taking {
+  display: grid;
+  gap: 20px;
+  padding: 16px 22px;
+}
+
+.test-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.test-question h2 {
+  margin: 0 0 16px;
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+.test-options {
+  display: grid;
+  gap: 10px;
+}
+
+.test-option {
+  display: block;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  font-size: 15px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.test-option.active {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  font-weight: 700;
+}
+
+.test-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.test-nav button {
+  min-height: 44px;
+  border-radius: 14px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.test-nav button:disabled {
+  opacity: 0.4;
+}
+
+.tests-result {
+  padding: 24px 22px 120px;
+}
+
+.result-card {
+  display: grid;
+  gap: 16px;
+}
+
+.result-card h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  color: var(--teal-dark);
+}
+
+.result-disclaimer {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--safety-bg);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.result-summary {
+  margin: 0;
+  color: var(--text-main);
+  line-height: 1.7;
+}
+
+.result-section {
+  display: grid;
+  gap: 8px;
+}
+
+.result-section strong {
+  font-size: 15px;
+}
+
+.result-section ul {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.result-section p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(18, 18, 18, 0.45);
+}
+
+.confirm-dialog {
+  width: min(calc(100% - 48px), 360px);
+  display: grid;
+  gap: 16px;
+  padding: 28px 24px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(38, 57, 52, 0.22);
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.confirm-dialog p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 @media (max-width: 520px) {
