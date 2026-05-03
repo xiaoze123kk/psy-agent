@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 
@@ -39,6 +40,13 @@ DISTRESS_TERMS: tuple[str, ...] = (
     "低落",
     "孤独",
     "烦躁",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
+    "发脾气",
+    "暴怒",
+    "火大",
     "自卑",
     "睡不着",
     "失眠",
@@ -53,6 +61,11 @@ PSYCHOLOGY_TERMS: tuple[str, ...] = (
     "心理健康",
     "情绪",
     "压力",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
+    "发脾气",
     "睡眠",
     "睡前",
     "脑子停不下来",
@@ -189,6 +202,10 @@ INTERNAL_STATE_TERMS: tuple[str, ...] = (
     "情绪",
     "状态",
     "感受",
+    "愤怒",
+    "怒火",
+    "生气",
+    "易怒",
     "累",
     "烦",
     "怕",
@@ -218,6 +235,7 @@ SYNONYM_GROUPS: dict[str, tuple[str, ...]] = {
     "压力焦虑": ("压力", "鸭梨", "压力源", "焦虑", "焦绿", "焦滤", "交虑", "叫虑", "担心", "紧绷", "应对压力"),
     "认知行为疗法": ("cbt", "认知行为疗法", "认知行为治疗", "认知重评", "认知偏差", "自动想法"),
     "辩证行为疗法": ("dbt", "辩证行为疗法", "情绪调节", "痛苦耐受"),
+    "愤怒调节": ("愤怒", "怒火", "生气", "易怒", "发脾气", "暴怒", "火大", "控制不住怒火", "情绪调节"),
     "眼动脱敏再加工": ("emdr", "眼动脱敏", "眼动脱敏再加工", "创伤治疗"),
     "失眠": ("睡不着", "睡不卓", "失眠", "失棉", "失绵", "睡前", "脑子停不下来", "入睡困难"),
     "惊恐": ("心慌", "惊恐", "惊孔", "恐慌", "恐荒", "惊恐发作", "身体警报", "呼吸"),
@@ -255,6 +273,7 @@ TYPO_CORRECTIONS: dict[str, str] = {
 }
 
 
+@lru_cache(maxsize=8192)
 def normalize_knowledge_text(text: str) -> str:
     compact = " ".join(text.strip().lower().split())
     punctuation = "？！，。；：（）【】《》、“”‘’"

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from threading import Lock
 from uuid import UUID
 
 from sqlalchemy import desc, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import settings
 from app.db.models import KnowledgeArticle, KnowledgeChunk, KnowledgeGap, KnowledgeSource, utcnow
 from app.graphs.nodes import risk_classifier
 from app.schemas.knowledge import (
@@ -383,6 +385,10 @@ SEED_ARTICLES.extend(
 
 SEED_ARTICLES.extend(EXPANDED_SEED_ARTICLES)
 
+_SEEDED_BIND_IDS: set[int] = set()
+_CHUNK_INDEX_BY_BIND: dict[int, list[tuple[KnowledgeChunk, KnowledgeArticle]]] = {}
+_SEED_LOCK = Lock()
+
 
 def _ensure_seed_sources(db: Session) -> dict[str, KnowledgeSource]:
     changed = False
@@ -489,51 +495,61 @@ def _sync_article_chunks(db: Session, article: KnowledgeArticle) -> bool:
     return changed
 
 
-def ensure_seed_articles(db: Session) -> None:
+def ensure_seed_articles(db: Session, *, force: bool = False) -> None:
+    bind_id = id(db.get_bind())
+    if not force and bind_id in _SEEDED_BIND_IDS:
+        return
+
     changed = False
-    sources = _ensure_seed_sources(db)
-    for payload in SEED_ARTICLES:
-        raw_payload = dict(payload)
-        slug = str(raw_payload["slug"])
-        article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
-        source_key = str(raw_payload.pop("source_key", "internal_curated"))
-        source = sources.get(source_key, sources["internal_curated"])
-        source_url = str(raw_payload.get("source_url") or source.base_url or "local://internal-curated")
-        license_name = str(raw_payload.get("license") or source.license or "internal-curated")
-        payload = {
-            **raw_payload,
-            "source_id": source.id,
-            "review_status": "published",
-            "license": license_name,
-            "source_url": source_url,
-            "published_at": utcnow(),
-        }
-        if not payload.get("source_refs"):
-            payload["source_refs"] = [
-                {
-                    "source_name": source.name,
-                    "source_url": source_url,
-                    "license": license_name,
-                }
-            ]
-        if article is None:
-            article = KnowledgeArticle(**payload)
-            db.add(article)
-            db.flush()
-            changed = True
-        else:
-            for key, value in payload.items():
-                if key == "published_at" and getattr(article, key) is not None:
-                    continue
-                if getattr(article, key) != value:
-                    setattr(article, key, value)
-                    changed = True
+    with _SEED_LOCK:
+        if not force and bind_id in _SEEDED_BIND_IDS:
+            return
 
-        if _sync_article_chunks(db, article):
-            changed = True
+        sources = _ensure_seed_sources(db)
+        for payload in SEED_ARTICLES:
+            raw_payload = dict(payload)
+            slug = str(raw_payload["slug"])
+            article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
+            source_key = str(raw_payload.pop("source_key", "internal_curated"))
+            source = sources.get(source_key, sources["internal_curated"])
+            source_url = str(raw_payload.get("source_url") or source.base_url or "local://internal-curated")
+            license_name = str(raw_payload.get("license") or source.license or "internal-curated")
+            payload = {
+                **raw_payload,
+                "source_id": source.id,
+                "review_status": "published",
+                "license": license_name,
+                "source_url": source_url,
+                "published_at": utcnow(),
+            }
+            if not payload.get("source_refs"):
+                payload["source_refs"] = [
+                    {
+                        "source_name": source.name,
+                        "source_url": source_url,
+                        "license": license_name,
+                    }
+                ]
+            if article is None:
+                article = KnowledgeArticle(**payload)
+                db.add(article)
+                db.flush()
+                changed = True
+            else:
+                for key, value in payload.items():
+                    if key == "published_at" and getattr(article, key) is not None:
+                        continue
+                    if getattr(article, key) != value:
+                        setattr(article, key, value)
+                        changed = True
 
-    if changed:
-        db.commit()
+            if _sync_article_chunks(db, article):
+                changed = True
+
+        if changed:
+            db.commit()
+            _CHUNK_INDEX_BY_BIND.pop(bind_id, None)
+        _SEEDED_BIND_IDS.add(bind_id)
 
 
 def article_to_search_item(article: KnowledgeArticle) -> KnowledgeSearchItemResponse:
@@ -718,16 +734,8 @@ def _search_chunk_hits(
     limit: int = 8,
 ) -> list[ChunkHit]:
     ensure_seed_articles(db)
+    rows = _published_chunk_rows(db)
     expanded_query = expand_knowledge_query(query)
-    rows = db.execute(
-        select(KnowledgeChunk, KnowledgeArticle)
-        .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
-        .where(
-            KnowledgeArticle.status == "published",
-            KnowledgeArticle.review_status == "published",
-            KnowledgeChunk.status == "published",
-        )
-    ).all()
 
     hits: list[ChunkHit] = []
     for chunk, article in rows:
@@ -741,6 +749,33 @@ def _search_chunk_hits(
 
     hits.sort(key=lambda hit: (-hit.score, hit.article.title, hit.chunk.chunk_index))
     return hits[:limit]
+
+
+def _published_chunk_rows(db: Session) -> list[tuple[KnowledgeChunk, KnowledgeArticle]]:
+    bind_id = id(db.get_bind())
+    cached = _CHUNK_INDEX_BY_BIND.get(bind_id)
+    if cached is not None:
+        return cached
+
+    rows = db.execute(
+        select(KnowledgeChunk, KnowledgeArticle)
+        .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
+        .options(joinedload(KnowledgeArticle.source))
+        .where(
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+            KnowledgeChunk.status == "published",
+        )
+    ).all()
+
+    cached_rows = [(chunk, article) for chunk, article in rows]
+    _CHUNK_INDEX_BY_BIND[bind_id] = cached_rows
+    return cached_rows
+
+
+def warm_knowledge_search_index(db: Session) -> None:
+    ensure_seed_articles(db)
+    _published_chunk_rows(db)
 
 
 def _unique_articles_from_hits(hits: list[ChunkHit], *, limit: int) -> list[KnowledgeArticle]:
@@ -1233,7 +1268,7 @@ async def _generate_knowledge_answer(
         return None
 
     fallback = _fallback_answer(hits[0].article, use_my_context=use_my_context)
-    if not deepseek_client.is_configured:
+    if not settings.knowledge_llm_answers_enabled or not deepseek_client.is_configured:
         return GeneratedKnowledgeAnswer(answer=fallback)
 
     source_context = "\n\n".join(_chunk_context(hit, index + 1) for index, hit in enumerate(hits[:4]))

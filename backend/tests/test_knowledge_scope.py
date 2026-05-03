@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -54,6 +55,9 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
             "OCD是什么",
             "CBT有用吗",
             "ADHD是啥",
+            "怒火是怎么形成的",
+            "愤怒怎么办",
+            "控制不住发脾气怎么办",
         ):
             with self.subTest(question=question):
                 self.assertEqual(knowledge_service._classify_knowledge_scope(question), "in_scope")
@@ -239,6 +243,8 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
             "ADHD 时间感差": "bulk-adhd-time-blindness",
             "睡眠卫生": "bulk-sleep-hygiene",
             "暴食发作": "bulk-eating-binge",
+            "怒火是怎么形成的": "bulk-bpd-anger",
+            "控制不住发脾气怎么办": "bulk-bpd-anger",
         }
         with Session() as db:
             for question, expected_slug in cases.items():
@@ -246,12 +252,42 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
                     hits = knowledge_service._search_chunk_hits(db, query=question, limit=5)
                     hit_slugs = [hit.article.slug for hit in hits]
 
-                    self.assertIn(expected_slug, hit_slugs)
+        self.assertIn(expected_slug, hit_slugs)
+
+    async def test_high_confidence_answer_skips_model_by_default(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        original_api_key = knowledge_service.deepseek_client.api_key
+        original_chat = knowledge_service.deepseek_client.chat
+
+        async def fail_if_called(messages, **kwargs):
+            raise AssertionError("knowledge answer should use fast deterministic path by default")
+
+        knowledge_service.deepseek_client.api_key = "test-key"
+        knowledge_service.deepseek_client.chat = fail_if_called
+
+        try:
+            with Session() as db:
+                response = await knowledge_service.ask_knowledge(
+                    db,
+                    question="什么是边界感",
+                    use_my_context=False,
+                    thread_id="thread-1",
+                )
+        finally:
+            knowledge_service.deepseek_client.api_key = original_api_key
+            knowledge_service.deepseek_client.chat = original_chat
+
+        self.assertEqual(response.scope_status, "in_scope")
+        self.assertEqual(response.coverage_status, "sufficient")
+        self.assertEqual(response.confidence, "high")
 
     async def test_model_boundary_override_updates_response_scope(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        original_settings = knowledge_service.settings
         original_api_key = knowledge_service.deepseek_client.api_key
         original_chat = knowledge_service.deepseek_client.chat
         captured_system_prompt = ""
@@ -271,6 +307,7 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
 
         knowledge_service.deepseek_client.api_key = "test-key"
         knowledge_service.deepseek_client.chat = fake_chat
+        knowledge_service.settings = replace(original_settings, knowledge_llm_answers_enabled=True)
 
         try:
             with Session() as db:
@@ -282,6 +319,7 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 gaps = list(db.scalars(select(KnowledgeGap)))
         finally:
+            knowledge_service.settings = original_settings
             knowledge_service.deepseek_client.api_key = original_api_key
             knowledge_service.deepseek_client.chat = original_chat
 
