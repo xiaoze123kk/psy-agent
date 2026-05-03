@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -151,6 +151,12 @@ class KnowledgeArticle(Base):
     __tablename__ = "knowledge_articles"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    source_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("knowledge_sources.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(160))
     category: Mapped[str] = mapped_column(String(32), index=True)
@@ -164,8 +170,87 @@ class KnowledgeArticle(Base):
     source_refs: Mapped[list[dict]] = mapped_column(JSON, default=list)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(16), default="published", index=True)
+    review_status: Mapped[str] = mapped_column(String(24), default="published", index=True)
+    license: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    source: Mapped["KnowledgeSource | None"] = relationship(back_populates="articles")
+    chunks: Mapped[list["KnowledgeChunk"]] = relationship(back_populates="article", cascade="all, delete-orphan")
+
+
+class KnowledgeSource(Base):
+    __tablename__ = "knowledge_sources"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    source_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    base_url: Mapped[str] = mapped_column(Text)
+    terms_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str] = mapped_column(String(120))
+    language: Mapped[str] = mapped_column(String(16), default="zh-CN")
+    is_commercial_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    articles: Mapped[list[KnowledgeArticle]] = relationship(back_populates="source")
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint("article_id", "chunk_index", name="uq_knowledge_chunks_article_index"),
+        Index("idx_knowledge_chunks_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    article_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("knowledge_articles.id", ondelete="CASCADE"),
+        index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(180))
+    content: Mapped[str] = mapped_column(Text)
+    keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="published", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    article: Mapped[KnowledgeArticle] = relationship(back_populates="chunks")
+
+
+class KnowledgeGap(Base):
+    __tablename__ = "knowledge_gaps"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    question: Mapped[str] = mapped_column(Text)
+    normalized_question: Mapped[str] = mapped_column(Text, index=True)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    audience: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    coverage_status: Mapped[str] = mapped_column(String(24), default="insufficient")
+    confidence: Mapped[str] = mapped_column(String(16), default="low")
+    top_score: Mapped[int] = mapped_column(Integer, default=0)
+    source_refs: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="open", index=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=1)
+    thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resolved_article_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("knowledge_articles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RiskEvent(Base):

@@ -207,9 +207,25 @@ export interface KnowledgeAnswer {
   seek_help_when: string[];
 }
 
+export interface KnowledgeSourceRef {
+  source_name: string;
+  source_url: string | null;
+  license: string | null;
+  article_id: string;
+  article_title: string;
+  chunk_id?: string | null;
+  chunk_index?: number | null;
+  score?: number | null;
+}
+
 export interface AskKnowledgeResponse {
   answer: KnowledgeAnswer;
   related_articles: KnowledgeSearchItem[];
+  coverage_status: "sufficient" | "partial" | "insufficient" | "not_applicable";
+  scope_status: "in_scope" | "out_of_scope";
+  confidence: "high" | "medium" | "low";
+  source_refs: KnowledgeSourceRef[];
+  gap_id: string | null;
   continue_chat_payload: {
     mode: string;
     context_type: string;
@@ -217,4 +233,34 @@ export interface AskKnowledgeResponse {
     thread_id?: string | null;
   };
   risk_level: "L0" | "L1" | "L2" | "L3";
+}
+
+export interface KnowledgeGapItem {
+  gap_id: string;
+  question: string;
+  category: string | null;
+  audience: string | null;
+  coverage_status: string;
+  confidence: string;
+  top_score: number;
+  status: string;
+  hit_count: number;
+  source_refs: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+}
+
+export interface KnowledgeGapListResponse {
+  items: KnowledgeGapItem[];
+}
+
+export interface ResolveKnowledgeGapRequest {
+  article_id?: string | null;
+  reviewer_note?: string | null;
+}
+
+export interface KnowledgeGapMutationResponse {
+  gap_id: string;
+  status: string;
 }

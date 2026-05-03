@@ -206,6 +206,8 @@ Sprint 评审现场必须跑通以下场景：
 - `GET /api/v1/knowledge/search?q=焦虑&category=emotion`
 - `GET /api/v1/knowledge/articles/{article_id}`
 - `POST /api/v1/knowledge/ask`
+- `GET /api/v1/knowledge/gaps?status=open`
+- `POST /api/v1/knowledge/gaps/{gap_id}/resolve`
 
 `ask` 请求：
 
@@ -228,6 +230,21 @@ Sprint 评审现场必须跑通以下场景：
     "seek_help_when": ["需要现实帮助的情况"]
   },
   "related_articles": [],
+  "coverage_status": "sufficient",
+  "confidence": "high",
+  "source_refs": [
+    {
+      "source_name": "NIMH",
+      "source_url": "https://www.nimh.nih.gov/...",
+      "license": "public-domain-text",
+      "article_id": "uuid",
+      "article_title": "焦虑是什么",
+      "chunk_id": "uuid",
+      "chunk_index": 0,
+      "score": 72
+    }
+  ],
+  "gap_id": null,
   "continue_chat_payload": {
     "mode": "knowledge",
     "context_type": "knowledge_article"

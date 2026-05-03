@@ -546,6 +546,66 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /api/v1/knowledge/gaps:
+    get:
+      tags: [knowledge]
+      summary: 查看知识库待补充问题
+      operationId: listKnowledgeGaps
+      description: 内部审核入口；用于查看用户问过但资料不足的问题。
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            default: open
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: 知识缺口列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeGapListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/knowledge/gaps/{gap_id}/resolve:
+    post:
+      tags: [knowledge]
+      summary: 标记知识缺口已解决
+      operationId: resolveKnowledgeGap
+      parameters:
+        - in: path
+          name: gap_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveKnowledgeGapRequest"
+      responses:
+        "200":
+          description: 知识缺口状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeGapMutationResponse"
+        "404":
+          description: 知识缺口不存在
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1007,6 +1067,35 @@ components:
         - mode
         - context_type
 
+    KnowledgeSourceRefResponse:
+      type: object
+      properties:
+        source_name:
+          type: string
+        source_url:
+          type: string
+          nullable: true
+        license:
+          type: string
+          nullable: true
+        article_id:
+          type: string
+        article_title:
+          type: string
+        chunk_id:
+          type: string
+          nullable: true
+        chunk_index:
+          type: integer
+          nullable: true
+        score:
+          type: integer
+          nullable: true
+      required:
+        - source_name
+        - article_id
+        - article_title
+
     AskKnowledgeResponse:
       type: object
       properties:
@@ -1016,6 +1105,25 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KnowledgeSearchItem"
+        coverage_status:
+          type: string
+          enum:
+            - sufficient
+            - partial
+            - insufficient
+        confidence:
+          type: string
+          enum:
+            - high
+            - medium
+            - low
+        source_refs:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeSourceRefResponse"
+        gap_id:
+          type: string
+          nullable: true
         continue_chat_payload:
           $ref: "#/components/schemas/ContinueChatPayload"
         risk_level:
@@ -1023,8 +1131,91 @@ components:
       required:
         - answer
         - related_articles
+        - coverage_status
+        - confidence
+        - source_refs
         - continue_chat_payload
         - risk_level
+
+    KnowledgeGapItemResponse:
+      type: object
+      properties:
+        gap_id:
+          type: string
+        question:
+          type: string
+        category:
+          type: string
+          nullable: true
+        audience:
+          type: string
+          nullable: true
+        coverage_status:
+          type: string
+        confidence:
+          type: string
+        top_score:
+          type: integer
+        status:
+          type: string
+        hit_count:
+          type: integer
+        source_refs:
+          type: array
+          items:
+            type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - gap_id
+        - question
+        - coverage_status
+        - confidence
+        - top_score
+        - status
+        - hit_count
+        - source_refs
+        - created_at
+        - updated_at
+
+    KnowledgeGapListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeGapItemResponse"
+      required:
+        - items
+
+    ResolveKnowledgeGapRequest:
+      type: object
+      properties:
+        article_id:
+          type: string
+          nullable: true
+        reviewer_note:
+          type: string
+          nullable: true
+
+    KnowledgeGapMutationResponse:
+      type: object
+      properties:
+        gap_id:
+          type: string
+        status:
+          type: string
+      required:
+        - gap_id
+        - status
 
     SafetyResourceItem:
       type: object

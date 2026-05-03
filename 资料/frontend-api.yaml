@@ -36,6 +36,8 @@ client:
       - searchKnowledge
       - getKnowledgeArticle
       - askKnowledge
+      - listKnowledgeGaps
+      - resolveKnowledgeGap
       - createCrisisEvent
     note: 当前后端脚手架尚未强制校验 token，但联调时前端仍应按正式 Bearer 方式传递。
   baseUrl:
@@ -66,6 +68,8 @@ implementationStatus:
     - searchKnowledge
     - getKnowledgeArticle
     - askKnowledge
+    - listKnowledgeGaps
+    - resolveKnowledgeGap
   note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库 MVP 所需方法。
 
 flows:
@@ -259,6 +263,41 @@ methods:
     http:
       method: POST
       path: /api/v1/knowledge/ask
+
+  - methodName: listKnowledgeGaps
+    summary: 查看知识库待补充问题
+    requestType: KnowledgeGapQuery
+    responseType: KnowledgeGapListResponse
+    authRequired: false
+    query:
+      - name: status
+        type: string
+        required: false
+        default: open
+      - name: limit
+        type: number
+        required: false
+        default: 50
+    uiEntry:
+      - 后台知识审核页
+    http:
+      method: GET
+      path: /api/v1/knowledge/gaps
+
+  - methodName: resolveKnowledgeGap
+    summary: 人工补内容后标记知识缺口已解决
+    requestType: ResolveKnowledgeGapRequest
+    responseType: KnowledgeGapMutationResponse
+    authRequired: false
+    pathParams:
+      - name: gapId
+        mapsTo: gap_id
+        type: string
+    uiEntry:
+      - 后台知识审核页
+    http:
+      method: POST
+      pathTemplate: /api/v1/knowledge/gaps/{gap_id}/resolve
 
   - methodName: getSafetyResources
     summary: 获取 SOS 资源列表
@@ -685,6 +724,9 @@ types:
     required:
       - answer
       - related_articles
+      - coverage_status
+      - confidence
+      - source_refs
       - continue_chat_payload
       - risk_level
     fields:
@@ -693,9 +735,136 @@ types:
         type: array
         items:
           type: KnowledgeSearchItem
+      coverage_status:
+        type: enum
+        values:
+          - sufficient
+          - partial
+          - insufficient
+      confidence:
+        type: enum
+        values:
+          - high
+          - medium
+          - low
+      source_refs:
+        type: array
+        items:
+          type: KnowledgeSourceRef
+      gap_id:
+        type: string
+        required: false
       continue_chat_payload:
         type: object
       risk_level: { type: RiskLevel }
+
+  KnowledgeSourceRef:
+    type: object
+    required:
+      - source_name
+      - article_id
+      - article_title
+    fields:
+      source_name: { type: string }
+      source_url:
+        type: string
+        required: false
+      license:
+        type: string
+        required: false
+      article_id: { type: string }
+      article_title: { type: string }
+      chunk_id:
+        type: string
+        required: false
+      chunk_index:
+        type: number
+        required: false
+      score:
+        type: number
+        required: false
+
+  KnowledgeGapQuery:
+    type: object
+    fields:
+      status:
+        type: string
+        required: false
+        default: open
+      limit:
+        type: number
+        required: false
+        default: 50
+
+  KnowledgeGapItem:
+    type: object
+    required:
+      - gap_id
+      - question
+      - coverage_status
+      - confidence
+      - top_score
+      - status
+      - hit_count
+      - source_refs
+      - created_at
+      - updated_at
+    fields:
+      gap_id: { type: string }
+      question: { type: string }
+      category:
+        type: string
+        required: false
+      audience:
+        type: string
+        required: false
+      coverage_status: { type: string }
+      confidence: { type: string }
+      top_score: { type: number }
+      status: { type: string }
+      hit_count: { type: number }
+      source_refs:
+        type: array
+        items: { type: object }
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+      resolved_at:
+        type: string
+        format: date-time
+        required: false
+
+  KnowledgeGapListResponse:
+    type: object
+    required:
+      - items
+    fields:
+      items:
+        type: array
+        items:
+          type: KnowledgeGapItem
+
+  ResolveKnowledgeGapRequest:
+    type: object
+    fields:
+      article_id:
+        type: string
+        required: false
+      reviewer_note:
+        type: string
+        required: false
+
+  KnowledgeGapMutationResponse:
+    type: object
+    required:
+      - gap_id
+      - status
+    fields:
+      gap_id: { type: string }
+      status: { type: string }
 
   GetSafetyResourcesQuery:
     type: object
