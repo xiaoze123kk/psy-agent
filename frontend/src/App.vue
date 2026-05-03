@@ -7,6 +7,11 @@ import type {
   AgeRange,
   AskKnowledgeResponse,
   KnowledgeArticleResponse,
+  KnowledgeQuizBankStatsResponse,
+  KnowledgeQuizMode,
+  KnowledgeQuizQuestion,
+  KnowledgeQuizResultResponse,
+  KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
   MemoryItem,
   MessageItem,
@@ -22,6 +27,7 @@ type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
 type RiskLevel = "L0" | "L1" | "L2" | "L3";
 type SafetyAction = "trusted" | "resources" | "breathing" | null;
+type KnowledgePanel = "qa" | "quiz";
 
 interface SelectOption {
   id: string;
@@ -87,6 +93,11 @@ const goalOptions: SelectOption[] = [
 
 const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
 const knowledgePromptChips = ["焦虑发作时怎么办", "睡前脑子停不下来", "什么是边界感", "我是不是太敏感了"];
+const quizModeOptions: Array<{ id: KnowledgeQuizMode; label: string; description: string }> = [
+  { id: "10", label: "10 题", description: "快测" },
+  { id: "50", label: "50 题", description: "进阶" },
+  { id: "100", label: "100 题", description: "授予头衔" },
+];
 
 const demoThreads: ThreadListItem[] = [
   {
@@ -200,6 +211,7 @@ const memories = ref<MemoryItem[]>([]);
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const knowledgeItems = ref<KnowledgeSearchItem[]>([]);
 const selectedKnowledgeArticle = ref<KnowledgeArticleResponse | null>(null);
+const knowledgePanel = ref<KnowledgePanel>("qa");
 const knowledgeMessages = ref<KnowledgeChatMessage[]>([
   {
     id: 1,
@@ -210,6 +222,14 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
 const quickActions = ref([...defaultQuickActions]);
 const composerText = ref("");
 const knowledgeDraft = ref("");
+const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
+const quizMode = ref<KnowledgeQuizMode>("10");
+const quizSession = ref<KnowledgeQuizSessionResponse | null>(null);
+const quizResult = ref<KnowledgeQuizResultResponse | null>(null);
+const quizAnswers = ref<Record<string, string>>({});
+const activeQuizIndex = ref(0);
+const activeReviewIndex = ref(0);
+const isQuizLoading = ref(false);
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
 const knowledgeMessageSeed = ref(2);
@@ -240,6 +260,17 @@ const canSubmitAuth = computed(
     Boolean(captchaCode.value.trim()),
 );
 const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
+const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
+  () => quizSession.value?.questions[activeQuizIndex.value] ?? null,
+);
+const quizAnsweredCount = computed(() => Object.keys(quizAnswers.value).length);
+const quizProgressPercent = computed(() =>
+  quizSession.value ? Math.round((quizAnsweredCount.value / quizSession.value.total) * 100) : 0,
+);
+const canSubmitQuiz = computed(() => Boolean(quizSession.value && quizAnsweredCount.value === quizSession.value.total));
+const quizWrongCount = computed(() => quizResult.value?.review.filter((item) => !item.is_correct).length ?? 0);
+const activeReviewItem = computed(() => quizResult.value?.review[activeReviewIndex.value] ?? null);
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const moodSummary = computed(() => moodTrend.value?.summary || "还没有足够的状态数据，先从今天开始记录。");
@@ -281,6 +312,9 @@ watch([selectedStyle, selectedGoal], ([style, goal]) => {
 watch(activeTab, (tab) => {
   if (tab === "knowledge" && knowledgeItems.value.length === 0) {
     void searchKnowledge();
+  }
+  if (tab === "knowledge" && !quizStats.value) {
+    void loadKnowledgeQuizStats();
   }
 });
 
@@ -737,6 +771,91 @@ async function openKnowledgeArticle(articleId: string) {
   }
 }
 
+function quizTypeLabel(type: KnowledgeQuizQuestion["type"]) {
+  if (type === "single_choice") return "ABCD";
+  if (type === "true_false") return "判断";
+  return "图片题";
+}
+
+function quizAnswerLabel(question: KnowledgeQuizQuestion, answerKey: string | null | undefined) {
+  if (!answerKey) return "未作答";
+  return question.options.find((option) => option.key === answerKey)?.text ?? answerKey;
+}
+
+function reviewAnswerLabel(answerKey: string | null | undefined) {
+  const item = activeReviewItem.value;
+  return item ? quizAnswerLabel(item.question, answerKey) : "未作答";
+}
+
+function selectQuizMode(mode: KnowledgeQuizMode) {
+  quizMode.value = mode;
+}
+
+function switchKnowledgePanel(panel: KnowledgePanel) {
+  if (panel === "quiz" && knowledgePanel.value !== "quiz" && (quizSession.value || quizResult.value)) {
+    resetKnowledgeQuiz();
+  }
+  knowledgePanel.value = panel;
+}
+
+async function loadKnowledgeQuizStats() {
+  try {
+    quizStats.value = await api.getKnowledgeQuizStats();
+  } catch {
+    quizStats.value = null;
+  }
+}
+
+async function startKnowledgeQuiz(mode = quizMode.value) {
+  try {
+    isQuizLoading.value = true;
+    apiError.value = "";
+    quizMode.value = mode;
+    quizResult.value = null;
+    quizAnswers.value = {};
+    activeQuizIndex.value = 0;
+    quizSession.value = await api.startKnowledgeQuiz({ mode });
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "趣味问答加载失败。";
+  } finally {
+    isQuizLoading.value = false;
+  }
+}
+
+function chooseQuizAnswer(questionId: string, answer: string) {
+  quizAnswers.value = { ...quizAnswers.value, [questionId]: answer };
+}
+
+function goQuizQuestion(offset: number) {
+  if (!quizSession.value) return;
+  activeQuizIndex.value = Math.min(Math.max(activeQuizIndex.value + offset, 0), quizSession.value.total - 1);
+}
+
+async function submitKnowledgeQuiz() {
+  if (!quizSession.value || !canSubmitQuiz.value) return;
+  try {
+    isQuizLoading.value = true;
+    apiError.value = "";
+    quizResult.value = await api.submitKnowledgeQuiz({
+      session_id: quizSession.value.session_id,
+      answers: Object.entries(quizAnswers.value).map(([question_id, answer]) => ({ question_id, answer })),
+    });
+    activeReviewIndex.value = 0;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "趣味问答提交失败。";
+  } finally {
+    isQuizLoading.value = false;
+  }
+}
+
+function resetKnowledgeQuiz() {
+  quizSession.value = null;
+  quizResult.value = null;
+  quizAnswers.value = {};
+  activeQuizIndex.value = 0;
+  activeReviewIndex.value = 0;
+}
+
 async function askKnowledge(questionText = knowledgeDraft.value) {
   const question = questionText.trim();
   if (!question) return;
@@ -1041,6 +1160,12 @@ onMounted(async () => {
             </div>
           </section>
 
+          <div class="segmented knowledge-mode-switch">
+            <button :class="{ active: knowledgePanel === 'qa' }" type="button" @click="switchKnowledgePanel('qa')">直接问答</button>
+            <button :class="{ active: knowledgePanel === 'quiz' }" type="button" @click="switchKnowledgePanel('quiz')">趣味闯关</button>
+          </div>
+
+          <template v-if="knowledgePanel === 'qa'">
           <div ref="knowledgeListRef" class="knowledge-chat" aria-label="知识问答消息">
             <article
               v-for="message in knowledgeMessages"
@@ -1108,7 +1233,7 @@ onMounted(async () => {
             </article>
           </div>
 
-          <div class="knowledge-prompts">
+          <div v-if="shouldShowKnowledgePrompts" class="knowledge-prompts">
             <button
               v-for="prompt in knowledgePromptChips"
               :key="prompt"
@@ -1135,6 +1260,150 @@ onMounted(async () => {
               {{ isKnowledgeLoading ? "..." : "发送" }}
             </button>
           </form>
+          </template>
+
+          <template v-else>
+            <section v-if="!quizSession && !quizResult" class="quiz-home">
+              <div class="quiz-bank">
+                <span>题库</span>
+                <strong>{{ quizStats?.total ?? 2000 }} 题</strong>
+                <small>ABCD · 判断 · 图片题</small>
+              </div>
+              <div class="quiz-modes">
+                <button
+                  v-for="option in quizModeOptions"
+                  :key="option.id"
+                  :class="['quiz-mode-card', { active: quizMode === option.id }]"
+                  type="button"
+                  @click="selectQuizMode(option.id)"
+                >
+                  <strong>{{ option.label }}</strong>
+                  <span>{{ option.description }}</span>
+                </button>
+              </div>
+              <button class="primary-action" type="button" :disabled="isQuizLoading" @click="startKnowledgeQuiz()">
+                {{ isQuizLoading ? "出题中..." : "开始闯关" }}
+              </button>
+            </section>
+
+            <section v-else-if="quizSession && !quizResult && currentQuizQuestion" class="quiz-play">
+              <div class="quiz-progress">
+                <div class="quiz-progress__head">
+                  <div>
+                    <span>{{ activeQuizIndex + 1 }} / {{ quizSession.total }}</span>
+                    <strong>{{ currentQuizQuestion.topic }}</strong>
+                    <small>{{ quizTypeLabel(currentQuizQuestion.type) }} · 难度 {{ currentQuizQuestion.difficulty }}</small>
+                  </div>
+                  <button class="quiz-reset-action" type="button" @click="resetKnowledgeQuiz">重新开始</button>
+                </div>
+                <div class="quiz-progress__bar"><i :style="{ width: `${quizProgressPercent}%` }"></i></div>
+              </div>
+
+              <article class="quiz-question">
+                <div v-if="currentQuizQuestion.visual" class="quiz-visual" :class="`quiz-visual--${currentQuizQuestion.visual.kind}`">
+                  <strong>{{ currentQuizQuestion.visual.title }}</strong>
+                  <span v-for="line in currentQuizQuestion.visual.lines" :key="line">{{ line }}</span>
+                </div>
+                <h2>{{ currentQuizQuestion.stem }}</h2>
+                <div class="quiz-options">
+                  <button
+                    v-for="option in currentQuizQuestion.options"
+                    :key="option.key"
+                    :class="{ active: quizAnswers[currentQuizQuestion.question_id] === option.key }"
+                    type="button"
+                    @click="chooseQuizAnswer(currentQuizQuestion.question_id, option.key)"
+                  >
+                    <span>{{ option.key }}</span>
+                    <strong>{{ option.text }}</strong>
+                  </button>
+                </div>
+              </article>
+
+              <div class="quiz-actions">
+                <button class="secondary-action" type="button" :disabled="activeQuizIndex === 0" @click="goQuizQuestion(-1)">上一题</button>
+                <button
+                  v-if="activeQuizIndex < quizSession.total - 1"
+                  class="primary-action"
+                  type="button"
+                  :disabled="!quizAnswers[currentQuizQuestion.question_id]"
+                  @click="goQuizQuestion(1)"
+                >
+                  下一题
+                </button>
+                <button
+                  v-else
+                  class="primary-action"
+                  type="button"
+                  :disabled="!canSubmitQuiz || isQuizLoading"
+                  @click="submitKnowledgeQuiz"
+                >
+                  {{ isQuizLoading ? "判分中..." : "交卷" }}
+                </button>
+              </div>
+            </section>
+
+            <section v-else-if="quizResult" class="quiz-result">
+              <div class="quiz-title-card">
+                <span>{{ quizResult.correct }} / {{ quizResult.total }}</span>
+                <h2>{{ quizResult.title }}</h2>
+                <p>{{ quizResult.title_description }}</p>
+              </div>
+              <div class="quiz-result-meta">
+                <span>正确率 {{ Math.round(quizResult.accuracy * 100) }}%</span>
+                <span>错题 {{ quizWrongCount }} 道</span>
+              </div>
+              <div class="quiz-review-grid" aria-label="题号总览">
+                <button
+                  v-for="(item, index) in quizResult.review"
+                  :key="item.question_id"
+                  :class="['quiz-review-number', { active: activeReviewIndex === index, correct: item.is_correct, wrong: !item.is_correct }]"
+                  type="button"
+                  @click="activeReviewIndex = index"
+                >
+                  {{ index + 1 }}
+                </button>
+              </div>
+              <article v-if="activeReviewItem" class="quiz-review-detail">
+                <div class="quiz-review-detail__head">
+                  <span :class="activeReviewItem.is_correct ? 'correct' : 'wrong'">
+                    第 {{ activeReviewIndex + 1 }} 题 · {{ activeReviewItem.is_correct ? "答对" : "答错" }}
+                  </span>
+                  <small>{{ activeReviewItem.question.topic }} · {{ quizTypeLabel(activeReviewItem.question.type) }}</small>
+                </div>
+                <div v-if="activeReviewItem.question.visual" class="quiz-visual" :class="`quiz-visual--${activeReviewItem.question.visual.kind}`">
+                  <strong>{{ activeReviewItem.question.visual.title }}</strong>
+                  <span v-for="line in activeReviewItem.question.visual.lines" :key="line">{{ line }}</span>
+                </div>
+                <h3>{{ activeReviewItem.question.stem }}</h3>
+                <div class="quiz-review-options">
+                  <div
+                    v-for="option in activeReviewItem.question.options"
+                    :key="option.key"
+                    :class="{
+                      correct: option.key === activeReviewItem.correct_answer,
+                      wrong: option.key === activeReviewItem.user_answer && !activeReviewItem.is_correct,
+                    }"
+                  >
+                    <span>{{ option.key }}</span>
+                    <strong>{{ option.text }}</strong>
+                  </div>
+                </div>
+                <div class="quiz-answer-compare">
+                  <p>你的答案：{{ reviewAnswerLabel(activeReviewItem.user_answer) }}</p>
+                  <p>正确答案：{{ reviewAnswerLabel(activeReviewItem.correct_answer) }}</p>
+                </div>
+                <section class="quiz-explanation">
+                  <strong>本题讲解</strong>
+                  <p>{{ activeReviewItem.explanation }}</p>
+                  <small>{{ activeReviewItem.source_title }}</small>
+                </section>
+              </article>
+              <div class="quiz-actions">
+                <button class="secondary-action" type="button" @click="resetKnowledgeQuiz">返回模式选择</button>
+                <button class="primary-action" type="button" @click="startKnowledgeQuiz(quizResult.mode)">再来一轮</button>
+              </div>
+            </section>
+          </template>
         </section>
 
         <section v-else class="tab-page profile-page">
@@ -1717,7 +1986,7 @@ onMounted(async () => {
 .knowledge-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: 10px;
 }
 
@@ -1754,6 +2023,15 @@ onMounted(async () => {
   margin: 2px 0 0;
   font-size: 18px;
   line-height: 1.25;
+}
+
+.knowledge-mode-switch {
+  align-self: start;
+  margin-bottom: 0;
+}
+
+.knowledge-mode-switch button {
+  min-height: 40px;
 }
 
 .knowledge-chat {
@@ -1974,6 +2252,414 @@ onMounted(async () => {
 
 .knowledge-composer button:disabled {
   background: #c7d5cf;
+}
+
+.quiz-home,
+.quiz-play,
+.quiz-result {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.quiz-play {
+  grid-template-rows: auto auto auto;
+  align-content: start;
+}
+
+.quiz-bank,
+.quiz-progress,
+.quiz-question,
+.quiz-title-card,
+.quiz-review article {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-bank {
+  display: grid;
+  gap: 4px;
+}
+
+.quiz-bank span,
+.quiz-progress span,
+.quiz-title-card span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-bank strong,
+.quiz-title-card h2 {
+  color: var(--text-main);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.quiz-bank small,
+.quiz-progress small,
+.quiz-review small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quiz-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.quiz-mode-card {
+  min-height: 78px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  background: #ffffff;
+  color: var(--text-main);
+}
+
+.quiz-mode-card.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.quiz-mode-card strong {
+  font-size: 16px;
+}
+
+.quiz-mode-card span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quiz-progress {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.quiz-progress__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.quiz-progress__head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quiz-progress strong {
+  font-size: 17px;
+}
+
+.quiz-reset-action {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.quiz-progress__bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f3;
+}
+
+.quiz-progress__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.quiz-question {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.quiz-question h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.quiz-visual {
+  min-height: 82px;
+  border-radius: 16px;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: center;
+  background: linear-gradient(135deg, #eaf6f1, #fff7e8);
+}
+
+.quiz-visual strong {
+  flex: 0 0 100%;
+  color: var(--teal-dark);
+  font-size: 15px;
+}
+
+.quiz-visual span {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quiz-options {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-options button {
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 8px;
+  align-items: center;
+  background: #fbfdfb;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.quiz-options button.active {
+  border-color: var(--teal);
+  background: #e8f4ee;
+}
+
+.quiz-options button span {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: var(--teal-dark);
+  font-weight: 900;
+}
+
+.quiz-options button strong {
+  color: var(--text-main);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.quiz-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quiz-actions .primary-action,
+.quiz-actions .secondary-action {
+  min-height: 46px;
+  border-radius: 15px;
+}
+
+.quiz-result {
+  overflow-y: auto;
+}
+
+.quiz-title-card {
+  display: grid;
+  gap: 7px;
+  background: linear-gradient(135deg, #ffffff, #edf7ef);
+}
+
+.quiz-title-card h2,
+.quiz-title-card p {
+  margin: 0;
+}
+
+.quiz-title-card p {
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.quiz-result-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quiz-result-meta span {
+  border-radius: 14px;
+  padding: 10px;
+  background: #ffffff;
+  color: var(--text-main);
+  text-align: center;
+  font-weight: 900;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-review {
+  display: grid;
+  gap: 8px;
+}
+
+.quiz-review-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+}
+
+.quiz-review-number {
+  min-width: 0;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-review-number.correct {
+  background: #e8f4ee;
+  color: #247057;
+}
+
+.quiz-review-number.wrong {
+  background: #fff0e8;
+  color: #9a4a25;
+}
+
+.quiz-review-number.active {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(30, 118, 103, 0.12);
+}
+
+.quiz-review-detail {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-review-detail__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.quiz-review-detail__head span {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-review-detail__head span.correct {
+  color: #247057;
+}
+
+.quiz-review-detail__head span.wrong {
+  color: #9a4a25;
+}
+
+.quiz-review-detail__head small,
+.quiz-explanation small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quiz-review-detail h3 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.quiz-review-options {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-review-options div {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  background: #fbfdfb;
+}
+
+.quiz-review-options div.correct {
+  border-color: rgba(36, 112, 87, 0.38);
+  background: #e8f4ee;
+}
+
+.quiz-review-options div.wrong {
+  border-color: rgba(154, 74, 37, 0.34);
+  background: #fff0e8;
+}
+
+.quiz-review-options span {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: var(--teal-dark);
+  font-weight: 900;
+}
+
+.quiz-review-options strong,
+.quiz-explanation strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.quiz-answer-compare {
+  display: grid;
+  gap: 5px;
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: #f7faf8;
+}
+
+.quiz-answer-compare p,
+.quiz-explanation p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.quiz-explanation {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 
 .empty-chat {

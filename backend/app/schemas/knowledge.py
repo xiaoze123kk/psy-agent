@@ -116,3 +116,79 @@ class ResolveKnowledgeGapRequest(BaseModel):
 class KnowledgeGapMutationResponse(BaseModel):
     gap_id: str
     status: str
+
+
+QuizMode = Literal["10", "50", "100"]
+QuizQuestionType = Literal["single_choice", "true_false", "image"]
+
+
+class KnowledgeQuizOptionResponse(BaseModel):
+    key: str
+    text: str
+
+
+class KnowledgeQuizVisualResponse(BaseModel):
+    kind: str
+    title: str
+    lines: list[str]
+
+
+class KnowledgeQuizQuestionResponse(BaseModel):
+    question_id: str
+    type: QuizQuestionType
+    topic: str
+    difficulty: int = Field(ge=1, le=5)
+    stem: str
+    options: list[KnowledgeQuizOptionResponse]
+    visual: KnowledgeQuizVisualResponse | None = None
+    source_title: str
+    source_url: str
+
+
+class StartKnowledgeQuizRequest(BaseModel):
+    mode: QuizMode
+
+
+class KnowledgeQuizSessionResponse(BaseModel):
+    session_id: str
+    mode: QuizMode
+    total: int
+    questions: list[KnowledgeQuizQuestionResponse]
+
+
+class SubmitKnowledgeQuizAnswer(BaseModel):
+    question_id: str
+    answer: str
+
+
+class SubmitKnowledgeQuizRequest(BaseModel):
+    session_id: str
+    answers: list[SubmitKnowledgeQuizAnswer]
+
+
+class KnowledgeQuizReviewItem(BaseModel):
+    question_id: str
+    question: KnowledgeQuizQuestionResponse
+    is_correct: bool
+    user_answer: str | None
+    correct_answer: str
+    explanation: str
+    source_title: str
+    source_url: str
+
+
+class KnowledgeQuizResultResponse(BaseModel):
+    session_id: str
+    mode: QuizMode
+    total: int
+    correct: int
+    accuracy: float
+    title: str
+    title_description: str
+    review: list[KnowledgeQuizReviewItem]
+
+
+class KnowledgeQuizBankStatsResponse(BaseModel):
+    total: int
+    by_type: dict[str, int]
+    by_topic: dict[str, int]

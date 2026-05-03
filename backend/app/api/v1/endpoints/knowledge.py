@@ -8,8 +8,18 @@ from app.schemas.knowledge import (
     KnowledgeArticleResponse,
     KnowledgeGapListResponse,
     KnowledgeGapMutationResponse,
+    KnowledgeQuizBankStatsResponse,
+    KnowledgeQuizResultResponse,
+    KnowledgeQuizSessionResponse,
     KnowledgeSearchResponse,
     ResolveKnowledgeGapRequest,
+    StartKnowledgeQuizRequest,
+    SubmitKnowledgeQuizRequest,
+)
+from app.services.knowledge_quiz_service import (
+    get_knowledge_quiz_bank_stats,
+    start_knowledge_quiz,
+    submit_knowledge_quiz,
 )
 from app.services.knowledge_service import (
     article_to_detail,
@@ -81,3 +91,21 @@ async def resolve_knowledge_gap_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/quiz/stats", response_model=KnowledgeQuizBankStatsResponse)
+async def read_knowledge_quiz_stats() -> KnowledgeQuizBankStatsResponse:
+    return get_knowledge_quiz_bank_stats()
+
+
+@router.post("/quiz/start", response_model=KnowledgeQuizSessionResponse)
+async def start_knowledge_quiz_endpoint(payload: StartKnowledgeQuizRequest) -> KnowledgeQuizSessionResponse:
+    return start_knowledge_quiz(payload.mode)
+
+
+@router.post("/quiz/submit", response_model=KnowledgeQuizResultResponse)
+async def submit_knowledge_quiz_endpoint(payload: SubmitKnowledgeQuizRequest) -> KnowledgeQuizResultResponse:
+    try:
+        return submit_knowledge_quiz(payload.session_id, payload.answers)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
