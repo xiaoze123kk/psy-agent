@@ -5,6 +5,8 @@ import type {
   CaptchaResponse,
   CurrentUserResponse,
   KnowledgeArticleResponse,
+  KnowledgeGapListResponse,
+  KnowledgeGapMutationResponse,
   KnowledgeSearchResponse,
   ListMemoriesResponse,
   LoginRequest,
@@ -16,6 +18,7 @@ import type {
   RefreshTokenResponse,
   RegisterRequest,
   RegisterResponse,
+  ResolveKnowledgeGapRequest,
   SendMessageRequest,
   SendMessageResponse,
   StartThreadRequest,
@@ -90,6 +93,18 @@ export class CounselingApi {
 
   askKnowledge(payload: AskKnowledgeRequest): Promise<AskKnowledgeResponse> {
     return this.client.post<AskKnowledgeResponse, AskKnowledgeRequest>("/api/v1/knowledge/ask", payload);
+  }
+
+  listKnowledgeGaps(status = "open", limit = 50): Promise<KnowledgeGapListResponse> {
+    const params = new URLSearchParams({ status, limit: String(limit) });
+    return this.client.get<KnowledgeGapListResponse>(`/api/v1/knowledge/gaps?${params.toString()}`);
+  }
+
+  resolveKnowledgeGap(gapId: string, payload: ResolveKnowledgeGapRequest): Promise<KnowledgeGapMutationResponse> {
+    return this.client.post<KnowledgeGapMutationResponse, ResolveKnowledgeGapRequest>(
+      `/api/v1/knowledge/gaps/${gapId}/resolve`,
+      payload,
+    );
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {

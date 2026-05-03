@@ -44,6 +44,10 @@ interface KnowledgeChatMessage {
   text: string;
   answer?: AskKnowledgeResponse["answer"];
   relatedArticles?: KnowledgeSearchItem[];
+  sourceRefs?: AskKnowledgeResponse["source_refs"];
+  coverageStatus?: AskKnowledgeResponse["coverage_status"];
+  confidence?: AskKnowledgeResponse["confidence"];
+  gapId?: string | null;
   riskLevel?: RiskLevel | null;
   streaming?: boolean;
 }
@@ -750,6 +754,10 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
       text: response.answer.summary_30s,
       answer: response.answer,
       relatedArticles: response.related_articles,
+      sourceRefs: response.source_refs,
+      coverageStatus: response.coverage_status,
+      confidence: response.confidence,
+      gapId: response.gap_id,
       riskLevel: response.risk_level,
       streaming: false,
     });
@@ -1037,7 +1045,14 @@ onMounted(async () => {
             >
               <p>{{ message.text }}</p>
               <template v-if="message.answer">
+                <div v-if="message.coverageStatus" :class="['knowledge-coverage', `knowledge-coverage--${message.coverageStatus}`]">
+                  <span>{{ message.coverageStatus === "sufficient" ? "资料充分" : message.coverageStatus === "partial" ? "资料有限" : "资料不足" }}</span>
+                  <small>{{ message.confidence === "high" ? "高置信度" : message.confidence === "medium" ? "中置信度" : "低置信度" }}</small>
+                </div>
                 <p class="knowledge-explanation">{{ message.answer.explanation_3min }}</p>
+                <p v-if="message.coverageStatus === 'insufficient' && message.gapId" class="knowledge-gap-note">
+                  已记录为待补充主题：{{ message.gapId.slice(0, 8) }}
+                </p>
                 <section v-if="message.answer.actions.length" class="knowledge-section">
                   <strong>可以先做</strong>
                   <ul>
@@ -1050,8 +1065,19 @@ onMounted(async () => {
                     <li v-for="item in message.answer.seek_help_when" :key="item">{{ item }}</li>
                   </ul>
                 </section>
-                <section v-if="message.relatedArticles?.length" class="knowledge-sources" aria-label="回答来源">
+                <section v-if="message.sourceRefs?.length" class="knowledge-sources" aria-label="回答来源">
                   <span>来源</span>
+                  <button
+                    v-for="item in message.sourceRefs"
+                    :key="item.chunk_id || item.article_id"
+                    type="button"
+                    @click="openKnowledgeArticle(item.article_id)"
+                  >
+                    {{ item.article_title }} · {{ item.license || "未标注许可" }}
+                  </button>
+                </section>
+                <section v-else-if="message.relatedArticles?.length" class="knowledge-sources" aria-label="相关条目">
+                  <span>相关</span>
                   <button
                     v-for="item in message.relatedArticles"
                     :key="item.article_id"
@@ -1754,6 +1780,48 @@ onMounted(async () => {
 .knowledge-explanation {
   margin-top: 8px !important;
   color: var(--text-muted);
+}
+
+.knowledge-coverage {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-coverage small {
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.74;
+}
+
+.knowledge-coverage--sufficient {
+  background: #e5f4ed;
+  color: #247057;
+}
+
+.knowledge-coverage--partial {
+  background: #fff2d7;
+  color: #8a5517;
+}
+
+.knowledge-coverage--insufficient {
+  background: #ffece2;
+  color: #9a4a25;
+}
+
+.knowledge-gap-note {
+  margin-top: 8px !important;
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: #fff6ed;
+  color: #9a4a25;
+  font-size: 13px;
 }
 
 .knowledge-section {

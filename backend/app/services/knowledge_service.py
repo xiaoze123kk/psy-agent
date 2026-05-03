@@ -1,22 +1,74 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import KnowledgeArticle
+from app.db.models import KnowledgeArticle, KnowledgeChunk, KnowledgeGap, KnowledgeSource, utcnow
 from app.graphs.nodes import risk_classifier
 from app.schemas.knowledge import (
     AskKnowledgeResponse,
     ContinueChatPayload,
     KnowledgeAnswer,
     KnowledgeArticleResponse,
+    KnowledgeGapItemResponse,
+    KnowledgeGapListResponse,
+    KnowledgeGapMutationResponse,
     KnowledgeSearchItemResponse,
     KnowledgeSearchResponse,
+    KnowledgeSourceRefResponse,
 )
 from app.services.deepseek_client import deepseek_client
+
+
+@dataclass(frozen=True)
+class ChunkHit:
+    article: KnowledgeArticle
+    chunk: KnowledgeChunk
+    score: int
+
+
+SEED_SOURCES: list[dict[str, object]] = [
+    {
+        "source_key": "internal_curated",
+        "name": "内部审核心理知识种子库",
+        "base_url": "local://internal-curated",
+        "terms_url": None,
+        "license": "internal-curated",
+        "language": "zh-CN",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "nimh_public_domain",
+        "name": "National Institute of Mental Health",
+        "base_url": "https://www.nimh.nih.gov/health/publications",
+        "terms_url": "https://www.nimh.nih.gov/site-info/policies",
+        "license": "public-domain-text",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "medlineplus_public_domain",
+        "name": "MedlinePlus Health Topic Summaries",
+        "base_url": "https://medlineplus.gov/mentalhealthandbehavior.html",
+        "terms_url": "https://medlineplus.gov/about/using/usingcontent/",
+        "license": "public-domain-health-topic-summaries",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "childmind_mhdb",
+        "name": "Child Mind Institute MHDB",
+        "base_url": "https://matter.childmind.org/mhdb.html",
+        "terms_url": "https://creativecommons.org/licenses/by/4.0/",
+        "license": "CC BY 4.0",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+]
 
 
 SEED_ARTICLES: list[dict[str, object]] = [
@@ -289,21 +341,148 @@ SEED_ARTICLES.extend(
 )
 
 
-def ensure_seed_articles(db: Session) -> None:
+def _ensure_seed_sources(db: Session) -> dict[str, KnowledgeSource]:
     changed = False
-    for payload in SEED_ARTICLES:
-        slug = str(payload["slug"])
-        article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
-        if article is None:
-            article = KnowledgeArticle(**payload)
-            db.add(article)
+    sources: dict[str, KnowledgeSource] = {}
+    for payload in SEED_SOURCES:
+        source_key = str(payload["source_key"])
+        source = db.scalar(select(KnowledgeSource).where(KnowledgeSource.source_key == source_key))
+        if source is None:
+            source = KnowledgeSource(**payload)
+            db.add(source)
+            db.flush()
+            changed = True
+        else:
+            for key, value in payload.items():
+                if getattr(source, key) != value:
+                    setattr(source, key, value)
+                    changed = True
+        sources[source_key] = source
+
+    if changed:
+        db.flush()
+    return sources
+
+
+def _source_ref_from_article(article: KnowledgeArticle) -> dict[str, object]:
+    source = article.source
+    return {
+        "source_name": source.name if source else "内部审核心理知识种子库",
+        "source_url": article.source_url or (source.base_url if source else None),
+        "license": article.license or (source.license if source else "internal-curated"),
+        "article_id": article.id,
+        "article_title": article.title,
+    }
+
+
+def _split_text_chunks(text: str, *, max_chars: int = 600) -> list[str]:
+    paragraphs = [part.strip() for part in text.split("\n") if part.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs:
+        if len(current) + len(paragraph) + 1 <= max_chars:
+            current = f"{current}\n{paragraph}".strip()
+            continue
+        if current:
+            chunks.append(current)
+        current = paragraph
+
+    if current:
+        chunks.append(current)
+    return chunks or [text.strip()]
+
+
+def _article_chunk_texts(article: KnowledgeArticle) -> list[str]:
+    parts = [
+        f"标题：{article.title}",
+        f"30秒摘要：{article.summary_30s}",
+        f"解释：{article.explanation_3min}",
+    ]
+    if article.advanced_text:
+        parts.append(f"补充说明：{article.advanced_text}")
+    if article.common_misunderstandings:
+        parts.append("常见误区：" + "；".join(article.common_misunderstandings))
+    if article.actions:
+        parts.append("可以先做：" + "；".join(article.actions))
+    if article.seek_help_when:
+        parts.append("需要现实支持时：" + "；".join(article.seek_help_when))
+    return _split_text_chunks("\n".join(parts))
+
+
+def _sync_article_chunks(db: Session, article: KnowledgeArticle) -> bool:
+    changed = False
+    existing = {
+        chunk.chunk_index: chunk
+        for chunk in db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id))
+    }
+    expected_chunks = _article_chunk_texts(article)
+    for index, content in enumerate(expected_chunks):
+        chunk = existing.get(index)
+        payload = {
+            "title": article.title,
+            "content": content,
+            "keywords": list(article.tags or []),
+            "tags": list(article.tags or []),
+            "token_count": max(1, len(content) // 2),
+            "source_url": article.source_url,
+            "license": article.license,
+            "status": article.status,
+        }
+        if chunk is None:
+            db.add(KnowledgeChunk(article_id=article.id, chunk_index=index, **payload))
             changed = True
             continue
 
         for key, value in payload.items():
-            if getattr(article, key) != value:
-                setattr(article, key, value)
+            if getattr(chunk, key) != value:
+                setattr(chunk, key, value)
                 changed = True
+
+    for index, chunk in existing.items():
+        if index >= len(expected_chunks) and chunk.status != "archived":
+            chunk.status = "archived"
+            changed = True
+
+    return changed
+
+
+def ensure_seed_articles(db: Session) -> None:
+    changed = False
+    sources = _ensure_seed_sources(db)
+    internal_source = sources["internal_curated"]
+    for payload in SEED_ARTICLES:
+        slug = str(payload["slug"])
+        article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
+        payload = {
+            **payload,
+            "source_id": internal_source.id,
+            "review_status": "published",
+            "license": "internal-curated",
+            "source_url": "local://internal-curated",
+            "published_at": utcnow(),
+        }
+        payload["source_refs"] = [
+            {
+                "source_name": internal_source.name,
+                "source_url": "local://internal-curated",
+                "license": "internal-curated",
+            }
+        ]
+        if article is None:
+            article = KnowledgeArticle(**payload)
+            db.add(article)
+            db.flush()
+            changed = True
+        else:
+            for key, value in payload.items():
+                if key == "published_at" and getattr(article, key) is not None:
+                    continue
+                if getattr(article, key) != value:
+                    setattr(article, key, value)
+                    changed = True
+
+        if _sync_article_chunks(db, article):
+            changed = True
 
     if changed:
         db.commit()
@@ -322,6 +501,9 @@ def article_to_search_item(article: KnowledgeArticle) -> KnowledgeSearchItemResp
 
 
 def article_to_detail(article: KnowledgeArticle) -> KnowledgeArticleResponse:
+    source_refs = list(article.source_refs or [])
+    if not source_refs:
+        source_refs = [_source_ref_from_article(article)]
     return KnowledgeArticleResponse(
         article_id=article.id,
         slug=article.slug,
@@ -334,7 +516,7 @@ def article_to_detail(article: KnowledgeArticle) -> KnowledgeArticleResponse:
         common_misunderstandings=list(article.common_misunderstandings or []),
         actions=list(article.actions or []),
         seek_help_when=list(article.seek_help_when or []),
-        source_refs=list(article.source_refs or []),
+        source_refs=source_refs,
         tags=list(article.tags or []),
         updated_at=article.updated_at,
     )
@@ -395,6 +577,182 @@ def _score_article(article: KnowledgeArticle, query: str) -> int:
     return score
 
 
+def _chunk_blob(hit: KnowledgeChunk, article: KnowledgeArticle) -> str:
+    parts = [
+        hit.title,
+        hit.content,
+        article.title,
+        article.category,
+        " ".join(article.tags or []),
+        " ".join(hit.tags or []),
+        " ".join(hit.keywords or []),
+    ]
+    return " ".join(parts).lower()
+
+
+def _score_chunk(chunk: KnowledgeChunk, article: KnowledgeArticle, query: str) -> int:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return 1
+
+    score = _score_article(article, normalized_query)
+    blob = _chunk_blob(chunk, article)
+    if normalized_query in chunk.title.lower():
+        score += 35
+    if normalized_query in chunk.content.lower():
+        score += 28
+
+    tags = [tag.lower() for tag in set(list(article.tags or []) + list(chunk.tags or []) + list(chunk.keywords or []))]
+    for tag in tags:
+        if tag and tag in normalized_query:
+            score += 24
+        elif tag and normalized_query in tag:
+            score += 16
+
+    query_terms = [token for token in normalized_query.split() if token]
+    if not query_terms:
+        query_terms = [tag for tag in tags if tag and tag in normalized_query]
+
+    for token in query_terms:
+        if token in blob:
+            score += 8
+
+    query_chars = {char for char in normalized_query if "\u4e00" <= char <= "\u9fff"}
+    if query_chars:
+        chunk_chars = {char for char in blob if "\u4e00" <= char <= "\u9fff"}
+        score += min(len(query_chars & chunk_chars), 14)
+
+    return score
+
+
+def _search_chunk_hits(
+    db: Session,
+    *,
+    query: str,
+    category: str | None = None,
+    audience: str | None = None,
+    limit: int = 8,
+) -> list[ChunkHit]:
+    ensure_seed_articles(db)
+    rows = db.execute(
+        select(KnowledgeChunk, KnowledgeArticle)
+        .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
+        .where(
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+            KnowledgeChunk.status == "published",
+        )
+    ).all()
+
+    hits: list[ChunkHit] = []
+    for chunk, article in rows:
+        if category and article.category != category:
+            continue
+        if audience and article.audience not in {"all", audience}:
+            continue
+        score = _score_chunk(chunk, article, query)
+        if score > 0:
+            hits.append(ChunkHit(article=article, chunk=chunk, score=score))
+
+    hits.sort(key=lambda hit: (-hit.score, hit.article.title, hit.chunk.chunk_index))
+    return hits[:limit]
+
+
+def _unique_articles_from_hits(hits: list[ChunkHit], *, limit: int) -> list[KnowledgeArticle]:
+    seen: set[str] = set()
+    articles: list[KnowledgeArticle] = []
+    for hit in hits:
+        if hit.article.id in seen:
+            continue
+        seen.add(hit.article.id)
+        articles.append(hit.article)
+        if len(articles) >= limit:
+            break
+    return articles
+
+
+def _coverage_from_hits(hits: list[ChunkHit]) -> tuple[str, str, int]:
+    top_score = hits[0].score if hits else 0
+    if top_score >= 52:
+        return "sufficient", "high", top_score
+    if top_score >= 24:
+        return "partial", "medium", top_score
+    return "insufficient", "low", top_score
+
+
+def _source_refs_from_hits(hits: list[ChunkHit], *, limit: int = 4) -> list[KnowledgeSourceRefResponse]:
+    refs: list[KnowledgeSourceRefResponse] = []
+    seen: set[tuple[str, str]] = set()
+    for hit in hits:
+        key = (hit.article.id, hit.chunk.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = hit.article.source
+        refs.append(
+            KnowledgeSourceRefResponse(
+                source_name=source.name if source else "内部审核心理知识种子库",
+                source_url=hit.chunk.source_url or hit.article.source_url or (source.base_url if source else None),
+                license=hit.chunk.license or hit.article.license or (source.license if source else None),
+                article_id=hit.article.id,
+                article_title=hit.article.title,
+                chunk_id=hit.chunk.id,
+                chunk_index=hit.chunk.chunk_index,
+                score=hit.score,
+            )
+        )
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _source_refs_as_dicts(refs: list[KnowledgeSourceRefResponse]) -> list[dict]:
+    return [ref.model_dump() for ref in refs]
+
+
+def _record_knowledge_gap(
+    db: Session,
+    *,
+    question: str,
+    category: str | None,
+    audience: str | None,
+    top_score: int,
+    source_refs: list[KnowledgeSourceRefResponse],
+    thread_id: str | None,
+) -> KnowledgeGap:
+    normalized = " ".join(question.strip().lower().split())
+    gap = db.scalar(
+        select(KnowledgeGap).where(
+            KnowledgeGap.normalized_question == normalized,
+            KnowledgeGap.status == "open",
+        )
+    )
+    now = utcnow()
+    if gap is None:
+        gap = KnowledgeGap(
+            question=question,
+            normalized_question=normalized,
+            category=category,
+            audience=audience,
+            coverage_status="insufficient",
+            confidence="low",
+            top_score=top_score,
+            source_refs=_source_refs_as_dicts(source_refs),
+            thread_id=thread_id,
+        )
+        db.add(gap)
+        db.flush()
+    else:
+        gap.hit_count += 1
+        gap.top_score = max(gap.top_score, top_score)
+        gap.source_refs = _source_refs_as_dicts(source_refs)
+        gap.updated_at = now
+        if thread_id:
+            gap.thread_id = thread_id
+    db.commit()
+    return gap
+
+
 def search_articles(
     db: Session,
     *,
@@ -404,7 +762,19 @@ def search_articles(
     limit: int = 8,
 ) -> KnowledgeSearchResponse:
     ensure_seed_articles(db)
-    articles = list(db.scalars(select(KnowledgeArticle).where(KnowledgeArticle.status == "published")))
+    if query.strip():
+        hits = _search_chunk_hits(db, query=query, category=category, audience=audience, limit=max(limit * 2, 8))
+        articles = _unique_articles_from_hits(hits, limit=limit)
+        return KnowledgeSearchResponse(items=[article_to_search_item(article) for article in articles])
+
+    articles = list(
+        db.scalars(
+            select(KnowledgeArticle).where(
+                KnowledgeArticle.status == "published",
+                KnowledgeArticle.review_status == "published",
+            )
+        )
+    )
 
     filtered = []
     for article in articles:
@@ -433,23 +803,25 @@ def get_article(db: Session, article_id: str) -> KnowledgeArticle | None:
     return db.scalar(
         select(KnowledgeArticle).where(
             KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
             or_(*filters),
         )
     )
 
 
-def _article_context(article: KnowledgeArticle, index: int) -> str:
+def _chunk_context(hit: ChunkHit, index: int) -> str:
+    article = hit.article
     actions = "；".join(list(article.actions or [])[:3])
     seek_help = "；".join(list(article.seek_help_when or [])[:3])
     misunderstandings = "；".join(list(article.common_misunderstandings or [])[:2])
     return (
         f"[{index}] 标题：{article.title}\n"
         f"分类：{article.category}；适用人群：{article.audience}\n"
-        f"30秒摘要：{article.summary_30s}\n"
-        f"解释：{article.explanation_3min}\n"
+        f"知识片段：{hit.chunk.content}\n"
         f"常见误区：{misunderstandings or '无'}\n"
         f"可做行动：{actions or '无'}\n"
-        f"何时求助：{seek_help or '无'}"
+        f"何时求助：{seek_help or '无'}\n"
+        f"来源许可：{hit.chunk.license or article.license or 'unknown'}"
     )
 
 
@@ -507,17 +879,17 @@ def _answer_from_model_payload(payload: dict, fallback: KnowledgeAnswer) -> Know
 async def _generate_knowledge_answer(
     *,
     question: str,
-    articles: list[KnowledgeArticle],
+    hits: list[ChunkHit],
     use_my_context: bool,
 ) -> KnowledgeAnswer | None:
-    if not articles:
+    if not hits:
         return None
 
-    fallback = _fallback_answer(articles[0], use_my_context=use_my_context)
+    fallback = _fallback_answer(hits[0].article, use_my_context=use_my_context)
     if not deepseek_client.is_configured:
         return fallback
 
-    source_context = "\n\n".join(_article_context(article, index + 1) for index, article in enumerate(articles[:4]))
+    source_context = "\n\n".join(_chunk_context(hit, index + 1) for index, hit in enumerate(hits[:4]))
     context_note = "可以轻微承接用户近况，但不要假装知道未提供的个人信息。" if use_my_context else "不要引用用户个人近况。"
     system_prompt = (
         "你是心理健康知识问答 agent，负责把已检索到的知识库内容组织成清楚、温和、可执行的回答。"
@@ -582,40 +954,120 @@ async def ask_knowledge(
                 context_type="safety_escalation",
                 thread_id=thread_id,
             ),
+            coverage_status="insufficient",
+            confidence="low",
+            source_refs=[],
             risk_level=risk_level,
         )
 
-    related = search_articles(db, query=question, limit=4).items
-    if not related:
-        related = search_articles(db, query="", limit=4).items
+    hits = _search_chunk_hits(db, query=question, limit=8)
+    coverage_status, confidence, top_score = _coverage_from_hits(hits)
+    source_refs = _source_refs_from_hits(hits)
+    articles = _unique_articles_from_hits(hits, limit=4)
+    related = [article_to_search_item(article) for article in articles]
 
-    articles = [article for item in related if (article := get_article(db, item.article_id)) is not None]
-    if not articles:
+    if coverage_status == "insufficient":
+        gap = _record_knowledge_gap(
+            db,
+            question=question,
+            category=articles[0].category if articles else None,
+            audience=articles[0].audience if articles else None,
+            top_score=top_score,
+            source_refs=source_refs,
+            thread_id=thread_id,
+        )
         return AskKnowledgeResponse(
             answer=KnowledgeAnswer(
-                summary_30s="暂时没有匹配到足够可靠的知识条目。",
-                explanation_3min="MVP 知识库只回答已收录主题。你可以换一个更具体的问题，或回到对话里先描述你的情况。",
-                actions=["换一个关键词搜索", "回到对话里继续说具体场景"],
-                seek_help_when=["问题涉及现实安全、伤害风险或持续功能受损"],
+                summary_30s="当前知识库还没有足够可靠的资料来回答这个问题。",
+                explanation_3min=(
+                    "我已经把这个问题记录为待补充主题。为了避免误导，我不会用大模型凭空扩写答案。"
+                    "你可以换一个更具体的关键词再问，或回到对话里先描述你的具体场景。"
+                ),
+                actions=["换一个更具体的关键词提问", "回到咨询对话里描述具体场景", "等待知识库补充后再查看"],
+                seek_help_when=["问题涉及现实安全、自伤风险、持续失眠或明显功能受损时，请优先联系现实支持或专业人员"],
             ),
-            related_articles=[],
+            related_articles=related,
+            coverage_status=coverage_status,
+            confidence=confidence,
+            source_refs=[],
+            gap_id=gap.id,
             continue_chat_payload=ContinueChatPayload(mode="knowledge", context_type="knowledge_fallback", thread_id=thread_id),
             risk_level=risk_level,
         )
 
     answer = await _generate_knowledge_answer(
         question=question,
-        articles=articles,
+        hits=hits,
         use_my_context=use_my_context,
     )
     return AskKnowledgeResponse(
-        answer=answer or _fallback_answer(articles[0], use_my_context=use_my_context),
+        answer=answer or _fallback_answer(hits[0].article, use_my_context=use_my_context),
         related_articles=related,
+        coverage_status=coverage_status,
+        confidence=confidence,
+        source_refs=source_refs,
         continue_chat_payload=ContinueChatPayload(
             mode="knowledge",
             context_type="knowledge_article",
-            article_id=articles[0].id,
+            article_id=hits[0].article.id,
             thread_id=thread_id,
         ),
         risk_level=risk_level,
     )
+
+
+def gap_to_item(gap: KnowledgeGap) -> KnowledgeGapItemResponse:
+    return KnowledgeGapItemResponse(
+        gap_id=gap.id,
+        question=gap.question,
+        category=gap.category,
+        audience=gap.audience,
+        coverage_status=gap.coverage_status,
+        confidence=gap.confidence,
+        top_score=gap.top_score,
+        status=gap.status,
+        hit_count=gap.hit_count,
+        source_refs=list(gap.source_refs or []),
+        created_at=gap.created_at,
+        updated_at=gap.updated_at,
+        resolved_at=gap.resolved_at,
+    )
+
+
+def list_knowledge_gaps(
+    db: Session,
+    *,
+    status_filter: str = "open",
+    limit: int = 50,
+) -> KnowledgeGapListResponse:
+    query = select(KnowledgeGap)
+    if status_filter != "all":
+        query = query.where(KnowledgeGap.status == status_filter)
+    gaps = list(db.scalars(query.order_by(desc(KnowledgeGap.hit_count), desc(KnowledgeGap.updated_at)).limit(limit)))
+    return KnowledgeGapListResponse(items=[gap_to_item(gap) for gap in gaps])
+
+
+def resolve_knowledge_gap(
+    db: Session,
+    *,
+    gap_id: str,
+    article_id: str | None,
+    reviewer_note: str | None,
+) -> KnowledgeGapMutationResponse:
+    gap = db.scalar(select(KnowledgeGap).where(KnowledgeGap.id == gap_id))
+    if gap is None:
+        raise ValueError("Knowledge gap not found.")
+
+    if article_id:
+        article = get_article(db, article_id)
+        if article is None:
+            raise ValueError("Knowledge article not found.")
+        gap.resolved_article_id = article.id
+        if reviewer_note:
+            article.reviewer_note = reviewer_note
+
+    gap.status = "resolved"
+    gap.resolved_at = utcnow()
+    gap.updated_at = gap.resolved_at
+    db.commit()
+    return KnowledgeGapMutationResponse(gap_id=gap.id, status=gap.status)
