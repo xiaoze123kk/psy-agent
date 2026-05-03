@@ -49,6 +49,8 @@ class Settings:
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
+    deepseek_chat_model: str
+    deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
 
 
@@ -65,7 +67,12 @@ def load_settings() -> Settings:
         refresh_token_ttl_seconds=int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", "2592000")),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")),
+        deepseek_knowledge_model=os.getenv(
+            "DEEPSEEK_KNOWLEDGE_MODEL",
+            os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        ),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
     )
 

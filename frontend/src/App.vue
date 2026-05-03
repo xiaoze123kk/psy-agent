@@ -46,6 +46,7 @@ interface KnowledgeChatMessage {
   relatedArticles?: KnowledgeSearchItem[];
   sourceRefs?: AskKnowledgeResponse["source_refs"];
   coverageStatus?: AskKnowledgeResponse["coverage_status"];
+  scopeStatus?: AskKnowledgeResponse["scope_status"];
   confidence?: AskKnowledgeResponse["confidence"];
   gapId?: string | null;
   riskLevel?: RiskLevel | null;
@@ -756,6 +757,7 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
       relatedArticles: response.related_articles,
       sourceRefs: response.source_refs,
       coverageStatus: response.coverage_status,
+      scopeStatus: response.scope_status,
       confidence: response.confidence,
       gapId: response.gap_id,
       riskLevel: response.risk_level,
@@ -1045,7 +1047,11 @@ onMounted(async () => {
             >
               <p>{{ message.text }}</p>
               <template v-if="message.answer">
-                <div v-if="message.coverageStatus" :class="['knowledge-coverage', `knowledge-coverage--${message.coverageStatus}`]">
+                <div v-if="message.scopeStatus === 'out_of_scope'" class="knowledge-coverage knowledge-coverage--out-of-scope">
+                  <span>范围外</span>
+                  <small>心理知识限定</small>
+                </div>
+                <div v-else-if="message.coverageStatus" :class="['knowledge-coverage', `knowledge-coverage--${message.coverageStatus}`]">
                   <span>{{ message.coverageStatus === "sufficient" ? "资料充分" : message.coverageStatus === "partial" ? "资料有限" : "资料不足" }}</span>
                   <small>{{ message.confidence === "high" ? "高置信度" : message.confidence === "medium" ? "中置信度" : "低置信度" }}</small>
                 </div>
@@ -1813,6 +1819,11 @@ onMounted(async () => {
 .knowledge-coverage--insufficient {
   background: #ffece2;
   color: #9a4a25;
+}
+
+.knowledge-coverage--out-of-scope {
+  background: #edf0f3;
+  color: #46515c;
 }
 
 .knowledge-gap-note {

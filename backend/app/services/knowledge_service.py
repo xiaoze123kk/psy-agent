@@ -22,6 +22,13 @@ from app.schemas.knowledge import (
     KnowledgeSourceRefResponse,
 )
 from app.services.deepseek_client import deepseek_client
+from app.services.knowledge_taxonomy import (
+    ExpandedKnowledgeQuery,
+    KnowledgeScopeStatus,
+    classify_knowledge_scope,
+    expand_knowledge_query,
+    normalize_knowledge_text,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,12 @@ class ChunkHit:
     article: KnowledgeArticle
     chunk: KnowledgeChunk
     score: int
+
+
+@dataclass(frozen=True)
+class GeneratedKnowledgeAnswer:
+    answer: KnowledgeAnswer
+    scope_status: KnowledgeScopeStatus = "in_scope"
 
 
 SEED_SOURCES: list[dict[str, object]] = [
@@ -193,6 +206,19 @@ SEED_ARTICLES.extend(
             "actions": ["把呼气拉长到 6 秒，重复 5 轮。", "说出眼前 5 个看得到的物品，提醒自己正在这里。", "记录发作前的压力、咖啡因、睡眠和场景。"],
             "seek_help_when": ["惊恐反复出现并让你开始回避出门、上课或工作。", "症状像心脏或呼吸急症，或你无法判断安全性。"],
             "tags": ["惊恐发作", "心慌", "呼吸", "身体警报"],
+        },
+        {
+            "slug": "ptsd-basics",
+            "title": "PTSD 是什么",
+            "category": "emotion",
+            "audience": "all",
+            "summary_30s": "PTSD 通常指创伤后应激障碍，是人在经历或目睹严重威胁事件后，身心警报长期难以恢复的一类反应。",
+            "explanation_3min": "PTSD 可能表现为反复闯入的画面或噩梦、回避相关地点和话题、持续紧绷警觉、容易被惊吓，以及对自己或世界产生很负面的看法。不是每个经历创伤的人都会发展成 PTSD，也不能只凭一个症状自我诊断。如果这些反应持续影响睡眠、学习、工作或关系，更适合找心理咨询师、精神科医生或创伤知情的专业人员评估和支持。",
+            "advanced_text": "知识问答只做心理健康科普，不提供诊断。PTSD 的诊断需要专业人员结合创伤暴露、症状持续时间、功能影响和排除其他因素综合判断。",
+            "common_misunderstandings": ["PTSD 不是矫情或意志力差。", "创伤反应不一定会立刻出现，也可能被某些场景重新触发。"],
+            "actions": ["先把它理解为身心警报系统在创伤后过度敏感。", "如果被触发，优先用脚踩地、观察环境等稳定练习回到当下。", "持续受影响时，联系可信任的人或专业支持。"],
+            "seek_help_when": ["反复噩梦、闪回或回避已经影响日常功能。", "出现强烈解离、失控感、自伤想法或现实安全风险。", "你需要判断是否达到 PTSD 或其他临床问题标准。"],
+            "tags": ["PTSD", "创伤后应激障碍", "创伤后应激", "创伤", "闪回", "噩梦"],
         },
         {
             "slug": "cognitive-distortions",
@@ -531,48 +557,64 @@ def _article_blob(article: KnowledgeArticle) -> str:
         article.advanced_text or "",
         " ".join(article.tags or []),
     ]
-    return " ".join(parts).lower()
+    return normalize_knowledge_text(" ".join(parts))
 
 
-def _score_article(article: KnowledgeArticle, query: str) -> int:
-    normalized_query = query.strip().lower()
-    if not normalized_query:
+def _score_article(article: KnowledgeArticle, query: str | ExpandedKnowledgeQuery) -> int:
+    expanded = expand_knowledge_query(query) if isinstance(query, str) else query
+    if not expanded.normalized:
         return 1
 
     score = 0
-    article_title = article.title.lower()
-    article_tags = [tag.lower() for tag in article.tags or []]
-    article_category = article.category.lower()
-    article_summary = article.summary_30s.lower()
-    article_explanation = article.explanation_3min.lower()
+    article_title = normalize_knowledge_text(article.title)
+    article_tags = [normalize_knowledge_text(tag) for tag in article.tags or []]
+    article_category = normalize_knowledge_text(article.category)
+    article_summary = normalize_knowledge_text(article.summary_30s)
+    article_explanation = normalize_knowledge_text(article.explanation_3min)
+    article_blob = _article_blob(article)
 
-    if normalized_query in article_title:
+    if expanded.normalized in article_title:
         score += 50
-    if any(tag and normalized_query in tag for tag in article_tags):
+    if any(tag and expanded.normalized in tag for tag in article_tags):
         score += 35
-    if normalized_query in article_category:
+    if expanded.normalized in article_category:
         score += 20
-    if normalized_query in article_summary:
+    if expanded.normalized in article_summary:
         score += 15
-    if normalized_query in article_explanation:
+    if expanded.normalized in article_explanation:
         score += 8
 
     for phrase in [article_title, *article_tags]:
-        if phrase and phrase in normalized_query:
+        if phrase and phrase in expanded.normalized:
             score += 28
 
-    query_terms = [token for token in normalized_query.split() if token]
-    if not query_terms:
-        query_terms = [tag for tag in article_tags if tag and tag in normalized_query]
+    for term in expanded.strong_terms:
+        if term in article_title:
+            score += 42
+        if any(term == tag or term in tag for tag in article_tags):
+            score += 38
+        if term in article_category:
+            score += 12
+        if term in article_summary:
+            score += 14
+        if term in article_explanation:
+            score += 8
 
-    for token in query_terms:
-        if token and token in _article_blob(article):
+    for term in expanded.weak_terms:
+        if term in article_title:
+            score += 12
+        if any(term == tag or term in tag for tag in article_tags):
+            score += 10
+        if term in article_summary:
+            score += 6
+        if term in article_explanation:
             score += 4
 
-    query_chars = {char for char in normalized_query if "\u4e00" <= char <= "\u9fff"}
-    if query_chars:
-        article_chars = {char for char in _article_blob(article) if "\u4e00" <= char <= "\u9fff"}
-        score += min(len(query_chars & article_chars), 12)
+    if score > 0:
+        query_chars = {char for char in expanded.normalized if "\u4e00" <= char <= "\u9fff"}
+        if query_chars:
+            article_chars = {char for char in article_blob if "\u4e00" <= char <= "\u9fff"}
+            score += min(len(query_chars & article_chars), 4)
 
     return score
 
@@ -587,40 +629,49 @@ def _chunk_blob(hit: KnowledgeChunk, article: KnowledgeArticle) -> str:
         " ".join(hit.tags or []),
         " ".join(hit.keywords or []),
     ]
-    return " ".join(parts).lower()
+    return normalize_knowledge_text(" ".join(parts))
 
 
-def _score_chunk(chunk: KnowledgeChunk, article: KnowledgeArticle, query: str) -> int:
-    normalized_query = query.strip().lower()
-    if not normalized_query:
+def _score_chunk(chunk: KnowledgeChunk, article: KnowledgeArticle, query: str | ExpandedKnowledgeQuery) -> int:
+    expanded = expand_knowledge_query(query) if isinstance(query, str) else query
+    if not expanded.normalized:
         return 1
 
-    score = _score_article(article, normalized_query)
+    score = _score_article(article, expanded)
     blob = _chunk_blob(chunk, article)
-    if normalized_query in chunk.title.lower():
+    chunk_title = normalize_knowledge_text(chunk.title)
+    chunk_content = normalize_knowledge_text(chunk.content)
+    tags = [
+        normalize_knowledge_text(tag)
+        for tag in set(list(article.tags or []) + list(chunk.tags or []) + list(chunk.keywords or []))
+    ]
+
+    if expanded.normalized in chunk_title:
         score += 35
-    if normalized_query in chunk.content.lower():
+    if expanded.normalized in chunk_content:
         score += 28
 
-    tags = [tag.lower() for tag in set(list(article.tags or []) + list(chunk.tags or []) + list(chunk.keywords or []))]
-    for tag in tags:
-        if tag and tag in normalized_query:
-            score += 24
-        elif tag and normalized_query in tag:
-            score += 16
+    for term in expanded.strong_terms:
+        if term in chunk_title:
+            score += 38
+        if any(tag and (term == tag or term in tag) for tag in tags):
+            score += 34
+        if term in chunk_content:
+            score += 18
 
-    query_terms = [token for token in normalized_query.split() if token]
-    if not query_terms:
-        query_terms = [tag for tag in tags if tag and tag in normalized_query]
+    for term in expanded.weak_terms:
+        if term in chunk_title:
+            score += 12
+        if any(tag and (term == tag or term in tag) for tag in tags):
+            score += 10
+        if term in chunk_content:
+            score += 5
 
-    for token in query_terms:
-        if token in blob:
-            score += 8
-
-    query_chars = {char for char in normalized_query if "\u4e00" <= char <= "\u9fff"}
-    if query_chars:
-        chunk_chars = {char for char in blob if "\u4e00" <= char <= "\u9fff"}
-        score += min(len(query_chars & chunk_chars), 14)
+    if score > 0:
+        query_chars = {char for char in expanded.normalized if "\u4e00" <= char <= "\u9fff"}
+        if query_chars:
+            chunk_chars = {char for char in blob if "\u4e00" <= char <= "\u9fff"}
+            score += min(len(query_chars & chunk_chars), 4)
 
     return score
 
@@ -634,6 +685,7 @@ def _search_chunk_hits(
     limit: int = 8,
 ) -> list[ChunkHit]:
     ensure_seed_articles(db)
+    expanded_query = expand_knowledge_query(query)
     rows = db.execute(
         select(KnowledgeChunk, KnowledgeArticle)
         .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
@@ -650,7 +702,7 @@ def _search_chunk_hits(
             continue
         if audience and article.audience not in {"all", audience}:
             continue
-        score = _score_chunk(chunk, article, query)
+        score = _score_chunk(chunk, article, expanded_query)
         if score > 0:
             hits.append(ChunkHit(article=article, chunk=chunk, score=score))
 
@@ -675,7 +727,7 @@ def _coverage_from_hits(hits: list[ChunkHit]) -> tuple[str, str, int]:
     top_score = hits[0].score if hits else 0
     if top_score >= 52:
         return "sufficient", "high", top_score
-    if top_score >= 24:
+    if top_score >= 35:
         return "partial", "medium", top_score
     return "insufficient", "low", top_score
 
@@ -708,6 +760,97 @@ def _source_refs_from_hits(hits: list[ChunkHit], *, limit: int = 4) -> list[Know
 
 def _source_refs_as_dicts(refs: list[KnowledgeSourceRefResponse]) -> list[dict]:
     return [ref.model_dump() for ref in refs]
+
+
+def _classify_knowledge_scope(question: str) -> KnowledgeScopeStatus:
+    return classify_knowledge_scope(question)
+
+
+def _out_of_scope_knowledge_answer() -> KnowledgeAnswer:
+    return KnowledgeAnswer(
+        summary_30s="抱歉，这个问题不属于心理健康知识问答范围。",
+        explanation_3min=(
+            "这里主要回答情绪、压力、睡眠、关系、自我理解和求助边界相关的问题。"
+            "如果这个词或场景让你感到困扰，可以描述你的具体感受，我可以从心理支持角度陪你整理。"
+        ),
+        actions=[],
+        seek_help_when=[],
+    )
+
+
+def _is_broad_psychology_request(question: str) -> bool:
+    normalized = " ".join(question.strip().lower().split())
+    if not normalized:
+        return False
+
+    broad_phrases = (
+        "心理学知识",
+        "心理知识",
+        "心理健康知识",
+        "讲点心理",
+        "介绍心理",
+        "科普心理",
+        "一些心理",
+        "一点心理",
+        "心理学科普",
+    )
+    if any(phrase in normalized for phrase in broad_phrases):
+        return True
+
+    return "心理" in normalized and any(verb in normalized for verb in ("给我", "讲讲", "介绍", "科普", "随便"))
+
+
+def _broad_psychology_hits(db: Session) -> list[ChunkHit]:
+    preferred_slugs = [
+        "medlineplus-mental-health-35",
+        "medlineplus-how-to-improve-mental-health-7407",
+        "cognitive-distortions",
+        "anxiety-basics",
+        "medlineplus-stress-3",
+        "sleep-rumination",
+        "boundaries",
+        "when-to-seek-help",
+    ]
+    hits: list[ChunkHit] = []
+    for index, slug in enumerate(preferred_slugs):
+        row = db.execute(
+            select(KnowledgeArticle, KnowledgeChunk)
+            .join(KnowledgeChunk, KnowledgeChunk.article_id == KnowledgeArticle.id)
+            .where(
+                KnowledgeArticle.slug == slug,
+                KnowledgeArticle.status == "published",
+                KnowledgeArticle.review_status == "published",
+                KnowledgeChunk.status == "published",
+            )
+            .order_by(KnowledgeChunk.chunk_index)
+            .limit(1)
+        ).first()
+        if row is None:
+            continue
+        article, chunk = row
+        hits.append(ChunkHit(article=article, chunk=chunk, score=96 - index))
+    return hits
+
+
+def _broad_psychology_answer() -> KnowledgeAnswer:
+    return KnowledgeAnswer(
+        summary_30s="可以。入门心理知识可以先从情绪、认知、关系、压力睡眠和求助边界这几块理解，它们比单个技巧更能帮你看懂自己的状态。",
+        explanation_3min=(
+            "心理学和心理健康知识不只是解释“我怎么了”，也包括看见情绪怎么被触发、想法怎么影响感受、关系里边界和依恋如何运作、"
+            "压力和睡眠怎样互相放大，以及什么时候需要现实支持。一个实用的理解方式是：先分清身体反应、自动想法、情绪和行动冲动，"
+            "再看它们是在什么场景里反复出现。这里的内容只用于科普和自助整理，不能替代诊断、治疗或用药建议。"
+        ),
+        actions=[
+            "先选一个方向继续问：情绪调节、焦虑、睡眠、关系边界、认知偏差或求助资源。",
+            "把最近一个困扰拆成四栏：发生了什么、我想到什么、我有什么感受、我做了什么。",
+            "如果你只是想随便学一点，可以从“认知偏差”“压力和睡眠”“边界感”三个主题开始。",
+        ],
+        seek_help_when=[
+            "情绪或睡眠问题持续影响学习、工作、关系或基本生活。",
+            "出现自伤想法、明显失控感、现实安全风险或强烈绝望感。",
+            "你需要诊断、治疗计划或药物相关建议。",
+        ],
+    )
 
 
 def _record_knowledge_gap(
@@ -862,18 +1005,24 @@ def _string_list(value: object, *, fallback: list[str], limit: int = 4) -> list[
     return (items or fallback)[:limit]
 
 
-def _answer_from_model_payload(payload: dict, fallback: KnowledgeAnswer) -> KnowledgeAnswer | None:
+def _answer_from_model_payload(payload: dict, fallback: KnowledgeAnswer) -> GeneratedKnowledgeAnswer | None:
     summary = str(payload.get("summary_30s", "")).strip()
     explanation = str(payload.get("explanation_3min", "")).strip()
     if not summary or not explanation:
         return None
 
-    return KnowledgeAnswer(
+    scope_status: KnowledgeScopeStatus = "out_of_scope" if payload.get("scope_status") == "out_of_scope" else "in_scope"
+    answer = KnowledgeAnswer(
         summary_30s=summary[:260],
         explanation_3min=explanation[:900],
-        actions=_string_list(payload.get("actions"), fallback=fallback.actions, limit=4),
-        seek_help_when=_string_list(payload.get("seek_help_when"), fallback=fallback.seek_help_when, limit=4),
+        actions=_string_list(payload.get("actions"), fallback=fallback.actions if scope_status == "in_scope" else [], limit=4),
+        seek_help_when=_string_list(
+            payload.get("seek_help_when"),
+            fallback=fallback.seek_help_when if scope_status == "in_scope" else [],
+            limit=4,
+        ),
     )
+    return GeneratedKnowledgeAnswer(answer=answer, scope_status=scope_status)
 
 
 async def _generate_knowledge_answer(
@@ -881,20 +1030,24 @@ async def _generate_knowledge_answer(
     question: str,
     hits: list[ChunkHit],
     use_my_context: bool,
-) -> KnowledgeAnswer | None:
+) -> GeneratedKnowledgeAnswer | None:
     if not hits:
         return None
 
     fallback = _fallback_answer(hits[0].article, use_my_context=use_my_context)
     if not deepseek_client.is_configured:
-        return fallback
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
     source_context = "\n\n".join(_chunk_context(hit, index + 1) for index, hit in enumerate(hits[:4]))
     context_note = "可以轻微承接用户近况，但不要假装知道未提供的个人信息。" if use_my_context else "不要引用用户个人近况。"
     system_prompt = (
         "你是心理健康知识问答 agent，负责把已检索到的知识库内容组织成清楚、温和、可执行的回答。"
         "你不是医生或心理咨询师，不做诊断，不承诺疗效，不编造知识库以外的事实。"
-        "如果问题超出资料范围，要说明只能基于现有资料回答，并引导用户换更具体的问题。"
+        "回答边界：只回答心理健康知识范围，包括情绪、压力、睡眠、关系、自我理解、认知偏差、创伤、心理健康科普和求助资源。"
+        "不要回答泛百科、代码、金融、路线、娱乐、性俚语、性技巧、生理细节、医学诊断或用药等非心理知识。"
+        "如果用户的核心问题不属于心理健康知识范围，即使检索资料里有相似词，也必须把 scope_status 设为 out_of_scope，并使用范围外抱歉话术。"
+        "如果非心理词汇出现在心理困扰语境中，只回应焦虑、羞耻、失控、影响生活等心理支持部分，不解释非心理知识本身。"
+        "如果问题属于心理健康范围但超出资料范围，要说明只能基于现有资料回答，并引导用户换更具体的问题。"
         "用简体中文，语气稳定、克制，避免说教。只输出 JSON，不要 Markdown。"
     )
     user_prompt = (
@@ -903,11 +1056,16 @@ async def _generate_knowledge_answer(
         f"可用知识库资料：\n{source_context}\n\n"
         "请输出 JSON，字段如下：\n"
         "{\n"
+        '  "scope_status": "in_scope 或 out_of_scope。只有核心问题属于心理健康知识范围时才用 in_scope",\n'
         '  "summary_30s": "用 1-2 句话直接回答",\n'
         '  "explanation_3min": "用 1 段解释原因、机制和边界，120-260 字",\n'
         '  "actions": ["2-4 个安全、具体、轻量的行动"],\n'
         '  "seek_help_when": ["2-4 个需要现实或专业帮助的信号"]\n'
-        "}"
+        "}\n"
+        "范围外固定话术：summary_30s 写“抱歉，这个问题不属于心理健康知识问答范围。”；"
+        "explanation_3min 写“这里主要回答情绪、压力、睡眠、关系、自我理解和求助边界相关的问题。"
+        "如果这个词或场景让你感到困扰，可以描述你的具体感受，我可以从心理支持角度陪你整理。”；"
+        "actions 和 seek_help_when 返回空数组。"
     )
 
     reply = await deepseek_client.chat(
@@ -915,17 +1073,18 @@ async def _generate_knowledge_answer(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
+        model=deepseek_client.knowledge_model,
         temperature=0.35,
         max_tokens=760,
     )
     if not reply:
-        return fallback
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
     payload = _json_from_model(reply)
     if payload is None:
-        return fallback
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
-    return _answer_from_model_payload(payload, fallback) or fallback
+    return _answer_from_model_payload(payload, fallback) or GeneratedKnowledgeAnswer(answer=fallback)
 
 
 async def ask_knowledge(
@@ -955,8 +1114,46 @@ async def ask_knowledge(
                 thread_id=thread_id,
             ),
             coverage_status="insufficient",
+            scope_status="in_scope",
             confidence="low",
             source_refs=[],
+            risk_level=risk_level,
+        )
+
+    scope_status = _classify_knowledge_scope(question)
+    if scope_status == "out_of_scope":
+        return AskKnowledgeResponse(
+            answer=_out_of_scope_knowledge_answer(),
+            related_articles=[],
+            coverage_status="not_applicable",
+            scope_status=scope_status,
+            confidence="low",
+            source_refs=[],
+            gap_id=None,
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_out_of_scope",
+                thread_id=thread_id,
+            ),
+            risk_level=risk_level,
+        )
+
+    if _is_broad_psychology_request(question):
+        hits = _broad_psychology_hits(db)
+        articles = _unique_articles_from_hits(hits, limit=4)
+        return AskKnowledgeResponse(
+            answer=_broad_psychology_answer(),
+            related_articles=[article_to_search_item(article) for article in articles],
+            coverage_status="sufficient",
+            scope_status="in_scope",
+            confidence="high",
+            source_refs=_source_refs_from_hits(hits),
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_overview",
+                article_id=hits[0].article.id if hits else None,
+                thread_id=thread_id,
+            ),
             risk_level=risk_level,
         )
 
@@ -988,6 +1185,7 @@ async def ask_knowledge(
             ),
             related_articles=related,
             coverage_status=coverage_status,
+            scope_status="in_scope",
             confidence=confidence,
             source_refs=[],
             gap_id=gap.id,
@@ -995,15 +1193,33 @@ async def ask_knowledge(
             risk_level=risk_level,
         )
 
-    answer = await _generate_knowledge_answer(
+    generated = await _generate_knowledge_answer(
         question=question,
         hits=hits,
         use_my_context=use_my_context,
     )
+    if generated and generated.scope_status == "out_of_scope":
+        return AskKnowledgeResponse(
+            answer=generated.answer,
+            related_articles=[],
+            coverage_status="not_applicable",
+            scope_status="out_of_scope",
+            confidence="low",
+            source_refs=[],
+            gap_id=None,
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_out_of_scope",
+                thread_id=thread_id,
+            ),
+            risk_level=risk_level,
+        )
+
     return AskKnowledgeResponse(
-        answer=answer or _fallback_answer(hits[0].article, use_my_context=use_my_context),
+        answer=generated.answer if generated else _fallback_answer(hits[0].article, use_my_context=use_my_context),
         related_articles=related,
         coverage_status=coverage_status,
+        scope_status="in_scope",
         confidence=confidence,
         source_refs=source_refs,
         continue_chat_payload=ContinueChatPayload(

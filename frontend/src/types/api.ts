@@ -221,7 +221,8 @@ export interface KnowledgeSourceRef {
 export interface AskKnowledgeResponse {
   answer: KnowledgeAnswer;
   related_articles: KnowledgeSearchItem[];
-  coverage_status: "sufficient" | "partial" | "insufficient";
+  coverage_status: "sufficient" | "partial" | "insufficient" | "not_applicable";
+  scope_status: "in_scope" | "out_of_scope";
   confidence: "high" | "medium" | "low";
   source_refs: KnowledgeSourceRef[];
   gap_id: string | null;

@@ -71,7 +71,8 @@ class KnowledgeSourceRefResponse(BaseModel):
 class AskKnowledgeResponse(BaseModel):
     answer: KnowledgeAnswer
     related_articles: list[KnowledgeSearchItemResponse]
-    coverage_status: Literal["sufficient", "partial", "insufficient"] = "sufficient"
+    coverage_status: Literal["sufficient", "partial", "insufficient", "not_applicable"] = "sufficient"
+    scope_status: Literal["in_scope", "out_of_scope"] = "in_scope"
     confidence: Literal["high", "medium", "low"] = "high"
     source_refs: list[KnowledgeSourceRefResponse] = Field(default_factory=list)
     gap_id: str | None = None
