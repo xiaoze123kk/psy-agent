@@ -182,11 +182,32 @@ export interface ListMemoriesResponse {
   items: MemoryItem[];
 }
 
+export interface MoodLogRequest {
+  mood_score: number;
+  anxiety_score?: number | null;
+  energy_score?: number | null;
+  sleep_quality?: number | null;
+  mood_tags?: string[];
+  note?: string | null;
+}
+
+export interface MoodLogResponse {
+  log_id: string;
+  created_at: string;
+  mood_score: number;
+}
+
+export interface DailyMoodPoint {
+  date: string;
+  mood_score: number;
+  tags: string[];
+}
+
 export interface MoodTrendResponse {
-  range: string;
+  range: "7d" | "30d";
   avg_mood_score: number;
   top_tags: string[];
-  daily: Array<Record<string, unknown>>;
+  daily: DailyMoodPoint[];
   summary: string;
 }
 

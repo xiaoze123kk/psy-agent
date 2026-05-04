@@ -16,6 +16,8 @@ import type {
   LoginResponse,
   LogoutRequest,
   MessageListResponse,
+  MoodLogRequest,
+  MoodLogResponse,
   MoodTrendResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
@@ -122,6 +124,10 @@ export class CounselingApi {
 
   submitKnowledgeQuiz(payload: SubmitKnowledgeQuizRequest): Promise<KnowledgeQuizResultResponse> {
     return this.client.post<KnowledgeQuizResultResponse, SubmitKnowledgeQuizRequest>("/api/v1/knowledge/quiz/submit", payload);
+  }
+
+  createMoodLog(payload: MoodLogRequest): Promise<MoodLogResponse> {
+    return this.client.post<MoodLogResponse, MoodLogRequest>("/api/v1/moods", payload);
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {

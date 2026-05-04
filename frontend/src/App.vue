@@ -18,6 +18,7 @@ import type {
   KnowledgeSearchItem,
   MemoryItem,
   MessageItem,
+  MoodLogRequest,
   MoodTrendResponse,
   SendMessageResponse,
   ThreadListItem,
@@ -32,6 +33,7 @@ type ChatRole = "assistant" | "user";
 type RiskLevel = "L0" | "L1" | "L2" | "L3";
 type SafetyAction = "trusted" | "resources" | "breathing" | null;
 type KnowledgePanel = "qa" | "quiz";
+type MoodRange = "7d" | "30d";
 
 interface SelectOption {
   id: string;
@@ -65,6 +67,12 @@ interface KnowledgeChatMessage {
   gapId?: string | null;
   riskLevel?: RiskLevel | null;
   streaming?: boolean;
+}
+
+interface LocalMoodLog {
+  created_at: string;
+  mood_score: number;
+  mood_tags: string[];
 }
 
 const ACCESS_TOKEN_KEY = "counseling_access_token";
@@ -172,6 +180,19 @@ const demoMoodTrend: MoodTrendResponse = {
   summary: "最近压力主要集中在睡眠和会前焦虑，适合优先减负。",
 };
 
+const dayMs = 24 * 60 * 60 * 1000;
+const demoMoodLogSeed: LocalMoodLog[] = [
+  { created_at: new Date(Date.now() - 6 * dayMs).toISOString(), mood_score: 3, mood_tags: ["睡眠"] },
+  { created_at: new Date(Date.now() - 4 * dayMs).toISOString(), mood_score: 2, mood_tags: ["焦虑", "疲惫"] },
+  { created_at: new Date(Date.now() - 2 * dayMs).toISOString(), mood_score: 4, mood_tags: ["平静"] },
+  { created_at: new Date(Date.now() - 1 * dayMs).toISOString(), mood_score: 3, mood_tags: ["关系", "焦虑"] },
+];
+const moodTagOptions = ["焦虑", "疲惫", "难过", "委屈", "平静", "睡眠", "关系", "学习"];
+const moodRangeOptions: Array<{ id: MoodRange; label: string }> = [
+  { id: "7d", label: "7天" },
+  { id: "30d", label: "30天" },
+];
+
 function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
@@ -191,6 +212,8 @@ const isCaptchaLoading = ref(false);
 const isLoadingApp = ref(false);
 const isKnowledgeLoading = ref(false);
 const isSending = ref(false);
+const isMoodSubmitting = ref(false);
+const isMoodTrendLoading = ref(false);
 const isSafetyOpen = ref(false);
 
 const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
@@ -217,6 +240,15 @@ const threads = ref<ThreadListItem[]>([]);
 const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
 const moodTrend = ref<MoodTrendResponse | null>(null);
+const moodRange = ref<MoodRange>("7d");
+const moodDraft = ref<MoodLogRequest>({
+  mood_score: 3,
+  anxiety_score: 3,
+  energy_score: 3,
+  sleep_quality: 3,
+  mood_tags: [],
+  note: "",
+});
 const knowledgeItems = ref<KnowledgeSearchItem[]>([]);
 const selectedKnowledgeArticle = ref<KnowledgeArticleResponse | null>(null);
 const knowledgePanel = ref<KnowledgePanel>("qa");
@@ -244,6 +276,7 @@ const knowledgeMessageSeed = ref(2);
 const messageListRef = ref<HTMLElement | null>(null);
 const knowledgeListRef = ref<HTMLElement | null>(null);
 const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
+const demoMoodLogs = ref<LocalMoodLog[]>([]);
 
 const apiClient = new ApiClient({
   baseUrl: apiBaseUrl,
@@ -267,6 +300,11 @@ const canSubmitAuth = computed(
     Boolean(captchaId.value) &&
     Boolean(captchaCode.value.trim()),
 );
+const canSubmitMood = computed(
+  () =>
+    [moodDraft.value.mood_score, moodDraft.value.anxiety_score, moodDraft.value.energy_score, moodDraft.value.sleep_quality]
+      .every((score) => typeof score === "number" && score >= 1 && score <= 5) && !isMoodSubmitting.value,
+);
 const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
 const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
 const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
@@ -282,6 +320,9 @@ const activeReviewItem = computed(() => quizResult.value?.review[activeReviewInd
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const moodSummary = computed(() => moodTrend.value?.summary || "还没有足够的状态数据，先从今天开始记录。");
+const moodTrendPoints = computed(() => moodTrend.value?.daily ?? []);
+const moodTrendTags = computed(() => moodTrend.value?.top_tags ?? []);
+const hasTodayMoodLog = computed(() => moodTrendPoints.value.some((point) => point.date === toMoodDateKey(new Date())));
 const contextText = computed(() =>
   [
     activeThread.value?.title,
@@ -350,6 +391,110 @@ function selectedUserMode(): UserMode {
 function clearApiFeedback() {
   apiError.value = "";
   apiNotice.value = "";
+}
+
+function moodValueText(value?: number | null) {
+  const labels = ["很低", "偏低", "一般", "还好", "很好"];
+  return labels[Math.max(1, Math.min(5, value ?? 3)) - 1];
+}
+
+function formatMoodDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
+}
+
+function toMoodDateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function moodPointHeight(score: number) {
+  return `${Math.max(10, Math.min(58, (score / 5) * 58))}px`;
+}
+
+function toggleMoodTag(tag: string) {
+  const currentTags = moodDraft.value.mood_tags ?? [];
+  moodDraft.value = {
+    ...moodDraft.value,
+    mood_tags: currentTags.includes(tag) ? currentTags.filter((item) => item !== tag) : [...currentTags, tag],
+  };
+}
+
+function createMoodPayload(): MoodLogRequest {
+  const note = moodDraft.value.note?.trim();
+  return {
+    mood_score: moodDraft.value.mood_score,
+    anxiety_score: moodDraft.value.anxiety_score,
+    energy_score: moodDraft.value.energy_score,
+    sleep_quality: moodDraft.value.sleep_quality,
+    mood_tags: [...(moodDraft.value.mood_tags ?? [])],
+    note: note || null,
+  };
+}
+
+function resetMoodDraft() {
+  moodDraft.value = {
+    mood_score: 3,
+    anxiety_score: 3,
+    energy_score: 3,
+    sleep_quality: 3,
+    mood_tags: [],
+    note: "",
+  };
+}
+
+function buildLocalMoodTrend(range: MoodRange, logs: LocalMoodLog[]): MoodTrendResponse {
+  const days = range === "30d" ? 30 : 7;
+  const since = Date.now() - days * dayMs;
+  const scopedLogs = logs
+    .filter((log) => new Date(log.created_at).getTime() >= since)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  if (scopedLogs.length === 0) {
+    return {
+      range,
+      avg_mood_score: 0,
+      top_tags: [],
+      daily: [],
+      summary: "当前时间范围内还没有情绪记录。",
+    };
+  }
+
+  const dailyScores = new Map<string, number[]>();
+  const dailyTags = new Map<string, Map<string, number>>();
+  const tagCounter = new Map<string, number>();
+
+  scopedLogs.forEach((log) => {
+    const day = new Date(log.created_at).toISOString().slice(0, 10);
+    dailyScores.set(day, [...(dailyScores.get(day) ?? []), log.mood_score]);
+    if (!dailyTags.has(day)) dailyTags.set(day, new Map());
+    const dayTags = dailyTags.get(day);
+    log.mood_tags.forEach((tag) => {
+      const normalizedTag = tag.trim();
+      if (!normalizedTag || !dayTags) return;
+      tagCounter.set(normalizedTag, (tagCounter.get(normalizedTag) ?? 0) + 1);
+      dayTags.set(normalizedTag, (dayTags.get(normalizedTag) ?? 0) + 1);
+    });
+  });
+
+  const daily = [...dailyScores.entries()].map(([date, scores]) => ({
+    date,
+    mood_score: Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2)),
+    tags: [...(dailyTags.get(date)?.entries() ?? [])]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([tag]) => tag),
+  }));
+  const top_tags = [...tagCounter.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([tag]) => tag);
+  const avg_mood_score = Number(
+    (scopedLogs.reduce((sum, log) => sum + log.mood_score, 0) / scopedLogs.length).toFixed(2),
+  );
+  const summary = `最近 ${days} 天共记录 ${scopedLogs.length} 次情绪，平均情绪分为 ${avg_mood_score}。${
+    top_tags.length ? ` 高频标签主要是：${top_tags.slice(0, 3).join("、")}。` : ""
+  }`;
+
+  return { range, avg_mood_score, top_tags, daily, summary };
 }
 
 function formatTime(value?: string | null) {
@@ -502,7 +647,7 @@ async function loadApp() {
       api.getCurrentUser(),
       api.listThreads(),
       api.listMemories(),
-      api.getMoodTrend("7d"),
+      api.getMoodTrend(moodRange.value),
     ]);
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
@@ -523,6 +668,61 @@ async function loadApp() {
     await refreshCaptcha();
   } finally {
     isLoadingApp.value = false;
+  }
+}
+
+async function loadMoodTrend(range: MoodRange = moodRange.value) {
+  moodRange.value = range;
+  if (isDemoMode.value || !accessToken.value) {
+    moodTrend.value = demoMoodLogs.value.length > 0 ? buildLocalMoodTrend(range, demoMoodLogs.value) : { ...demoMoodTrend, range };
+    return;
+  }
+
+  try {
+    isMoodTrendLoading.value = true;
+    moodTrend.value = await api.getMoodTrend(range);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "情绪趋势加载失败。";
+  } finally {
+    isMoodTrendLoading.value = false;
+  }
+}
+
+async function switchMoodRange(range: MoodRange) {
+  if (range === moodRange.value && moodTrend.value?.range === range) return;
+  await loadMoodTrend(range);
+}
+
+async function submitMoodCheckIn() {
+  if (!canSubmitMood.value) return;
+  try {
+    isMoodSubmitting.value = true;
+    clearApiFeedback();
+    const payload = createMoodPayload();
+
+    if (isDemoMode.value || !accessToken.value) {
+      demoMoodLogs.value = [
+        ...demoMoodLogs.value,
+        {
+          created_at: new Date().toISOString(),
+          mood_score: payload.mood_score,
+          mood_tags: payload.mood_tags ?? [],
+        },
+      ];
+      apiNotice.value = "今日状态已记录。";
+      resetMoodDraft();
+      await loadMoodTrend(moodRange.value);
+      return;
+    }
+
+    await api.createMoodLog(payload);
+    apiNotice.value = "今日状态已记录。";
+    resetMoodDraft();
+    await loadMoodTrend(moodRange.value);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "情绪记录提交失败。";
+  } finally {
+    isMoodSubmitting.value = false;
   }
 }
 
@@ -566,7 +766,8 @@ function enterDemoMode() {
   threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
   demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
   memories.value = demoMemories.map((item) => ({ ...item }));
-  moodTrend.value = { ...demoMoodTrend };
+  demoMoodLogs.value = demoMoodLogSeed.map((item) => ({ ...item }));
+  moodTrend.value = buildLocalMoodTrend(moodRange.value, demoMoodLogs.value);
   activeThreadId.value = threads.value[0]?.thread_id ?? "";
   setMessages(demoMessagesByThread.value[activeThreadId.value] ?? []);
   stage.value = "onboarding";
@@ -1059,6 +1260,9 @@ async function logout() {
   threads.value = [];
   memories.value = [];
   moodTrend.value = null;
+  demoMoodLogs.value = [];
+  moodRange.value = "7d";
+  resetMoodDraft();
   setMessages([]);
   stage.value = "auth";
   await refreshCaptcha();
@@ -1199,18 +1403,86 @@ onMounted(async () => {
         <p v-if="apiError" class="notice notice--error">{{ apiError }}</p>
 
         <section v-if="activeTab === 'home'" class="tab-page">
+          <form v-if="!hasTodayMoodLog" class="mood-checkin-card" @submit.prevent="submitMoodCheckIn">
+            <div class="card-title">
+              <div>
+                <span>今日状态</span>
+                <h2>你现在感觉怎么样？</h2>
+              </div>
+              <strong>{{ moodDraft.mood_score }}分</strong>
+            </div>
+
+            <div class="mood-scale-list">
+              <label class="mood-scale">
+                <span>心情 <strong>{{ moodValueText(moodDraft.mood_score) }}</strong></span>
+                <input v-model.number="moodDraft.mood_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>焦虑 <strong>{{ moodValueText(moodDraft.anxiety_score) }}</strong></span>
+                <input v-model.number="moodDraft.anxiety_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>精力 <strong>{{ moodValueText(moodDraft.energy_score) }}</strong></span>
+                <input v-model.number="moodDraft.energy_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>睡眠 <strong>{{ moodValueText(moodDraft.sleep_quality) }}</strong></span>
+                <input v-model.number="moodDraft.sleep_quality" type="range" min="1" max="5" step="1" />
+              </label>
+            </div>
+
+            <div class="mood-tags" aria-label="情绪标签">
+              <button
+                v-for="tag in moodTagOptions"
+                :key="tag"
+                :class="{ active: moodDraft.mood_tags?.includes(tag) }"
+                type="button"
+                @click="toggleMoodTag(tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
+
+            <textarea v-model="moodDraft.note" class="mood-note" rows="3" maxlength="180" placeholder="一句话记录今天的触发点或感受"></textarea>
+
+            <button class="primary-action" type="submit" :disabled="!canSubmitMood">
+              {{ isMoodSubmitting ? "记录中..." : "记录今日状态" }}
+            </button>
+          </form>
+
           <button class="mood-card" type="button" @click="startQuickCheckIn">
             <span>现在开始</span>
             <strong>我有点难受，想倾诉</strong>
             <small>点一下进入对话，我会先听你说。</small>
           </button>
 
-          <section class="summary-card">
+          <section class="summary-card trend-card">
             <div class="card-title">
-              <h2>最近状态</h2>
-              <span>{{ moodTrend?.top_tags?.join(" / ") || "暂无标签" }}</span>
+              <h2>状态趋势</h2>
+              <div class="range-switch" role="group" aria-label="趋势范围">
+                <button
+                  v-for="option in moodRangeOptions"
+                  :key="option.id"
+                  :class="{ active: moodRange === option.id }"
+                  type="button"
+                  :disabled="isMoodTrendLoading"
+                  @click="switchMoodRange(option.id)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
             <p>{{ moodSummary }}</p>
+            <div v-if="moodTrendPoints.length > 0" class="trend-bars" aria-label="情绪趋势点">
+              <div v-for="point in moodTrendPoints" :key="point.date" class="trend-bar">
+                <i :style="{ height: moodPointHeight(point.mood_score) }"></i>
+                <span>{{ formatMoodDate(point.date) }}</span>
+              </div>
+            </div>
+            <div v-if="moodTrendTags.length > 0" class="trend-tags">
+              <span v-for="tag in moodTrendTags" :key="tag">{{ tag }}</span>
+            </div>
+            <small v-if="moodTrendPoints.length === 0" class="empty-copy">暂无趋势数据。</small>
           </section>
 
           <section class="section-block">
@@ -1940,6 +2212,108 @@ onMounted(async () => {
   font-weight: 900;
 }
 
+.mood-checkin-card {
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.mood-checkin-card .card-title {
+  align-items: flex-start;
+}
+
+.mood-checkin-card .card-title > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.mood-checkin-card .card-title h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.mood-checkin-card .card-title strong {
+  min-width: 50px;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: #fff6e4;
+  color: #8a5517;
+  text-align: center;
+  font-size: 14px;
+}
+
+.mood-scale-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mood-scale {
+  display: grid;
+  gap: 7px;
+}
+
+.mood-scale span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mood-scale strong {
+  color: var(--teal-dark);
+}
+
+.mood-scale input {
+  width: 100%;
+  accent-color: var(--teal);
+}
+
+.mood-tags,
+.trend-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mood-tags button,
+.trend-tags span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: var(--text-muted);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mood-tags button.active,
+.trend-tags span {
+  border-color: rgba(15, 118, 110, 0.2);
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.mood-note {
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 12px 14px;
+  color: var(--text-main);
+  outline: none;
+}
+
 .mood-card {
   min-height: 164px;
   border-radius: 28px;
@@ -1962,6 +2336,72 @@ onMounted(async () => {
 .mood-card strong {
   font-size: 24px;
   line-height: 1.2;
+}
+
+.trend-card {
+  display: grid;
+  gap: 12px;
+}
+
+.range-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(44px, 1fr));
+  gap: 4px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 4px;
+}
+
+.range-switch button {
+  min-height: 30px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.range-switch button.active {
+  background: #ffffff;
+  color: var(--teal-dark);
+  box-shadow: 0 5px 14px rgba(38, 57, 52, 0.1);
+}
+
+.range-switch button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.trend-bars {
+  min-height: 88px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(34px, 1fr);
+  gap: 8px;
+  align-items: end;
+  overflow-x: auto;
+  padding-top: 4px;
+}
+
+.trend-bar {
+  min-width: 34px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.trend-bar i {
+  width: 16px;
+  border-radius: 999px 999px 6px 6px;
+  background: linear-gradient(180deg, var(--teal), #f0c66f);
+}
+
+.trend-bar span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .summary-card,

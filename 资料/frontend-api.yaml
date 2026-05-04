@@ -1,14 +1,14 @@
 version: 1
 name: counseling-agent-frontend-sdk-contract
-sprint: Sprint 2 knowledge MVP
+sprint: Sprint 2 mood trend MVP
 description: |
   心理咨询 Agent 前端 API 契约。
 
   目标是支撑如下前端闭环：
-  登录/注册 -> 年龄模式落库 -> 首页创建会话 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆/情绪打点 -> 知识库搜索/详情/问答。
+  登录/注册 -> 年龄模式落库 -> 首页情绪记录与趋势 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆 -> 知识库搜索/详情/问答。
 
   本契约不包含后续 Sprint 或占位能力：
-  tests、voice、完整 RAG、mood trends。
+  tests、voice、完整 RAG。
 
 client:
   className: CounselingApi
@@ -33,6 +33,7 @@ client:
       - deleteMemory
       - clearMemories
       - createMoodLog
+      - getMoodTrend
       - searchKnowledge
       - getKnowledgeArticle
       - askKnowledge
@@ -55,7 +56,6 @@ scope:
   excluded:
     - tests
     - voice
-    - mood trends
 
 implementationStatus:
   currentSdkImplementedMethods:
@@ -63,13 +63,14 @@ implementationStatus:
     - sendMessage
     - streamMessage
     - listMemories
+    - createMoodLog
     - getMoodTrend
     - searchKnowledge
     - getKnowledgeArticle
     - askKnowledge
     - listKnowledgeGaps
     - resolveKnowledgeGap
-  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库 MVP 所需方法。
+  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库与情绪趋势 MVP 所需方法。
 
 flows:
   sprint1Demo:
@@ -91,6 +92,8 @@ flows:
       when: 我的页查看基础记忆
     - step: createMoodLog
       when: 用户完成基础情绪记录
+    - step: getMoodTrend
+      when: 首页展示 7 天或 30 天趋势
     - step: searchKnowledge
       when: 用户进入知识页或搜索主题
     - step: getKnowledgeArticle
@@ -245,11 +248,22 @@ methods:
     responseType: MoodLogResponse
     authRequired: true
     uiEntry:
-      - 我的页
-      - 情绪记录弹窗
+      - 首页
+      - 情绪 check-in 表单
     http:
       method: POST
       path: /api/v1/moods
+
+  - methodName: getMoodTrend
+    summary: 获取 7 天或 30 天情绪趋势
+    requestType: MoodTrendQuery
+    responseType: MoodTrendResponse
+    authRequired: true
+    uiEntry:
+      - 首页趋势卡片
+    http:
+      method: GET
+      path: /api/v1/moods/trends?range={range}
 
   - methodName: searchKnowledge
     summary: 搜索知识库文章
@@ -672,6 +686,50 @@ types:
         type: string
         format: date-time
       mood_score: { type: integer }
+
+  MoodTrendQuery:
+    type: object
+    fields:
+      range:
+        type: string
+        enum: [7d, 30d]
+        default: 7d
+
+  DailyMoodPoint:
+    type: object
+    required:
+      - date
+      - mood_score
+      - tags
+    fields:
+      date:
+        type: string
+        format: date
+      mood_score: { type: number }
+      tags:
+        type: array
+        items: { type: string }
+
+  MoodTrendResponse:
+    type: object
+    required:
+      - range
+      - avg_mood_score
+      - top_tags
+      - daily
+      - summary
+    fields:
+      range:
+        type: string
+        enum: [7d, 30d]
+      avg_mood_score: { type: number }
+      top_tags:
+        type: array
+        items: { type: string }
+      daily:
+        type: array
+        items: { $ref: DailyMoodPoint }
+      summary: { type: string }
 
   SearchKnowledgeQuery:
     type: object
