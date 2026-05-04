@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.db.models import MoodLog, User
+from app.db.models import ConversationThread, MoodLog, User
 from app.db.session import get_db_session
 from app.schemas.mood import DailyMoodPoint, MoodLogRequest, MoodLogResponse, MoodTrendResponse, WeeklySummaryResponse
 from app.services.deepseek_client import deepseek_client
@@ -186,10 +186,30 @@ async def get_weekly_summary(
         )
     )
 
+    # 查询近7天的会话摘要
+    thread_summaries: list[str] = []
+    threads = list(
+        db.scalars(
+            select(ConversationThread)
+            .where(
+                ConversationThread.user_id == current_user.id,
+                ConversationThread.updated_at >= since,
+                ConversationThread.last_summary.isnot(None),
+            )
+            .order_by(ConversationThread.updated_at.desc())
+        )
+    )
+    for t in threads:
+        if t.last_summary and t.last_summary.strip():
+            thread_summaries.append(t.last_summary.strip())
+
     if not logs:
+        base_summary = "这周还没有情绪记录。"
+        if thread_summaries:
+            base_summary += " 但你在这周有过对话，这本身就是在关照自己。"
         return WeeklySummaryResponse(
             range="7d",
-            summary="这周还没有情绪记录。当你准备好了，随时可以做一次情绪检查。",
+            summary=base_summary + "当你准备好了，随时可以做一次情绪检查。",
             top_tags=[],
             suggested_actions=["试试记录今天的心情", "给自己一个轻松的时段"],
             generated_by="fallback",
@@ -206,18 +226,51 @@ async def get_weekly_summary(
     suggested_actions = _generate_fallback_actions(top_tags)
     fallback_summary = _build_fallback_summary(avg_mood, top_tags, len(logs))
 
+    # 将会话摘要信息附加到 fallback
+    if thread_summaries and len(thread_summaries) > 0:
+        recent_topics = "、".join(thread_summaries[:2])
+        if len(recent_topics) > 80:
+            recent_topics = recent_topics[:80] + "…"
+        fallback_summary += f" 近期你聊过：{recent_topics}。"
+
     # Try LLM generation if configured
     if deepseek_client.is_configured:
         try:
-            tag_list = "、".join(top_tags) if top_tags else "无明显标签"
-            llm_prompt = (
-                f"用户最近7天的情绪记录概况：共记录{len(logs)}次，平均情绪分{avg_mood:.1f}/5，"
-                f"高频情绪标签：{tag_list}。"
-                f"请用温和、不评判的语气，写一段50-80字的每周情绪小结。"
-                f"不使用诊断措辞，只做观察和温和建议。保持鼓励和支持的态度。"
+            LLM_SYSTEM_PROMPT = (
+                "你是一名温和、专业的心理陪伴助手，负责为用户生成本周情绪小结。\n\n"
+                "你的核心原则：\n"
+                "1. 先观察趋势，再做温和引导——描述用户「经历了什么」比判断「是什么问题」更重要。\n"
+                "2. 不评判情绪的对错，不比较用户与他人，不暗示用户「做得不够好」。\n"
+                "3. 每条小结要包含：一句趋势观察 + 一句共情 + 一个可执行的轻建议。\n"
+                "4. 最多提一个温和的下一步行动，不要一次性堆多个建议。\n"
+                "5. 用户看这份小结时可能情绪偏低，语气要稳、轻、有空间感，不要过于积极或过于沉重。\n\n"
+                "严格禁止以下内容：\n"
+                "- 任何诊断性词汇：诊断、确诊、病症、病情、治疗、障碍、症状、综合征\n"
+                "- 任何药物或医疗相关：药物、处方、用药、就医、临床、患者\n"
+                "- 任何心理疾病标签：抑郁症、焦虑症、双相、强迫症、创伤后应激障碍\n"
+                "- 任何绝对化判断：「你一定是……」「这说明你……」「你需要……」\n"
+                "- 任何比较性语言：「和别人相比……」「正常人都……」「你应该……」\n\n"
+                "输出格式：一段 50-80 字的连续中文文本，不用标题、不用编号、不用列表。"
             )
+
+            user_prompt_parts = [
+                f"用户最近 7 天共记录了 {len(logs)} 次情绪。",
+                f"平均情绪分 {avg_mood:.1f}/5（1=非常低落，5=非常平稳）。",
+            ]
+            if top_tags:
+                user_prompt_parts.append(f"最常出现的情绪标签：{'、'.join(top_tags[:5])}。")
+            if thread_summaries:
+                summaries_text = "；".join(thread_summaries[:3])
+                if len(summaries_text) > 150:
+                    summaries_text = summaries_text[:150] + "…"
+                user_prompt_parts.append(f"近期聊过的话题：{summaries_text}。")
+            user_prompt_parts.append("请根据以上信息，生成这周的温和情绪小结。")
+
             llm_summary = await deepseek_client.chat(
-                [{"role": "user", "content": llm_prompt}],
+                [
+                    {"role": "system", "content": LLM_SYSTEM_PROMPT},
+                    {"role": "user", "content": "\n".join(user_prompt_parts)},
+                ],
                 temperature=0.7,
                 max_tokens=200,
             )

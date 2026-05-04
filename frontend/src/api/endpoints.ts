@@ -23,6 +23,11 @@ import type {
   MoodLogRequest,
   MoodLogResponse,
   MoodTrendResponse,
+  AccountDeleteRequest,
+  DataDeleteRequest,
+  PersonalDataExport,
+  PrivacyMutationResponse,
+  PrivacySummaryResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
   RegisterRequest,
@@ -120,6 +125,22 @@ export class CounselingApi {
 
   clearMemories(): Promise<{ status: string }> {
     return this.client.delete<{ status: string }>("/api/v1/memories");
+  }
+
+  getPrivacySummary(): Promise<PrivacySummaryResponse> {
+    return this.client.get<PrivacySummaryResponse>("/api/v1/me/privacy-summary");
+  }
+
+  exportPersonalData(): Promise<PersonalDataExport> {
+    return this.client.get<PersonalDataExport>("/api/v1/me/data-export?format=json");
+  }
+
+  deletePersonalData(payload: DataDeleteRequest): Promise<PrivacyMutationResponse> {
+    return this.client.delete<PrivacyMutationResponse, DataDeleteRequest>("/api/v1/me/data", payload);
+  }
+
+  deleteAccount(payload: AccountDeleteRequest): Promise<PrivacyMutationResponse> {
+    return this.client.delete<PrivacyMutationResponse, AccountDeleteRequest>("/api/v1/me/account", payload);
   }
 
   updateSettings(payload: UserSettingsUpdateRequest): Promise<UserSettingsResponse> {

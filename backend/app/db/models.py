@@ -342,3 +342,17 @@ class UserFeedback(Base):
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PrivacyActionLog(Base):
+    __tablename__ = "privacy_action_logs"
+    __table_args__ = (
+        Index("idx_privacy_action_logs_user_created_at", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    scope: Mapped[str] = mapped_column(String(32))
+    affected_counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -32,7 +32,16 @@ async def update_settings(
     if payload.voice_enabled is not None:
         settings.voice_enabled = payload.voice_enabled
     if payload.save_voice_audio is not None:
+        if payload.save_voice_audio and current_user.profile and current_user.profile.user_mode == "teen":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="青少年模式默认不保存原始音频。",
+            )
         settings.save_voice_audio = payload.save_voice_audio
+    if current_user.profile and current_user.profile.user_mode == "teen":
+        settings.save_voice_audio = False
+    if payload.save_transcript is not None:
+        settings.save_transcript = payload.save_transcript
 
     settings.updated_at = utcnow()
     db.commit()
@@ -43,4 +52,5 @@ async def update_settings(
         companion_style=settings.companion_style,
         voice_enabled=settings.voice_enabled,
         save_voice_audio=settings.save_voice_audio,
+        save_transcript=settings.save_transcript,
     )

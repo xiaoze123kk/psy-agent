@@ -39,6 +39,10 @@ client:
       - createVoiceSession
       - connectVoiceSession
       - submitFeedback
+      - getPrivacySummary
+      - exportPersonalData
+      - deletePersonalData
+      - deleteAccount
       - searchKnowledge
       - getKnowledgeArticle
       - askKnowledge
@@ -68,6 +72,7 @@ scope:
     - tests
     - voice
     - feedback
+    - privacy
   excluded:
     - true-audio-asr-tts
     - anime-character-test
@@ -93,6 +98,10 @@ implementationStatus:
     - completeAttempt
     - getTestHistory
     - getAttemptResult
+    - getPrivacySummary
+    - exportPersonalData
+    - deletePersonalData
+    - deleteAccount
   plannedSprint3Methods:
     - getWeeklyMoodSummary
     - createVoiceSession
@@ -304,6 +313,54 @@ methods:
     http:
       method: PATCH
       path: /api/v1/me/settings
+
+  - methodName: getPrivacySummary
+    summary: 获取当前用户隐私设置与个人数据数量总览
+    requestType: none
+    responseType: PrivacySummaryResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 隐私与数据
+    http:
+      method: GET
+      path: /api/v1/me/privacy-summary
+
+  - methodName: exportPersonalData
+    summary: 导出当前用户个人数据 JSON
+    requestType: none
+    responseType: PersonalDataExport
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 隐私与数据
+    http:
+      method: GET
+      path: /api/v1/me/data-export?format=json
+
+  - methodName: deletePersonalData
+    summary: 按范围清除当前用户个人数据
+    requestType: DataDeleteRequest
+    responseType: PrivacyMutationResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 隐私与数据
+    http:
+      method: DELETE
+      path: /api/v1/me/data
+
+  - methodName: deleteAccount
+    summary: 注销当前账号并撤销 refresh token
+    requestType: AccountDeleteRequest
+    responseType: PrivacyMutationResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 隐私与数据
+    http:
+      method: DELETE
+      path: /api/v1/me/account
 
   - methodName: createMoodLog
     summary: 提交基础情绪记录
@@ -707,6 +764,7 @@ types:
       - companion_style
       - voice_enabled
       - save_voice_audio
+      - save_transcript
     fields:
       user_id: { type: string }
       username: { type: string }
@@ -721,6 +779,7 @@ types:
       companion_style: { type: string }
       voice_enabled: { type: boolean }
       save_voice_audio: { type: boolean }
+      save_transcript: { type: boolean }
 
   UserSettingsUpdateRequest:
     type: object
@@ -737,6 +796,9 @@ types:
       save_voice_audio:
         type: boolean
         required: false
+      save_transcript:
+        type: boolean
+        required: false
 
   UserSettingsResponse:
     type: object
@@ -745,11 +807,120 @@ types:
       - companion_style
       - voice_enabled
       - save_voice_audio
+      - save_transcript
     fields:
       memory_mode: { type: MemoryMode }
       companion_style: { type: string }
       voice_enabled: { type: boolean }
       save_voice_audio: { type: boolean }
+      save_transcript: { type: boolean }
+
+  PrivacyDataScope:
+    type: enum
+    values:
+      - memories
+      - chat
+      - moods
+      - feedback
+      - voice
+      - all_non_account
+
+  PrivacyDataCounts:
+    type: object
+    required:
+      - memories
+      - chat_threads
+      - chat_messages
+      - mood_logs
+      - test_history
+      - feedback
+      - voice_sessions
+      - risk_events
+    fields:
+      memories: { type: number }
+      chat_threads: { type: number }
+      chat_messages: { type: number }
+      mood_logs: { type: number }
+      test_history: { type: number }
+      feedback: { type: number }
+      voice_sessions: { type: number }
+      risk_events: { type: number }
+
+  PrivacySettingsSnapshot:
+    type: object
+    required:
+      - memory_mode
+      - companion_style
+      - voice_enabled
+      - save_voice_audio
+      - save_transcript
+    fields:
+      memory_mode: { type: MemoryMode }
+      companion_style: { type: string }
+      voice_enabled: { type: boolean }
+      save_voice_audio: { type: boolean }
+      save_transcript: { type: boolean }
+
+  PrivacySummaryResponse:
+    type: object
+    required:
+      - user_mode
+      - settings
+      - counts
+      - latest_updated_at
+    fields:
+      user_mode: { type: UserMode }
+      settings: { type: PrivacySettingsSnapshot }
+      counts: { type: PrivacyDataCounts }
+      latest_updated_at:
+        type: string
+        format: date-time
+        nullable: true
+
+  DataDeleteRequest:
+    type: object
+    required:
+      - scope
+    fields:
+      scope: { type: PrivacyDataScope }
+
+  AccountDeleteRequest:
+    type: object
+    required:
+      - confirmation
+    fields:
+      confirmation:
+        type: enum
+        values:
+          - DELETE
+
+  PrivacyMutationResponse:
+    type: object
+    required:
+      - status
+      - affected_counts
+    fields:
+      status: { type: string }
+      scope:
+        type: string
+        required: false
+      affected_counts:
+        type: object
+        additionalProperties: { type: number }
+
+  PersonalDataExport:
+    type: object
+    fields:
+      account: { type: object }
+      profile: { type: object }
+      settings: { type: object }
+      memories: { type: array, items: { type: object } }
+      mood_logs: { type: array, items: { type: object } }
+      chat_threads: { type: array, items: { type: object } }
+      test_history: { type: array, items: { type: object } }
+      feedback: { type: array, items: { type: object } }
+      voice_sessions: { type: array, items: { type: object } }
+      risk_events_summary: { type: object }
 
   StartThreadRequest:
     type: object

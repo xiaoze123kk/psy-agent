@@ -10,6 +10,7 @@ class UserSettingsUpdateRequest(BaseModel):
     companion_style: str | None = Field(default=None, min_length=1, max_length=32)
     voice_enabled: bool | None = None
     save_voice_audio: bool | None = None
+    save_transcript: bool | None = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -17,3 +18,4 @@ class UserSettingsResponse(BaseModel):
     companion_style: str
     voice_enabled: bool
     save_voice_audio: bool
+    save_transcript: bool

@@ -109,9 +109,9 @@ async def load_user_profile(state: AgentState) -> AgentState:
     }
 
 
-async def risk_classifier(state: AgentState) -> AgentState:
-    text = state.get("normalized_text", "").lower()
-    suicide_terms = (
+# 风险关键词库（同步版本，供知识服务等同步函数使用）
+_RISK_KEYWORDS = {
+    "suicide_terms": (
         "自杀",
         "结束生命",
         "不想活了",
@@ -120,8 +120,8 @@ async def risk_classifier(state: AgentState) -> AgentState:
         "kill myself",
         "end my life",
         "want to die",
-    )
-    plan_terms = (
+    ),
+    "plan_terms": (
         "今晚",
         "现在",
         "立刻",
@@ -134,8 +134,8 @@ async def risk_classifier(state: AgentState) -> AgentState:
         "right now",
         "plan",
         "pills",
-    )
-    l2_keywords = (
+    ),
+    "l2_keywords": (
         "想消失",
         "不如死了",
         "不想醒来",
@@ -146,8 +146,8 @@ async def risk_classifier(state: AgentState) -> AgentState:
         "want to disappear",
         "hurt myself",
         "cannot control myself",
-    )
-    l1_keywords = (
+    ),
+    "l1_keywords": (
         "压力好大",
         "焦虑",
         "心慌",
@@ -160,24 +160,53 @@ async def risk_classifier(state: AgentState) -> AgentState:
         "cannot sleep",
         "stressed out",
         "overwhelmed",
-    )
+    ),
+}
 
-    if _contains_any(text, suicide_terms) and _contains_any(text, plan_terms):
-        matched = _matched_keywords(text, suicide_terms) + _matched_keywords(text, plan_terms)
+
+def sync_risk_classify(text: str) -> str:
+    """同步风险分级（纯关键词匹配，无 I/O）。返回 "L0" / "L1" / "L2" / "L3"。"""
+    lowered = (text or "").lower()
+    suicide_terms = _RISK_KEYWORDS["suicide_terms"]
+    plan_terms = _RISK_KEYWORDS["plan_terms"]
+    l2_keywords = _RISK_KEYWORDS["l2_keywords"]
+    l1_keywords = _RISK_KEYWORDS["l1_keywords"]
+
+    if _contains_any(lowered, suicide_terms) and _contains_any(lowered, plan_terms):
+        return "L3"
+    if _contains_any(lowered, l2_keywords) or _contains_any(lowered, suicide_terms):
+        return "L2"
+    if _contains_any(lowered, l1_keywords):
+        return "L1"
+    return "L0"
+
+
+async def risk_classifier(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "")
+    risk_level = sync_risk_classify(text)
+
+    lowered = text.lower()
+    suicide_terms = _RISK_KEYWORDS["suicide_terms"]
+    plan_terms = _RISK_KEYWORDS["plan_terms"]
+    l2_keywords = _RISK_KEYWORDS["l2_keywords"]
+    l1_keywords = _RISK_KEYWORDS["l1_keywords"]
+
+    if risk_level == "L3":
+        matched = _matched_keywords(lowered, suicide_terms) + _matched_keywords(lowered, plan_terms)
         return {
             "risk_level": "L3",
             "risk_reasons": matched[:4] or ["explicit_high_risk_signal"],
             "intent": "crisis",
         }
-    if _contains_any(text, l2_keywords) or _contains_any(text, suicide_terms):
-        matched = _matched_keywords(text, l2_keywords) + _matched_keywords(text, suicide_terms)
+    if risk_level == "L2":
+        matched = _matched_keywords(lowered, l2_keywords) + _matched_keywords(lowered, suicide_terms)
         return {
             "risk_level": "L2",
             "risk_reasons": matched[:4] or ["high_risk_hint"],
             "intent": "crisis",
         }
-    if _contains_any(text, l1_keywords):
-        matched = _matched_keywords(text, l1_keywords)
+    if risk_level == "L1":
+        matched = _matched_keywords(lowered, l1_keywords)
         return {"risk_level": "L1", "risk_reasons": matched[:3] or ["elevated_distress"]}
     return {"risk_level": "L0", "risk_reasons": []}
 
@@ -283,7 +312,13 @@ async def crisis_response(state: AgentState) -> AgentState:
             "如果你已经准备马上伤害自己，请现在就拨打 120 或 110。"
             "我们先只处理眼前 10 分钟的安全。"
         )
-        actions = ["联系家长或监护人", "联系老师或班主任", "打开 SOS", "拨打 120 或 110"]
+        # 青少年模式：首项始终为联系家长/监护人，联系人列表更具体
+        actions = [
+            "联系家长或监护人",
+            "联系老师、班主任或学校心理老师",
+            "打开 SOS 紧急求助",
+            "拨打 120 或 110",
+        ]
     else:
         assistant_text = (
             "你现在的安全最重要。你刚刚的话提示存在明显高风险，"

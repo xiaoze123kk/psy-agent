@@ -74,6 +74,21 @@ def _apply_sqlite_compat_migrations() -> None:
             )
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
 
+        if "user_settings" in inspector.get_table_names():
+            settings_columns = {column["name"] for column in inspector.get_columns("user_settings")}
+            if "save_transcript" not in settings_columns:
+                connection.execute(text("ALTER TABLE user_settings ADD COLUMN save_transcript BOOLEAN NOT NULL DEFAULT 1"))
+
+        if "privacy_action_logs" in inspector.get_table_names():
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_privacy_action_logs_user_created_at
+                    ON privacy_action_logs (user_id, created_at DESC)
+                    """
+                )
+            )
+
 
 def get_db_session():
     db = SessionLocal()
