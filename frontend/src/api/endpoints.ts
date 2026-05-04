@@ -126,4 +126,8 @@ export class CounselingApi {
   getTestHistory(): Promise<TestHistoryResponse> {
     return this.client.get<TestHistoryResponse>("/api/v1/tests/history");
   }
+
+  getAttemptResult(attemptId: string): Promise<CompleteAttemptResponse> {
+    return this.client.get<CompleteAttemptResponse>(`/api/v1/tests/attempts/${attemptId}/result`);
+  }
 }

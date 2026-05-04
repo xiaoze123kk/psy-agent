@@ -17,6 +17,7 @@ from app.schemas.tests import (
 )
 from app.services.test_service import (
     complete_attempt,
+    get_attempt_result,
     get_history,
     get_test,
     get_tests,
@@ -45,6 +46,18 @@ async def read_test(test_id: str) -> TestDetailResponse:
     result = get_test(test_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test not found.")
+    return result
+
+
+@router.get("/attempts/{attempt_id}/result", response_model=CompleteAttemptResponse)
+async def read_attempt_result(
+    attempt_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> CompleteAttemptResponse:
+    result = get_attempt_result(attempt_id, db)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found or not completed.")
     return result
 
 

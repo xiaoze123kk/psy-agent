@@ -23,6 +23,7 @@ from app.schemas.tests import (
 
 _STATE_TEST_ID = "state-check-v1"
 _SIXTEEN_TYPE_TEST_ID = "sixteen-type-v1"
+_ANIME_TEST_ID = "anime-match-v1"
 
 _TESTS: list[dict] = [
     {
@@ -137,7 +138,30 @@ _TESTS: list[dict] = [
             },
         ],
     },
+    {
+        "test_id": _ANIME_TEST_ID,
+        "code": "anime_match",
+        "title": "测测你像哪个动漫角色",
+        "test_type": "anime",
+        "estimated_minutes": 5,
+        "audience": "all",
+        "status": "draft",
+        "questions": [],
+    },
 ]
+
+_ANIME_RESULTS: dict[str, dict] = {
+    # 占位模板，填充角色数据后启用
+    # "frieren": {
+    #     "result_code": "frieren-like",
+    #     "result_label": "芙莉莲 · 时光旅人",
+    #     "summary": "",
+    #     "traits": [],
+    #     "strengths": [],
+    #     "blind_spots": [],
+    #     "companion_style": "",
+    # },
+}
 
 _SIXTEEN_TYPE_RESULTS: dict[str, dict] = {
     "INFJ": {
@@ -349,6 +373,21 @@ def _compute_sixteen_type_result(test: dict, answers: dict[int, str]) -> dict:
     }
 
 
+def _compute_anime_result(test: dict, answers: dict[int, str]) -> dict:
+    return {
+        "result_code": "anime-draft",
+        "result_label": "暂未开放",
+        "summary": "动漫角色测试正在开发中，敬请期待。",
+        "suggested_actions": ["关注后续更新"],
+        "profile": TestResultProfile(
+            traits=[],
+            strengths=[],
+            blind_spots=[],
+            companion_style="",
+        ),
+    }
+
+
 def complete_attempt(attempt_id: str, db: Session) -> CompleteAttemptResponse | None:
     attempt = db.scalar(select(TestAttempt).where(TestAttempt.id == attempt_id))
     if attempt is None or attempt.status != "in_progress":
@@ -360,8 +399,10 @@ def complete_attempt(attempt_id: str, db: Session) -> CompleteAttemptResponse | 
     if len(attempt.answers) < expected_count:
         return None
 
-    if t["test_id"] == _SIXTEEN_TYPE_TEST_ID:
+    if t["test_type"] == "personality":
         result_data = _compute_sixteen_type_result(t, attempt.answers)
+    elif t["test_type"] == "anime":
+        result_data = _compute_anime_result(t, attempt.answers)
     else:
         result_data = _compute_state_result(t, attempt.answers)
 
@@ -387,8 +428,38 @@ def complete_attempt(attempt_id: str, db: Session) -> CompleteAttemptResponse | 
     return CompleteAttemptResponse(
         attempt_id=attempt_id,
         test_code=t["code"],
+        test_type=t["test_type"],
         result_code=result_data["result_code"],
         result_title=result_data["result_label"],
+        summary=result_data["summary"],
+        strengths=profile.strengths,
+        blind_spots=profile.blind_spots,
+        suggested_actions=result_data.get("suggested_actions", []),
+        continue_chat_context=ContinueChatContext(mode="test", context_type="test_result"),
+        profile=profile,
+    )
+
+
+def get_attempt_result(attempt_id: str, db: Session) -> CompleteAttemptResponse | None:
+    attempt = db.scalar(select(TestAttempt).where(TestAttempt.id == attempt_id))
+    if attempt is None or attempt.status != "completed":
+        return None
+    t = _find_test(attempt.test_id)
+    if t is None:
+        return None
+    if t["test_type"] == "personality":
+        result_data = _compute_sixteen_type_result(t, attempt.answers)
+    elif t["test_type"] == "anime":
+        result_data = _compute_anime_result(t, attempt.answers)
+    else:
+        result_data = _compute_state_result(t, attempt.answers)
+    profile = result_data["profile"]
+    return CompleteAttemptResponse(
+        attempt_id=attempt_id,
+        test_code=t["code"],
+        test_type=t["test_type"],
+        result_code=attempt.result_code or result_data["result_code"],
+        result_title=attempt.result_label or result_data["result_label"],
         summary=result_data["summary"],
         strengths=profile.strengths,
         blind_spots=profile.blind_spots,

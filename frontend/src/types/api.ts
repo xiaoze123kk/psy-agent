@@ -280,6 +280,7 @@ export interface ContinueChatContext {
 export interface CompleteAttemptResponse {
   attempt_id: string;
   test_code: string;
+  test_type?: string;
   result_code: string;
   result_title: string;
   summary: string;

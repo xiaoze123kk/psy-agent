@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ApiClient } from "./api/client";
@@ -170,7 +170,6 @@ const isConfirmingResult = ref(false);
 const isShowingIncomplete = ref(false);
 const testHistory = ref<TestHistoryItem[]>([]);
 const isHistoryLoading = ref(false);
-const selectedHistoryIndex = ref(-1);
 
 const demoTests: TestListItem[] = [
   { test_id: "state-check-v1", code: "daily_state", title: "今日情绪状态自评", test_type: "state", estimated_minutes: 1, audience: "all", status: "published" },
@@ -234,6 +233,20 @@ const demoTypeResult: CompleteAttemptResponse = {
     blind_spots: ["容易忽略自己的需求", "过度反省", "难以拒绝别人"],
     companion_style: "先接住情绪，再轻轻拓宽视角",
   },
+};
+
+const demoAnimeResult: CompleteAttemptResponse = {
+  attempt_id: "demo-anime-attempt",
+  test_code: "anime_match",
+  test_type: "anime",
+  result_code: "anime-draft",
+  result_title: "暂未开放",
+  summary: "动漫角色测试正在开发中，敬请期待。",
+  strengths: [],
+  blind_spots: [],
+  suggested_actions: ["关注后续更新"],
+  continue_chat_context: { mode: "test", context_type: "test_result" },
+  profile: { traits: [], strengths: [], blind_spots: [], companion_style: "" },
 };
 
 function storageText(key: string) {
@@ -976,7 +989,14 @@ function cancelCompleteTest() {
 
 async function completeTest() {
   if (isDemoMode.value || !accessToken.value || currentAttemptId.value.startsWith("local-")) {
-    testResult.value = currentTest.value?.test_id === "state-check-v1" ? { ...demoStateResult } : { ...demoTypeResult };
+    const testItem = testItems.value.find(t => t.test_id === currentTest.value?.test_id);
+    if (testItem?.test_type === "personality") {
+      testResult.value = { ...demoTypeResult };
+    } else if (testItem?.test_type === "anime") {
+      testResult.value = { ...demoAnimeResult };
+    } else {
+      testResult.value = { ...demoStateResult };
+    }
     testView.value = "result";
     return;
   }
@@ -985,7 +1005,14 @@ async function completeTest() {
     testResult.value = await api.completeAttempt(currentAttemptId.value);
     testView.value = "result";
   } catch {
-    testResult.value = currentTest.value?.test_id === "state-check-v1" ? { ...demoStateResult } : { ...demoTypeResult };
+    const testItem = testItems.value.find(t => t.test_id === currentTest.value?.test_id);
+    if (testItem?.test_type === "personality") {
+      testResult.value = { ...demoTypeResult };
+    } else if (testItem?.test_type === "anime") {
+      testResult.value = { ...demoAnimeResult };
+    } else {
+      testResult.value = { ...demoStateResult };
+    }
     testView.value = "result";
   } finally {
     isTestLoading.value = false;
@@ -1012,6 +1039,24 @@ function formatTestTime(isoStr: string): string {
   return `${y}-${m}-${day} ${h}:${min}`;
 }
 
+function stateLevelLabel(code: string): string {
+  switch (code) {
+    case "stable": return "状态稳定";
+    case "mild": return "轻度波动";
+    case "burdened": return "负担较重";
+    default: return "";
+  }
+}
+
+function riskNoteForCode(code: string): string {
+  switch (code) {
+    case "stable": return "当前状态整体平稳，继续保持自我照顾的节奏。若有突发压力事件，情绪可能出现短期波动。";
+    case "mild": return "情绪有一些波动，在正常范围内。留意是否持续加重，适当减负。";
+    case "burdened": return "当前负担较重，这不是你的错。建议优先照顾自己，并考虑联系现实中的支持。如果持续影响睡眠或日常生活，可以联系专业支持。";
+    default: return "";
+  }
+}
+
 async function loadTestHistory() {
   isHistoryLoading.value = true;
   try {
@@ -1030,8 +1075,20 @@ async function loadTestHistory() {
 
 function openTestHistory() {
   testView.value = "history";
-  selectedHistoryIndex.value = -1;
   loadTestHistory();
+}
+
+async function viewHistoryResult(attemptId: string) {
+  if (isDemoMode.value || !accessToken.value) return;
+  isTestLoading.value = true;
+  try {
+    testResult.value = await api.getAttemptResult(attemptId);
+    testView.value = "result";
+  } catch {
+    // silently fail
+  } finally {
+    isTestLoading.value = false;
+  }
 }
 
 function continueTestChat() {
@@ -1295,13 +1352,17 @@ onMounted(async () => {
           </form>
         </section>
 
+          <!-- 以下是测试中心页面 -->
+        
         <section v-else-if="activeTab === 'tests'" class="tab-page tests-page">
           <div v-if="testView === 'list' || testView === 'history'" class="test-category-tabs">
-            <button :class="{ active: selectedTestCategory === 'state' && testView === 'list' }" type="button" @click="selectedTestCategory = 'state'; testView = 'list'">今日状态</button>
-            <button :class="{ active: selectedTestCategory === 'personality' && testView === 'list' }" type="button" @click="selectedTestCategory = 'personality'; testView = 'list'">人格测试</button>
-            <button :class="{ active: selectedTestCategory === 'anime' && testView === 'list' }" type="button" @click="selectedTestCategory = 'anime'; testView = 'list'">动漫人物匹配</button>
+            <!-- 测试分类的选项卡 -->
+            <button :class="{ active: selectedTestCategory === 'state' && testView === 'list' }" type="button" @click="selectedTestCategory = 'state'; testView = 'list'">状态</button>
+            <button :class="{ active: selectedTestCategory === 'personality' && testView === 'list' }" type="button" @click="selectedTestCategory = 'personality'; testView = 'list'">人格</button>
+            <button :class="{ active: selectedTestCategory === 'anime' && testView === 'list' }" type="button" @click="selectedTestCategory = 'anime'; testView = 'list'">动漫</button>
             <button :class="{ active: testView === 'history' }" type="button" @click="openTestHistory">历史</button>
           </div>
+          <!-- 测试项目的对外信息 -->
           <div v-if="testView === 'list'" class="tests-list">
             <div class="test-card-list">
               <article v-for="test in filteredTests()" :key="test.test_id" class="test-card">
@@ -1351,6 +1412,7 @@ onMounted(async () => {
               >{{ isLastQuestion() ? '查看结果' : '下一题' }}</button>
             </div>
 
+            <!-- 确认提交的弹窗 -->
             <div v-if="isConfirmingResult" class="confirm-overlay" @click.self="cancelCompleteTest">
               <div class="confirm-dialog">
                 <h2>确认提交</h2>
@@ -1374,8 +1436,30 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- 以下是测试结果的展示页 -->
           <div v-else-if="testView === 'result' && testResult" class="tests-result">
-            <article class="result-card">
+            <article v-if="testResult.test_type === 'state'" class="result-card result-card--state">
+              <div class="state-result-header">
+                <span class="state-level-badge" :class="'state-level--' + testResult.result_code">{{ stateLevelLabel(testResult.result_code) }}</span>
+              </div>
+              <h1>{{ testResult.result_title }}</h1>
+              <p class="result-disclaimer">这不是对你的定义，而是一面镜子。</p>
+              <p class="result-summary">{{ testResult.summary }}</p>
+
+              <section class="result-section result-section--risk">
+                <strong>风险提示</strong>
+                <p>{{ riskNoteForCode(testResult.result_code) }}</p>
+              </section>
+
+              <section v-if="testResult.suggested_actions.length" class="result-section">
+                <strong>建议行动</strong>
+                <ul>
+                  <li v-for="action in testResult.suggested_actions" :key="action">{{ action }}</li>
+                </ul>
+              </section>
+            </article>
+
+            <article v-else-if="testResult.test_type === 'personality'" class="result-card">
               <h1>{{ testResult.profile.sixteen_type_code ? `${testResult.profile.sixteen_type_code} · ` : '' }}{{ testResult.result_title }}</h1>
               <p class="result-disclaimer">这不是对你的定义，而是一面镜子。</p>
               <p class="result-summary">{{ testResult.summary }}</p>
@@ -1401,16 +1485,56 @@ onMounted(async () => {
                 </ul>
               </section>
 
+              <section v-if="testResult.profile.companion_style" class="result-section">
+                <strong>适合你的陪伴方式</strong>
+                <p>{{ testResult.profile.companion_style }}</p>
+              </section>
+
               <section v-if="testResult.suggested_actions.length" class="result-section">
                 <strong>建议行动</strong>
                 <ul>
                   <li v-for="action in testResult.suggested_actions" :key="action">{{ action }}</li>
                 </ul>
               </section>
+            </article>
 
-              <section v-if="testResult.profile.companion_style" class="result-section">
-                <strong>适合你的陪伴方式</strong>
-                <p>{{ testResult.profile.companion_style }}</p>
+            <article v-else-if="testResult.test_type === 'anime'" class="result-card result-card--anime">
+              <h1>{{ testResult.result_title }}</h1>
+              <p class="anime-similarity" v-if="testResult.profile.sixteen_type_label">{{ testResult.profile.sixteen_type_label }}</p>
+              <p class="result-disclaimer">这不是对你的定义，而是一面镜子。</p>
+              <p class="result-summary">{{ testResult.summary }}</p>
+
+              <section v-if="testResult.profile.traits.length" class="result-section">
+                <strong>你们像在哪里？</strong>
+                <ul>
+                  <li v-for="trait in testResult.profile.traits" :key="trait">{{ trait }}</li>
+                </ul>
+              </section>
+
+              <section v-if="testResult.profile.strengths.length" class="result-section">
+                <strong>top 3</strong>
+                <ol>
+                  <li v-for="s in testResult.profile.strengths" :key="s">{{ s }}</li>
+                </ol>
+              </section>
+
+              <section v-if="testResult.blind_spots.length" class="result-section">
+                <strong>哪里不像？</strong>
+                <ul>
+                  <li v-for="b in testResult.blind_spots" :key="b">{{ b }}</li>
+                </ul>
+              </section>
+            </article>
+
+            <article v-else class="result-card">
+              <h1>{{ testResult.result_title }}</h1>
+              <p class="result-disclaimer">这不是对你的定义，而是一面镜子。</p>
+              <p class="result-summary">{{ testResult.summary }}</p>
+              <section v-if="testResult.suggested_actions.length" class="result-section">
+                <strong>建议行动</strong>
+                <ul>
+                  <li v-for="action in testResult.suggested_actions" :key="action">{{ action }}</li>
+                </ul>
               </section>
             </article>
 
@@ -1420,6 +1544,11 @@ onMounted(async () => {
             </footer>
           </div>
 
+          <!-- 在这里新增测试结果展示页 -->
+
+          <!-- 以上是测试结果的展示页 -->
+          <!-- 以下是测试历史的展示页 -->
+
           <div v-else-if="testView === 'history'" class="tests-history">
             <p v-if="isHistoryLoading" class="empty-copy">加载中...</p>
             <div v-else-if="testHistory.length === 0" class="test-card-list">
@@ -1428,7 +1557,7 @@ onMounted(async () => {
             </div>
             <div v-else class="test-card-list">
               <article
-                v-for="(item, index) in testHistory"
+                v-for="item in testHistory"
                 :key="item.attempt_id"
                 class="test-card"
               >
@@ -1438,15 +1567,14 @@ onMounted(async () => {
                 <button
                   class="secondary-action"
                   type="button"
-                  @click="selectedHistoryIndex = selectedHistoryIndex === index ? -1 : index"
-                >{{ selectedHistoryIndex === index ? '收起' : '查看结果' }}</button>
-                <div v-if="selectedHistoryIndex === index" class="history-result-detail">
-                  <p class="result-code">{{ item.result_code }}</p>
-                </div>
+                  @click="viewHistoryResult(item.attempt_id)"
+                >查看结果</button>
               </article>
             </div>
           </div>
         </section>
+
+          <!-- 以上是测试历史的展示页 -->
 
         <section v-else-if="activeTab === 'knowledge'" class="tab-page knowledge-page">
           <section class="knowledge-agent">
@@ -2476,6 +2604,77 @@ input:focus-visible {
   padding: 12px;
   background: var(--surface-muted);
   border-radius: 8px;
+}
+
+.result-card--state {
+  text-align: center;
+}
+
+.state-result-header {
+  margin-bottom: 8px;
+}
+
+.state-level-badge {
+  display: inline-block;
+  padding: 6px 20px;
+  border-radius: 20px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.state-level--stable {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.state-level--mild {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.state-level--burdened {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.result-section--risk {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--safety-bg);
+}
+
+.result-section--risk strong {
+  color: var(--text-main);
+}
+
+.result-section--risk p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.result-card--anime {
+  text-align: center;
+}
+
+.result-card--anime .result-section {
+  text-align: left;
+}
+
+.anime-similarity {
+  margin: -8px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--teal-dark);
+}
+
+.result-card ol {
+  margin: 0;
+  padding-inline-start: 22px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  line-height: 1.6;
 }
 
 .tests-taking {

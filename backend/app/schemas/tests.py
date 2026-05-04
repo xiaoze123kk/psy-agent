@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
@@ -71,6 +71,7 @@ class ContinueChatContext(BaseModel):
 class CompleteAttemptResponse(BaseModel):
     attempt_id: str
     test_code: str
+    test_type: str
     result_code: str
     result_title: str
     summary: str
