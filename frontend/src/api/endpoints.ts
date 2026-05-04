@@ -16,6 +16,7 @@ import type {
   LoginRequest,
   LoginResponse,
   LogoutRequest,
+  MemoryMutationResponse,
   MessageListResponse,
   MoodLogRequest,
   MoodLogResponse,
@@ -38,6 +39,9 @@ import type {
   TestListItem,
   TestListResponse,
   ThreadListResponse,
+  UpdateMemoryRequest,
+  UserSettingsResponse,
+  UserSettingsUpdateRequest,
 } from "../types/api";
 
 export class CounselingApi {
@@ -92,6 +96,22 @@ export class CounselingApi {
 
   listMemories(): Promise<ListMemoriesResponse> {
     return this.client.get<ListMemoriesResponse>("/api/v1/memories");
+  }
+
+  updateMemory(memoryId: string, payload: UpdateMemoryRequest): Promise<MemoryMutationResponse> {
+    return this.client.patch<MemoryMutationResponse, UpdateMemoryRequest>(`/api/v1/memories/${memoryId}`, payload);
+  }
+
+  deleteMemory(memoryId: string): Promise<MemoryMutationResponse> {
+    return this.client.delete<MemoryMutationResponse>(`/api/v1/memories/${memoryId}`);
+  }
+
+  clearMemories(): Promise<{ status: string }> {
+    return this.client.delete<{ status: string }>("/api/v1/memories");
+  }
+
+  updateSettings(payload: UserSettingsUpdateRequest): Promise<UserSettingsResponse> {
+    return this.client.patch<UserSettingsResponse, UserSettingsUpdateRequest>("/api/v1/me/settings", payload);
   }
 
   searchKnowledge(query: string, options: { category?: string; audience?: string } = {}): Promise<KnowledgeSearchResponse> {

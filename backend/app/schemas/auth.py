@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import AgeRange, UserMode
+from app.schemas.common import AgeRange, MemoryMode, UserMode
 
 
 USERNAME_PATTERN = r"^[A-Za-z0-9_-]{3,24}$"
@@ -84,6 +84,7 @@ class CurrentUserResponse(BaseModel):
     user_mode: UserMode
     usage_goals: list[str]
     onboarding_completed: bool
-    memory_mode: str
+    memory_mode: MemoryMode
     companion_style: str
     voice_enabled: bool
+    save_voice_audio: bool

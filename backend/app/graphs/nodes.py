@@ -332,12 +332,55 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
         return {"memory_candidates": []}
 
     risk_level = state.get("risk_level", "L0")
-    candidate = {
-        "memory_type": "session_summary" if risk_level in {"L0", "L1"} else "safety_summary",
-        "content": summary,
-        "importance": 5 if risk_level in {"L2", "L3"} else 3,
-    }
-    return {"memory_candidates": [candidate]}
+    if risk_level in {"L2", "L3"}:
+        return {
+            "memory_candidates": [
+                {
+                    "memory_type": "safety_summary",
+                    "content": summary,
+                    "importance": 5,
+                }
+            ]
+        }
+
+    candidates = [
+        {
+            "memory_type": "session_summary",
+            "content": summary,
+            "importance": 3,
+        }
+    ]
+    if state.get("memory_mode") != "long_term":
+        return {"memory_candidates": candidates}
+
+    text = state.get("normalized_text", "")
+    compact_text = _excerpt(text, 80)
+    if _contains_any(text, ("喜欢", "希望", "更想", "更希望", "不要", "少一点", "直接", "温柔", "安慰", "分析", "提问")):
+        candidates.append(
+            {
+                "memory_type": "preference",
+                "content": f"用户表达了陪伴偏好：{compact_text}",
+                "importance": 4,
+            }
+        )
+    if _contains_any(text, ("经常", "总是", "每次", "一到", "睡前", "考试", "开会", "朋友", "家人", "关系", "触发")):
+        candidates.append(
+            {
+                "memory_type": "recurring_trigger",
+                "content": f"用户提到可能反复出现的困扰或触发点：{compact_text}",
+                "importance": 4,
+            }
+        )
+    if _contains_any(text, ("呼吸", "练习", "有用", "有效", "帮助", "适合", "先陪", "先听", "梳理")):
+        candidates.append(
+            {
+                "memory_type": "support_strategy",
+                "content": f"用户提到可能有帮助的支持方式：{compact_text}",
+                "importance": 4,
+            }
+        )
+
+    return {"memory_candidates": candidates}
 
 
 async def write_memory(state: AgentState) -> AgentState:

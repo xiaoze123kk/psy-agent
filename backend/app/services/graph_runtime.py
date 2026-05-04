@@ -1,6 +1,26 @@
 from app.graphs.main_graph import build_main_graph
 
 
+def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
+    if risk_level in {"L2", "L3"}:
+        return []
+    references = []
+    for memory in memories or []:
+        if memory.get("visibility") != "user_visible":
+            continue
+        content = str(memory.get("content", "")).strip()
+        if not content:
+            continue
+        references.append(
+            {
+                "memory_id": str(memory.get("id", "")),
+                "memory_type": str(memory.get("memory_type", "")),
+                "content": content,
+            }
+        )
+    return references
+
+
 class GraphRuntime:
     _compiled_graph = None
 
@@ -52,13 +72,15 @@ class GraphRuntime:
             },
         )
 
+        risk_level = result.get("risk_level", "L0")
         return {
             "assistant_text": result.get("assistant_text", ""),
-            "risk_level": result.get("risk_level", "L0"),
+            "risk_level": risk_level,
             "intent": result.get("intent", "other"),
             "risk_reasons": result.get("risk_reasons", []),
             "suggested_actions": result.get("suggested_actions", []),
             "session_summary": result.get("session_summary", ""),
             "memory_candidates": result.get("memory_candidates", []),
             "should_write_memory": result.get("should_write_memory", False),
+            "referenced_memories": _memory_references(retrieved_memories, str(risk_level)),
         }
