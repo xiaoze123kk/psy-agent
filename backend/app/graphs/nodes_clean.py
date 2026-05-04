@@ -73,92 +73,6 @@ async def _model_reply(state: AgentState, *, mode: str, fallback: str) -> str:
     return reply or fallback
 
 
-async def _model_reply_with_actions(
-    state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
-) -> tuple[str, list[str]]:
-    text = state.get("normalized_text", "")
-    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    style = state.get("companion_preferences", {}).get("style", "gentle")
-    last_summary = state.get("last_summary") or "无"
-    memory_context = _memory_context(state.get("retrieved_memories", []))
-    recent_context = _recent_context(state)
-
-    mode_guidance = {
-        "companion": "先共情和接住情绪，少分析，最多问一个温和的问题。",
-        "vent": "重点回应用户没有被理解、压力很大的感受，不急着给建议。",
-        "soothe": "先带用户稳定身体和呼吸，再轻轻询问触发点。",
-        "counseling": "轻量结构化梳理事件、感受、想法和一个很小的下一步。",
-    }.get(mode, "先共情，再给一个很小的下一步。")
-
-    system_prompt = (
-        "你是心理陪伴产品里的支持型对话 agent，不是医生或心理咨询师。"
-        "不要诊断、不要承诺治疗、不要替代专业帮助。"
-        "高风险安全分流由系统规则处理；当前只写非危机陪伴回复。"
-        "用简体中文，语气稳定、克制、温和。回复控制在 120 字以内。"
-    )
-
-    actions_instruction = (
-        "\n"
-        "--- 输出格式 ---\n"
-        "先输出回复正文，然后单独一行 ---，下方输出3个快捷按钮文案。\n"
-        "\n"
-        "--- 快捷按钮核心原则 ---\n"
-        "按钮就是用户接下来想说的话。把自己当成用户，写出用户此刻最可能打出来的一句话。\n"
-        "简单检验：把这个按钮放在输入框里，它看起来像是用户自己打的吗？\n"
-        "\n"
-        "禁止清单（违反任一条就重写）：\n"
-        "X 命令/祈使句（无论怎么包装）：「先X」「试着X」「做个X」「来X」\n"
-        "X 建议/指导：「你可以」「不妨」「建议」「应该」\n"
-        "X 第三人称/客观描述：「联系可信任的人」「找专业人士」「告诉家人」——这些都是助手视角的转述\n"
-        "X 反问/追问句式：「你觉得」「为什么会」「是不是可以」——这是助手在提问\n"
-        "X 积极化包装：用户说难受时不要输出「一切都会好的」「换个角度想」\n"
-        "X 指导性动词开头：稳定、拨打、练习、做、找（除非是「我找不到」「我不想做」这种第一人称否定式）\n"
-        "\n"
-        "正确的按钮特征：\n"
-        "- 用「我」开头或隐含「我」的省略句：我很难受 / 然后呢 / 继续说吧\n"
-        "- 带有用户当下的情绪色彩：不是中性的，而是带着焦虑、低落、困惑、委屈\n"
-        "- 不超过10个字，口语化\n"
-        "\n"
-        "正确示例（用户说「我失眠好几天了，脑子停不下来」后）：\n"
-        "这几天一到晚上就害怕\n"
-        "我试过好多办法都没用\n"
-        "是不是我太焦虑了\n"
-        "---\n"
-        "错误示例（同样场景下禁止出现）：\n"
-        "试着睡前放松一下\n"
-        "找找失眠的原因\n"
-        "怎么才能睡着\n"
-    )
-
-    user_prompt = (
-        f"用户模式：{user_mode}\n"
-        f"陪伴风格：{style}\n"
-        f"当前回复模式：{mode}\n"
-        f"回复要求：{mode_guidance}\n"
-        f"上次摘要：{last_summary}\n"
-        f"可参考记忆：\n{memory_context}\n"
-        f"最近对话：\n{recent_context}\n"
-        f"用户刚刚说：{text}\n"
-        + actions_instruction
-    )
-
-    reply = await deepseek_client.chat(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-    )
-
-    if not reply:
-        return fallback, default_actions
-    body, actions = _parse_actions_reply(reply)
-    if not body:
-        body = fallback
-    if not actions:
-        actions = default_actions
-    return body, actions
-
-
 async def normalize_input(state: AgentState) -> AgentState:
     normalized_text = (state.get("user_text") or state.get("voice_transcript") or "").strip()
     return {
@@ -193,40 +107,6 @@ async def load_user_profile(state: AgentState) -> AgentState:
             "tone": existing_response_style.get("tone", "supportive"),
         },
     }
-
-
-def _recent_context(state: AgentState, count: int = 6) -> str:
-    messages = state.get("recent_messages", [])
-    if not messages:
-        return "（暂无历史对话）"
-    recent = messages[-count:]
-    lines = []
-    for m in recent:
-        role = "用户" if m.get("role") == "user" else "陪伴者"
-        content = str(m.get("content", "")).strip()
-        if content:
-            lines.append(f"{role}：{content}")
-    return "\n".join(lines) or "（暂无历史对话）"
-
-
-def _parse_actions_reply(text: str | None) -> tuple[str, list[str]]:
-    if not text:
-        return "", []
-    text = text.strip()
-    if "---" not in text:
-        return text, []
-    parts = text.rsplit("---", 1)
-    body = parts[0].strip()
-    actions_block = parts[1].strip()
-    actions = [a.strip() for a in actions_block.split("\n") if a.strip()]
-    cleaned: list[str] = []
-    for a in actions:
-        while a and a[0] in "0123456789.、) -":
-            a = a[1:]
-        a = a.strip()
-        if a:
-            cleaned.append(a)
-    return body, cleaned[:3]
 
 
 # 风险关键词库（同步版本，供知识服务等同步函数使用）
@@ -362,7 +242,7 @@ async def companion_response(state: AgentState) -> AgentState:
     excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
 
     if last_summary:
-        opener = f"我记得你上次聊到《{_excerpt(last_summary, 28)}》，这次我继续接住你。"
+        opener = f"我记得你上次聊到“{_excerpt(last_summary, 28)}”，这次我继续接住你。"
     elif companion_style == "steady":
         opener = "我们先把节奏放慢，我会陪你把重点抓出来。"
     elif user_mode == "teen":
@@ -372,24 +252,24 @@ async def companion_response(state: AgentState) -> AgentState:
 
     if intent == "vent":
         body = "听起来你已经憋了很久，也很想被真正理解。"
+        actions = ["继续说", "我想被理解", "给我一个小建议"]
     elif intent == "daily_checkin":
         body = "谢谢你把今天的状态带过来，能说出来已经很不容易。"
+        actions = ["说说今天发生了什么", "先聊情绪", "先聊压力源"]
     else:
         body = "你可以先只说此刻最卡住、最难受的那一小块。"
+        actions = ["继续说", "帮我理一理", "先听我说完"]
 
     fallback = (
         f"{opener}{body}"
-        f" 你刚刚提到《{excerpt}》。如果你愿意，我们先从这里慢慢展开。"
+        f" 你刚刚提到“{excerpt}”。如果你愿意，我们先从这里慢慢展开。"
     )
-    default_actions = ["继续说", "帮我理一理", "先听我说完"]
     mode = "vent" if intent == "vent" else "companion"
-    assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode=mode, fallback=fallback, default_actions=default_actions
-    )
     return {
-        "assistant_text": assistant_text,
-        "suggested_actions": suggested_actions,
+        "assistant_text": await _model_reply(state, mode=mode, fallback=fallback),
+        "suggested_actions": actions,
     }
+
 
 async def soothing_response(state: AgentState) -> AgentState:
     user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
@@ -404,13 +284,9 @@ async def soothing_response(state: AgentState) -> AgentState:
         "再说出你眼前看到的 3 样东西。"
         f"{tail}"
     )
-    default_actions = ["我现在还是很紧张", "陪我待一会儿", "有没有办法好受一点"]
-    assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode="soothe", fallback=fallback, default_actions=default_actions
-    )
     return {
-        "assistant_text": assistant_text,
-        "suggested_actions": suggested_actions,
+        "assistant_text": await _model_reply(state, mode="soothe", fallback=fallback),
+        "suggested_actions": ["跟我做 60 秒稳定练习", "继续聊触发点", "打开 SOS"],
     }
 
 
@@ -420,13 +296,9 @@ async def counseling_response(state: AgentState) -> AgentState:
         "先说最近一次发生了什么，再说那一刻你脑子里冒出的第一句话，"
         "最后只找一个最小的下一步。"
     )
-    default_actions = ["我想把这件事说清楚", "帮我理一理", "有没有更轻的下一步"]
-    assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode="counseling", fallback=fallback, default_actions=default_actions
-    )
     return {
-        "assistant_text": assistant_text,
-        "suggested_actions": suggested_actions,
+        "assistant_text": await _model_reply(state, mode="counseling", fallback=fallback),
+        "suggested_actions": ["先说发生了什么", "帮我理清想法", "一起定下一步"],
     }
 
 

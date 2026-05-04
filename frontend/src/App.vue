@@ -125,7 +125,6 @@ const goalOptions: SelectOption[] = [
   { id: "relationships", label: "想理清关系", description: "关于家人、朋友或亲密关系。" },
 ];
 
-const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
 const knowledgePromptChips = ["焦虑发作时怎么办", "睡前脑子停不下来", "什么是边界感", "我是不是太敏感了"];
 const quizModeOptions: Array<{ id: KnowledgeQuizMode; label: string; description: string }> = [
   { id: "10", label: "10 题", description: "快测" },
@@ -409,7 +408,7 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
     text: "今天想弄清楚哪件事？焦虑、睡眠、关系、情绪调节，都可以慢慢说。",
   },
 ]);
-const quickActions = ref([...defaultQuickActions]);
+const quickActions = ref<string[]>(["继续听我说", "帮我理一理", "先听我说完"]);
 const composerText = ref("");
 const knowledgeDraft = ref("");
 const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
@@ -1436,7 +1435,7 @@ async function selectThread(threadId: string) {
   localStorage.setItem(THREAD_ID_KEY, threadId);
   activeTab.value = "chat";
   await loadThreadMessages(threadId);
-  quickActions.value = inferContextualActions();
+  quickActions.value = [...fallbackQuickActions];
 }
 
 async function createThread(title = "新的对话") {
@@ -1499,50 +1498,7 @@ function inferRisk(message: string): RiskLevel | null {
   return null;
 }
 
-function inferActions(message: string, risk: RiskLevel | null) {
-  if (risk === "L2" || risk === "L3") return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
-  if (message.includes("睡")) return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
-  if (message.includes("焦虑") || message.includes("慌")) return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
-  return [...defaultQuickActions];
-}
-
-function inferContextualActions(message = "", risk: RiskLevel | null = null) {
-  if (risk === "L2" || risk === "L3") {
-    return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
-  }
-
-  const joinedContext = `${contextText.value} ${message}`;
-
-  if (joinedContext.includes("开会") || joinedContext.includes("发言") || joinedContext.includes("被点名")) {
-    if (message.includes("梳理")) {
-      return ["拆成会前步骤", "找最怕的场景", "准备一句开口", "先稳住身体"];
-    }
-
-    if (message.includes("建议")) {
-      return ["会前 3 分钟怎么做", "准备备用句子", "降低发言压力", "会后怎么恢复"];
-    }
-
-    return ["先稳住身体", "找最怕的场景", "准备一句发言", "拆成会前步骤"];
-  }
-
-  if (joinedContext.includes("睡") || joinedContext.includes("失眠") || joinedContext.includes("睡不着")) {
-    if (message.includes("梳理")) {
-      return ["找睡前触发点", "分清担心和事实", "写下明天待办", "做睡前收尾"];
-    }
-
-    return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
-  }
-
-  if (joinedContext.includes("关系") || joinedContext.includes("家人") || joinedContext.includes("朋友")) {
-    return ["理清对方的话", "说出我的感受", "准备一句边界", "看我真正想要什么"];
-  }
-
-  if (joinedContext.includes("焦虑") || joinedContext.includes("慌") || joinedContext.includes("紧张")) {
-    return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
-  }
-
-  return inferActions(message, risk);
-}
+const fallbackQuickActions = ["继续听我说", "帮我理一理", "先听我说完"];
 
 function buildReply(message: string) {
   if (message.includes("睡")) return "睡不好的时候，很多情绪都会被放大。我们先不急着解决全部，只分开看看：是入睡难、半夜醒，还是醒来后很累？";
@@ -1568,7 +1524,7 @@ function applySendMessageResponse(assistantId: number, userContent: string, resp
   const assistant = response.assistant_message;
   const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
   const reply = assistant.assistant_text || assistant.content;
-  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : inferContextualActions(userContent, risk);
+  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : fallbackQuickActions;
   updateMessage(assistantId, {
     text: reply,
     riskLevel: risk,
@@ -1578,7 +1534,7 @@ function applySendMessageResponse(assistantId: number, userContent: string, resp
     streaming: false,
     streamError: false,
   });
-  quickActions.value = actions.slice(0, 4);
+  quickActions.value = actions.slice(0, 3);
   syncLocalThread(reply, risk);
   if (assistant.should_write_memory) void refreshMemories();
   if (risk === "L2" || risk === "L3") openSafety();
@@ -1593,7 +1549,7 @@ async function submitMessage(text = composerText.value) {
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
   const localRisk = inferRisk(content);
-  quickActions.value = inferContextualActions(content, localRisk);
+  quickActions.value = [...fallbackQuickActions];
 
   if (isDemoMode.value || !accessToken.value || activeThreadId.value.startsWith("local-")) {
     const reply = buildReply(content);
@@ -1636,8 +1592,8 @@ async function submitMessage(text = composerText.value) {
           receivedFinalEvent = true;
           risk = normalizeRiskLevel(data.risk_level) ?? "L0";
           const actions = normalizeStringList(data.suggested_actions);
-          const finalActions = actions.length ? actions : inferContextualActions(content, risk);
-          quickActions.value = finalActions.slice(0, 4);
+          const finalActions = actions.length ? actions : fallbackQuickActions;
+          quickActions.value = finalActions.slice(0, 3);
           if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
           updateMessage(assistantId, {
             text: streamed,
@@ -1689,13 +1645,12 @@ async function submitMessage(text = composerText.value) {
       apiError.value =
         fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
       const reply = buildReply(content);
-      const actions = inferContextualActions(content, localRisk);
-      quickActions.value = actions;
+      quickActions.value = [...fallbackQuickActions];
       updateMessage(assistantId, {
         text: reply,
         riskLevel: localRisk,
         graphNode: null,
-        suggestedActions: actions,
+        suggestedActions: fallbackQuickActions,
         streaming: false,
         streamError: true,
       });
@@ -4257,32 +4212,57 @@ onMounted(async () => {
 .chat-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto 1fr auto auto auto;
 }
 
-.thread-tabs,
-.quick-actions,
-.knowledge-prompts {
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 10px 0 4px;
+}
+
+.quick-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-actions button {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #ffffff;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.quick-actions button:active {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  border-color: var(--teal);
+}
+
+.quick-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.thread-tabs {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
-}
-
-.thread-tabs,
-.quick-actions,
-.knowledge-prompts {
   scrollbar-width: none;
 }
 
-.thread-tabs::-webkit-scrollbar,
-.quick-actions::-webkit-scrollbar,
-.knowledge-prompts::-webkit-scrollbar {
+.thread-tabs::-webkit-scrollbar {
   display: none;
 }
 
-.thread-tabs button,
-.quick-actions button {
+.thread-tabs button {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 9px 12px;
@@ -4291,11 +4271,6 @@ onMounted(async () => {
   border: 1px solid var(--line);
   font-weight: 800;
   font-size: 12px;
-}
-
-.quick-actions button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .thread-tabs button.active {
