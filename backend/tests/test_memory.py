@@ -134,6 +134,19 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(hidden_response.status_code, 404)
         self.assertEqual(other_response.status_code, 404)
 
+    def test_memory_document_exports_only_visible_markdown(self) -> None:
+        user = self.create_user()
+        self.add_memory(user, content="可见摘要", memory_type="session_summary")
+        self.add_memory(user, content="内部安全记录", visibility="internal_safety")
+
+        response = self.client.get("/api/v1/memories/document", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/markdown", response.headers.get("content-type", ""))
+        self.assertIn("# 记忆文档", response.text)
+        self.assertIn("可见摘要", response.text)
+        self.assertNotIn("内部安全记录", response.text)
+
     def test_clear_memories_soft_deletes_only_visible_memories(self) -> None:
         user = self.create_user()
         visible = self.add_memory(user, content="可见摘要")

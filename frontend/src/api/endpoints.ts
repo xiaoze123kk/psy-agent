@@ -91,6 +91,14 @@ export class CounselingApi {
     return this.client.get<ListMemoriesResponse>("/api/v1/memories");
   }
 
+  getMemoryDocument(download = false): Promise<string> {
+    const params = new URLSearchParams();
+    if (download) params.set("download", "true");
+    const query = params.toString();
+    const path = `/api/v1/memories/document${query ? `?${query}` : ""}`;
+    return this.client.getText(path);
+  }
+
   updateMemory(memoryId: string, payload: UpdateMemoryRequest): Promise<MemoryMutationResponse> {
     return this.client.patch<MemoryMutationResponse, UpdateMemoryRequest>(`/api/v1/memories/${memoryId}`, payload);
   }
