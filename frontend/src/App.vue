@@ -10,6 +10,8 @@ import type {
   ChatStreamGraphUpdateEvent,
   ChatStreamTokenEvent,
   CompleteAttemptResponse,
+  FeedbackCreateRequest,
+  FeedbackResponse,
   KnowledgeArticleResponse,
   KnowledgeQuizBankStatsResponse,
   KnowledgeQuizMode,
@@ -24,12 +26,16 @@ import type {
   MoodLogRequest,
   MoodTrendResponse,
   SendMessageResponse,
+  ShareCardData,
   StartAttemptResponse,
   TestDetailResponse,
   TestHistoryItem,
   TestListItem,
   ThreadListItem,
   UserMode,
+  VoiceSessionResponse,
+  WeeklySummaryResponse,
+  WsServerEvent,
 } from "./types/api";
 
 type Stage = "auth" | "onboarding" | "app";
@@ -395,6 +401,36 @@ const isQuizLoading = ref(false);
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
 const knowledgeMessageSeed = ref(2);
+
+// --- Sprint 3: Voice ASR (Speech Recognition) ---
+const xfWs = ref<WebSocket | null>(null);
+const isRecording = ref(false);
+const xfRecognizedText = ref("");
+const xfRecognizing = ref(false);
+const voiceError = ref("");
+let xfAudioContext: AudioContext | null = null;
+let xfMediaStream: MediaStream | null = null;
+let xfScriptProcessor: ScriptProcessorNode | null = null;
+let xfSourceNode: MediaStreamAudioSourceNode | null = null;
+
+// --- Sprint 3: Share Card ---
+const shareCardVisible = ref(false);
+const shareCardData = ref<ShareCardData | null>(null);
+const shareCardCopied = ref(false);
+
+// --- Sprint 3: Feedback ---
+const feedbackVisible = ref(false);
+const feedbackTargetType = ref<"assistant_message" | "knowledge_answer" | "test_result">("assistant_message");
+const feedbackTargetId = ref<string | null>(null);
+const feedbackRating = ref(0);
+const feedbackNote = ref("");
+const isFeedbackSubmitting = ref(false);
+const feedbackDone = ref(false);
+
+// --- Sprint 3: Weekly Summary ---
+const weeklySummary = ref<WeeklySummaryResponse | null>(null);
+const isWeeklySummaryLoading = ref(false);
+const isWeeklySummaryOpen = ref(false);
 const messageListRef = ref<HTMLElement | null>(null);
 const knowledgeListRef = ref<HTMLElement | null>(null);
 const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
@@ -1720,6 +1756,366 @@ function riskNoteForCode(code: string): string {
   }
 }
 
+// --- Sprint 3: Voice MVP ---
+
+const wsBaseUrl = computed(() => {
+  const url = apiBaseUrl.replace(/^http/, "ws");
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+});
+
+// --- Sprint 3: Speech Recording (Xunfei / Browser Speech) ---
+
+// Cleans up all recording resources
+function cleanupRecording(): void {
+  isRecording.value = false;
+  xfRecognizedText.value = "";
+  xfRecognizing.value = false;
+  stopBrowserSpeech();
+  if (xfWs.value) {
+    try { xfWs.value.close(); } catch {}
+    xfWs.value = null;
+  }
+  try {
+    xfScriptProcessor?.disconnect();
+    xfSourceNode?.disconnect();
+    xfAudioContext?.close();
+  } catch {}
+  xfScriptProcessor = null;
+  xfSourceNode = null;
+  xfAudioContext = null;
+  xfMediaStream?.getTracks().forEach((t) => t.stop());
+  xfMediaStream = null;
+}
+
+// Start recording via browser Web Speech API (or Xunfei if configured)
+async function startSpeechRecording(): Promise<void> {
+  if (isRecording.value) return;
+
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  if (apiKey && apiSecret) {
+    await startXfRecording();
+  } else {
+    startBrowserSpeech();
+  }
+}
+
+function stopSpeechRecording(): void {
+  cleanupRecording();
+}
+// Falls back to browser Web Speech API if no Xunfei credentials configured
+
+async function buildXfAuthUrl(): Promise<string> {
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  const host = "iat-api.xfyun.cn";
+  const path = "/v2/iat";
+  const date = new Date().toUTCString();
+  const signatureOrigin = `host: ${host}\ndate: ${date}\nGET ${path} HTTP/1.1`;
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(apiSecret);
+  const messageData = encoder.encode(signatureOrigin);
+
+  return crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+    .then((key) => crypto.subtle.sign("HMAC", key, messageData))
+    .then((signature) => {
+      const sigStr = btoa(String.fromCharCode(...new Uint8Array(signature)));
+      const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${sigStr}"`;
+      const auth = btoa(authorizationOrigin);
+      return `wss://${host}${path}?authorization=${encodeURIComponent(auth)}&date=${encodeURIComponent(date)}&host=${host}`;
+    });
+}
+
+async function startXfRecording(): Promise<void> {
+  if (isRecording.value) return;
+
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  // If no Xunfei credentials, use browser Web Speech API directly
+  if (!apiKey || !apiSecret) {
+    startBrowserSpeech();
+    return;
+  }
+
+  try {
+    const wsUrl = await buildXfAuthUrl();
+    xfRecognizedText.value = "";
+    xfRecognizing.value = false;
+    voiceError.value = "";
+
+    xfMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    xfAudioContext = new AudioContext({ sampleRate: 16000 });
+    const source = xfAudioContext.createMediaStreamSource(xfMediaStream);
+
+    xfScriptProcessor = xfAudioContext.createScriptProcessor(4096, 1, 1);
+    xfSourceNode = source;
+
+    source.connect(xfScriptProcessor);
+    xfScriptProcessor.connect(xfAudioContext.destination);
+
+    xfWs.value = new WebSocket(wsUrl);
+
+    xfWs.value.onopen = () => {
+      isRecording.value = true;
+      const appId = import.meta.env.VITE_XF_APP_ID as string;
+      xfWs.value!.send(JSON.stringify({
+        common: { app_id: appId },
+        business: {
+          language: "zh_cn",
+          domain: "iat",
+          accent: "mandarin",
+          vad_eos: 3000,
+          dwa: "wpgs",
+          ptt: 0,
+        },
+        data: { status: 0, format: "audio/L16;rate=16000", encoding: "raw", audio: "" },
+      }));
+    };
+
+    xfWs.value.onmessage = (event) => {
+      try {
+        const resp = JSON.parse(event.data as string);
+        if (resp.code !== 0) {
+          voiceError.value = `讯飞识别错误: ${resp.message || "未知错误"} (code=${resp.code})`;
+          cleanupRecording();
+          return;
+        }
+        if (resp.data?.result) {
+          const ws = resp.data.result.ws || [];
+          const words = ws.map((w: any) => (w.cw || []).map((c: any) => c.w).join("")).join("");
+          if (words) {
+            xfRecognizedText.value = words;
+            xfRecognizing.value = true;
+            if (resp.data.status === 2) {
+              xfRecognizing.value = false;
+              cleanupRecording();
+              submitMessage(words);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    xfWs.value.onerror = () => {
+      voiceError.value = "讯飞连接失败，请手动输入文字。";
+      cleanupRecording();
+    };
+
+    xfWs.value.onclose = () => {
+      if (isRecording.value) {
+        cleanupRecording();
+      }
+    };
+
+    xfScriptProcessor.onaudioprocess = (event) => {
+      if (!isRecording.value || !xfWs.value || xfWs.value.readyState !== WebSocket.OPEN) return;
+      const inputData = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      xfWs.value.send(JSON.stringify({
+        data: { status: 1, format: "audio/L16;rate=16000", encoding: "raw", audio: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) },
+      }));
+    };
+
+  } catch (err: any) {
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      voiceError.value = "麦克风权限被拒绝，请允许麦克风访问或手动输入文字。";
+    } else {
+      startBrowserSpeech();
+    }
+    cleanupRecording();
+  }
+}
+
+function startBrowserSpeech(): void {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    voiceError.value = "浏览器不支持语音识别，请使用 Chrome 或 Edge，或手动输入文字。";
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "zh-CN";
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isRecording.value = true;
+    xfRecognizedText.value = "";
+    xfRecognizing.value = true;
+    voiceError.value = "";
+  };
+
+  recognition.onresult = (event: any) => {
+    let final = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) {
+        final += result[0].transcript;
+      } else {
+        xfRecognizedText.value += result[0].transcript;
+      }
+    }
+    if (final) {
+      xfRecognizing.value = false;
+      // Send recognized text directly to the chat pipeline
+      cleanupRecording();
+      submitMessage(final);
+    }
+  };
+
+  recognition.onerror = (event: any) => {
+    if (event.error === "not-allowed") {
+      voiceError.value = "麦克风权限被拒绝，请允许麦克风访问或手动输入文字。";
+    } else if (event.error !== "aborted") {
+      voiceError.value = `语音识别失败: ${event.error}`;
+    }
+    cleanupRecording();
+  };
+
+  recognition.onend = () => {
+    if (isRecording.value) {
+      cleanupRecording();
+    }
+  };
+
+  recognition.start();
+  (window as any).__xfRecognition = recognition;
+}
+
+function stopBrowserSpeech(): void {
+  const rec = (window as any).__xfRecognition;
+  if (rec) {
+    try { rec.stop(); } catch {}
+    (window as any).__xfRecognition = null;
+  }
+}
+
+// --- Sprint 3: Share Card ---
+
+function generateShareCard() {
+  if (!testResult.value) return;
+  const result = testResult.value;
+  const testType = result.test_type === "state" ? "mood_check" : "sixteen_type";
+  shareCardData.value = {
+    title: result.result_title,
+    subtitle: "这是一面镜子，不是诊断",
+    summary: result.summary,
+    highlights: [...result.strengths.slice(0, 2), ...result.blind_spots.slice(0, 1)],
+    disclaimer: "结果仅供自我观察，不代表临床诊断或心理治疗结论。",
+    testType,
+    resultCode: result.result_code,
+    resultLabel: result.result_title,
+  };
+  shareCardVisible.value = true;
+  shareCardCopied.value = false;
+}
+
+function closeShareCard() {
+  shareCardVisible.value = false;
+  shareCardData.value = null;
+}
+
+async function copyShareCard() {
+  if (!shareCardData.value) return;
+  const lines = [
+    shareCardData.value.title,
+    `—— ${shareCardData.value.subtitle}`,
+    "",
+    shareCardData.value.summary,
+    shareCardData.value.highlights.length > 0 ? `要点：${shareCardData.value.highlights.join("、")}` : "",
+    "",
+    `⚠ ${shareCardData.value.disclaimer}`,
+  ].filter(Boolean);
+  const text = lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    shareCardCopied.value = true;
+    setTimeout(() => { shareCardCopied.value = false; }, 2000);
+  } catch {
+    // Clipboard API not available
+  }
+}
+
+// --- Sprint 3: Feedback ---
+
+function openFeedback(type: "assistant_message" | "knowledge_answer" | "test_result", targetId?: string | null) {
+  feedbackTargetType.value = type;
+  feedbackTargetId.value = targetId ?? null;
+  feedbackRating.value = 0;
+  feedbackNote.value = "";
+  feedbackDone.value = false;
+  feedbackVisible.value = true;
+}
+
+async function submitFeedback() {
+  if (feedbackRating.value < 1 || feedbackRating.value > 5) return;
+  isFeedbackSubmitting.value = true;
+  try {
+    const payload: FeedbackCreateRequest = {
+      target_type: feedbackTargetType.value,
+      target_id: feedbackTargetId.value,
+      rating: feedbackRating.value,
+      note: feedbackNote.value || null,
+    };
+    await api.submitFeedback(payload);
+    feedbackDone.value = true;
+  } catch {
+    // silently fail
+  } finally {
+    isFeedbackSubmitting.value = false;
+  }
+}
+
+function closeFeedback() {
+  feedbackVisible.value = false;
+}
+
+// --- Sprint 3: Weekly Summary ---
+
+async function loadWeeklySummary() {
+  isWeeklySummaryLoading.value = true;
+  isWeeklySummaryOpen.value = true;
+  try {
+    if (isDemoMode.value || !accessToken.value) {
+      weeklySummary.value = {
+        range: "7d",
+        summary: moodTrend.value?.summary || "这周你记录了情绪变化，继续关照自己。",
+        top_tags: moodTrend.value?.top_tags || [],
+        suggested_actions: ["试试记下今天的情绪", "给自己一个轻松的时段"],
+        generated_by: "fallback",
+      };
+      return;
+    }
+    weeklySummary.value = await api.getWeeklySummary();
+  } catch {
+    weeklySummary.value = {
+      range: "7d",
+      summary: "暂时无法生成周小结，请稍后再试。",
+      top_tags: [],
+      suggested_actions: [],
+      generated_by: "fallback",
+    };
+  } finally {
+    isWeeklySummaryLoading.value = false;
+  }
+}
+
+function closeWeeklySummary() {
+  isWeeklySummaryOpen.value = false;
+}
+
+// --- End Sprint 3 ---
+
 async function loadTestHistory() {
   isHistoryLoading.value = true;
   try {
@@ -2023,6 +2419,9 @@ onMounted(async () => {
               <span v-for="tag in moodTrendTags" :key="tag">{{ tag }}</span>
             </div>
             <small v-if="moodTrendPoints.length === 0" class="empty-copy">暂无趋势数据。</small>
+            <button class="text-action weekly-summary-btn" type="button" :disabled="isWeeklySummaryLoading" @click="loadWeeklySummary">
+              {{ isWeeklySummaryLoading ? '加载中...' : '查看本周情绪小结' }}
+            </button>
           </section>
 
           <section class="section-block">
@@ -2107,6 +2506,9 @@ onMounted(async () => {
                   {{ action }}
                 </button>
               </div>
+              <div v-if="message.role === 'assistant'" class="message-feedback">
+                <button type="button" class="feedback-btn" title="有帮助" @click="openFeedback('assistant_message', String(message.id))">有帮助</button>
+              </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
           </div>
@@ -2118,9 +2520,32 @@ onMounted(async () => {
           </div>
 
           <form class="composer" @submit.prevent="submitMessage()">
-            <input v-model="composerText" type="text" placeholder="写下此刻的感受..." />
-            <button type="submit" :disabled="!composerText.trim() || isSending">{{ isSending ? "..." : "发送" }}</button>
+            <input v-model="composerText" type="text" :placeholder="isRecording ? '正在录音...' : '写下此刻的感受...'" />
+            <button
+              v-if="!isRecording"
+              type="button"
+              class="voice-record-btn"
+              title="语音输入"
+              @click="startSpeechRecording"
+            >语音</button>
+            <button
+              v-else
+              type="button"
+              class="voice-record-btn voice-record-btn--active"
+              title="停止录音"
+              @click="stopSpeechRecording"
+            >停止</button>
+            <button type="submit" :disabled="(!composerText.trim() && !isRecording) || isSending">{{ isSending ? "..." : "发送" }}</button>
           </form>
+          <div v-if="xfRecognizing || voiceError" class="voice-status-bar">
+            <template v-if="xfRecognizing">
+              <span class="voice-status-bar__dot voice-status-bar__dot--active"></span>
+              <span>{{ xfRecognizedText || '正在听...' }}</span>
+            </template>
+            <template v-else-if="voiceError">
+              <span>{{ voiceError }}</span>
+            </template>
+          </div>
         </section>
 
           <!-- 以下是测试中心页面 -->
@@ -2311,7 +2736,9 @@ onMounted(async () => {
 
             <footer class="sticky-actions">
               <button class="primary-action" type="button" @click="continueTestChat">继续聊聊这个结果</button>
+              <button class="secondary-action" type="button" @click="generateShareCard()">生成分享卡</button>
               <button class="secondary-action" type="button" @click="backToTestList">返回测试列表</button>
+              <button class="text-action" type="button" @click="openFeedback('test_result', testResult?.attempt_id ?? null)">评价结果</button>
             </footer>
           </div>
 
@@ -2706,6 +3133,79 @@ onMounted(async () => {
               下载 .md
             </button>
           </footer>
+        </div>
+      </section>
+
+      <!-- 分享卡弹层 -->
+      <section v-if="shareCardVisible && shareCardData" class="share-card-overlay" role="dialog" aria-modal="true" @click.self="closeShareCard">
+        <div class="share-card">
+          <h2 class="share-card__title">{{ shareCardData.title }}</h2>
+          <p class="share-card__subtitle">—— {{ shareCardData.subtitle }}</p>
+          <p class="share-card__summary">{{ shareCardData.summary }}</p>
+          <div v-if="shareCardData.highlights.length" class="share-card__highlights">
+            <span v-for="h in shareCardData.highlights" :key="h">{{ h }}</span>
+          </div>
+          <p class="share-card__disclaimer">⚠ {{ shareCardData.disclaimer }}</p>
+          <div class="share-card__actions">
+            <button class="primary-action" type="button" @click="copyShareCard">
+              {{ shareCardCopied ? '已复制' : '复制文案' }}
+            </button>
+            <button class="text-action" type="button" @click="closeShareCard">关闭</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 反馈弹层 -->
+      <section v-if="feedbackVisible" class="feedback-overlay" role="dialog" aria-modal="true" @click.self="closeFeedback">
+        <div class="feedback-panel">
+          <h2>{{ feedbackDone ? '感谢反馈' : '给这个回复评分' }}</h2>
+          <template v-if="!feedbackDone">
+            <div class="feedback-stars" aria-label="评分">
+              <button
+                v-for="n in 5"
+                :key="n"
+                :class="{ active: feedbackRating >= n }"
+                type="button"
+                @click="feedbackRating = n"
+              >
+                {{ feedbackRating >= n ? '★' : '☆' }}
+              </button>
+            </div>
+            <textarea v-model="feedbackNote" class="feedback-note" rows="3" maxlength="300" placeholder="补充说明（选填）"></textarea>
+            <div class="feedback-actions">
+              <button class="primary-action" type="button" :disabled="feedbackRating === 0" @click="submitFeedback">
+                提交
+              </button>
+              <button class="text-action" type="button" @click="closeFeedback">取消</button>
+            </div>
+          </template>
+          <template v-else>
+            <p class="feedback-done-msg">你的反馈帮助我做得更好。</p>
+            <button class="text-action" type="button" @click="closeFeedback">关闭</button>
+          </template>
+        </div>
+      </section>
+
+      <!-- 每周情绪小结弹层 -->
+      <section v-if="isWeeklySummaryOpen && weeklySummary" class="weekly-summary-overlay" role="dialog" aria-modal="true" @click.self="closeWeeklySummary">
+        <div class="weekly-summary-panel">
+          <h2>本周情绪小结</h2>
+          <p class="weekly-summary__range">{{ weeklySummary.range }} 回顾</p>
+          <p class="weekly-summary__text">{{ weeklySummary.summary }}</p>
+          <div v-if="weeklySummary.top_tags.length" class="weekly-summary__tags">
+            <span>最常出现</span>
+            <div>
+              <span v-for="tag in weeklySummary.top_tags" :key="tag" class="weekly-summary-tag">{{ tag }}</span>
+            </div>
+          </div>
+          <div v-if="weeklySummary.suggested_actions.length" class="weekly-summary__actions">
+            <span>建议</span>
+            <ul>
+              <li v-for="action in weeklySummary.suggested_actions" :key="action">{{ action }}</li>
+            </ul>
+          </div>
+          <small class="weekly-summary__generated">{{ weeklySummary.generated_by === 'llm' ? '由 AI 生成' : '基于趋势分析生成' }}</small>
+          <button class="text-action" type="button" @click="closeWeeklySummary">关闭</button>
         </div>
       </section>
 
@@ -3474,8 +3974,8 @@ onMounted(async () => {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
 }
 
 .composer button {
@@ -4764,5 +5264,363 @@ input:focus-visible {
   .memory-document-viewer {
     align-items: end;
   }
+}
+
+/* ==================== Sprint 3: Voice/ASR inline ==================== */
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.voice-record-btn {
+  min-height: 44px;
+  min-width: 56px;
+  border-radius: 14px;
+  padding: 0 12px;
+  font-weight: 700;
+  font-size: 14px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.voice-record-btn:hover:not(:disabled) {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.voice-record-btn--active {
+  background: #ef4444;
+  color: #fff;
+  animation: pulse 1.2s infinite;
+}
+
+.voice-record-btn--active:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
+.voice-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.voice-status-bar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.voice-status-bar__dot--active {
+  background: #22c55e;
+  animation: pulse 1.2s infinite;
+}
+
+/* ==================== Sprint 3: Share Card ==================== */
+
+.share-card-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.share-card {
+  max-width: 360px;
+  width: 100%;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  display: grid;
+  gap: 14px;
+  box-shadow: 0 18px 50px rgba(102, 126, 234, 0.35);
+}
+
+.share-card__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.share-card__subtitle {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.85;
+  border-left: 3px solid rgba(255,255,255,0.5);
+  padding-left: 10px;
+}
+
+.share-card__summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  opacity: 0.95;
+}
+
+.share-card__highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.share-card__highlights span {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.2);
+}
+
+.share-card__disclaimer {
+  margin: 8px 0 0;
+  font-size: 12px;
+  opacity: 0.7;
+  line-height: 1.5;
+  border-top: 1px solid rgba(255,255,255,0.25);
+  padding-top: 12px;
+}
+
+.share-card__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.share-card__actions .primary-action {
+  flex: 1;
+  padding: 10px 18px;
+  border-radius: 14px;
+  font-weight: 700;
+  font-size: 14px;
+  background: rgba(255,255,255,0.95);
+  color: var(--teal-dark);
+}
+
+.share-card__actions .text-action {
+  background: transparent;
+  color: rgba(255,255,255,0.9);
+  font-weight: 600;
+}
+
+/* ==================== Sprint 3: Feedback ==================== */
+
+.message-feedback {
+  padding: 4px 0 8px;
+}
+
+.feedback-btn {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.feedback-btn:hover {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.feedback-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.feedback-panel {
+  max-width: 340px;
+  width: 100%;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(38, 57, 52, 0.22);
+  display: grid;
+  gap: 18px;
+}
+
+.feedback-panel h2 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text-main);
+}
+
+.feedback-stars {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.feedback-stars button {
+  font-size: 36px;
+  background: none;
+  color: #d1d5db;
+  transition: color 0.15s;
+  padding: 0;
+}
+
+.feedback-stars button.active {
+  color: var(--amber);
+}
+
+.feedback-note {
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  resize: vertical;
+  color: var(--text-main);
+  font-family: inherit;
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.feedback-actions .primary-action {
+  flex: 1;
+}
+
+.feedback-done-msg {
+  margin: 0;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ==================== Sprint 3: Weekly Summary ==================== */
+
+.weekly-summary-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--teal);
+}
+
+.weekly-summary-btn:disabled {
+  opacity: 0.5;
+}
+
+.weekly-summary-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.weekly-summary-panel {
+  max-width: 360px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(38, 57, 52, 0.22);
+  display: grid;
+  gap: 16px;
+}
+
+.weekly-summary-panel h2 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-main);
+}
+
+.weekly-summary__range {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.weekly-summary__text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-main);
+}
+
+.weekly-summary__tags {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-summary__tags > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.weekly-summary__tags div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.weekly-summary-tag {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  font-weight: 600;
+}
+
+.weekly-summary__actions {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-summary__actions > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.weekly-summary__actions ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-summary__actions li {
+  font-size: 14px;
+  color: var(--text-main);
+  line-height: 1.5;
+}
+
+.weekly-summary__generated {
+  display: block;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 </style>

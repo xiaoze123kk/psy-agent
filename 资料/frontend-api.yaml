@@ -1,14 +1,14 @@
 version: 1
 name: counseling-agent-frontend-sdk-contract
-sprint: Sprint 2 mood trend MVP
+sprint: Sprint 3 MVP closeout
 description: |
   心理咨询 Agent 前端 API 契约。
 
   目标是支撑如下前端闭环：
-  登录/注册 -> 年龄模式落库 -> 首页情绪记录与趋势 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆 -> 知识库搜索/详情/问答。
+  登录/注册 -> 年龄模式落库 -> 首页情绪记录、趋势与周小结 -> 文本聊天 -> 语音 MVP -> 高风险时展示 SOS -> 记忆中心 -> 知识库搜索/详情/问答 -> 测试中心与结果回流对话 -> 分享卡与反馈。
 
-  本契约不包含后续 Sprint 或占位能力：
-  tests、voice、完整 RAG。
+  Sprint 3 语音能力为文本模拟语音 MVP，仅验证协议、状态流转和安全分流；
+  不包含真 ASR/TTS/WebRTC、动漫人物测试 Beta、完整 RAG。
 
 client:
   className: CounselingApi
@@ -35,11 +35,22 @@ client:
       - updateSettings
       - createMoodLog
       - getMoodTrend
+      - getWeeklyMoodSummary
+      - createVoiceSession
+      - connectVoiceSession
+      - submitFeedback
       - searchKnowledge
       - getKnowledgeArticle
       - askKnowledge
       - listKnowledgeGaps
       - resolveKnowledgeGap
+      - listTests
+      - getTest
+      - startAttempt
+      - submitAnswer
+      - completeAttempt
+      - getTestHistory
+      - getAttemptResult
       - createCrisisEvent
     note: 当前后端脚手架尚未强制校验 token，但联调时前端仍应按正式 Bearer 方式传递。
   baseUrl:
@@ -54,9 +65,13 @@ scope:
     - mood
     - safety
     - knowledge
-  excluded:
     - tests
     - voice
+    - feedback
+  excluded:
+    - true-audio-asr-tts
+    - anime-character-test
+    - full-rag
 
 implementationStatus:
   currentSdkImplementedMethods:
@@ -71,7 +86,20 @@ implementationStatus:
     - askKnowledge
     - listKnowledgeGaps
     - resolveKnowledgeGap
-  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库与情绪趋势 MVP 所需方法。
+    - listTests
+    - getTest
+    - startAttempt
+    - submitAnswer
+    - completeAttempt
+    - getTestHistory
+    - getAttemptResult
+  plannedSprint3Methods:
+    - getWeeklyMoodSummary
+    - createVoiceSession
+    - connectVoiceSession
+    - submitFeedback
+    - buildTestShareCard
+  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库、情绪趋势、记忆中心、SSE 和测试中心所需方法。
 
 flows:
   sprint1Demo:
@@ -95,12 +123,34 @@ flows:
       when: 用户完成基础情绪记录
     - step: getMoodTrend
       when: 首页展示 7 天或 30 天趋势
+    - step: getWeeklyMoodSummary
+      when: 首页或我的页展示近 7 天情绪小结
+    - step: createVoiceSession
+      when: 用户从首页或对话页进入语音 MVP
+    - step: connectVoiceSession
+      when: createVoiceSession 返回 ws_url 后建立文本模拟语音通道
     - step: searchKnowledge
       when: 用户进入知识页或搜索主题
     - step: getKnowledgeArticle
       when: 用户打开知识详情
     - step: askKnowledge
       when: 用户围绕知识主题继续提问
+    - step: listTests
+      when: 用户进入测试中心
+    - step: getTest
+      when: 用户选择今日状态测试或 16 型人格风格测试
+    - step: startAttempt
+      when: 登录用户开始作答
+    - step: submitAnswer
+      when: 用户逐题提交答案
+    - step: completeAttempt
+      when: 用户完成全部题目并查看结果
+    - step: buildTestShareCard
+      when: 测试结果页生成可分享文字卡片
+    - step: submitFeedback
+      when: 用户对 AI 回复、知识答案或测试结果评分
+    - step: getTestHistory
+      when: 用户查看历史测试结果
 
 methods:
   - methodName: register
@@ -278,6 +328,54 @@ methods:
       method: GET
       path: /api/v1/moods/trends?range={range}
 
+  - methodName: getWeeklyMoodSummary
+    summary: 获取近 7 天情绪小结
+    requestType: none
+    responseType: WeeklyMoodSummaryResponse
+    authRequired: true
+    uiEntry:
+      - 首页周小结卡片
+      - 我的页情绪回顾
+    http:
+      method: GET
+      path: /api/v1/moods/weekly-summary
+
+  - methodName: createVoiceSession
+    summary: 创建语音 MVP 会话
+    requestType: CreateVoiceSessionRequest
+    responseType: CreateVoiceSessionResponse
+    authRequired: true
+    uiEntry:
+      - 首页语音入口
+      - 对话页语音入口
+    http:
+      method: POST
+      path: /api/v1/voice/sessions
+
+  - methodName: connectVoiceSession
+    summary: 连接文本模拟语音 WebSocket
+    requestType: VoiceSessionConnectionRequest
+    responseType: VoiceSessionWebSocketEvent
+    authRequired: true
+    uiEntry:
+      - 语音 MVP 页面
+    websocket:
+      pathTemplate: /api/v1/voice/sessions/{voice_session_id}/ws
+      protocol: text-simulated-voice-v1
+
+  - methodName: submitFeedback
+    summary: 提交内容评分反馈
+    requestType: FeedbackRequest
+    responseType: FeedbackResponse
+    authRequired: true
+    uiEntry:
+      - 对话页 AI 回复
+      - 知识问答答案
+      - 测试结果页
+    http:
+      method: POST
+      path: /api/v1/feedback
+
   - methodName: searchKnowledge
     summary: 搜索知识库文章
     requestType: SearchKnowledgeQuery
@@ -315,6 +413,114 @@ methods:
     http:
       method: POST
       path: /api/v1/knowledge/ask
+
+  - methodName: listTests
+    summary: 获取测试列表
+    requestType: none
+    responseType: TestListResponse
+    authRequired: false
+    uiEntry:
+      - 测试页
+    http:
+      method: GET
+      path: /api/v1/tests
+
+  - methodName: getTest
+    summary: 获取测试题目和选项
+    requestType: none
+    responseType: TestDetailResponse
+    authRequired: false
+    pathParams:
+      - name: testId
+        mapsTo: test_id
+        type: string
+    uiEntry:
+      - 测试答题页
+    http:
+      method: GET
+      pathTemplate: /api/v1/tests/{test_id}
+
+  - methodName: startAttempt
+    summary: 创建测试作答 attempt
+    requestType: none
+    responseType: StartAttemptResponse
+    authRequired: true
+    pathParams:
+      - name: testId
+        mapsTo: test_id
+        type: string
+    uiEntry:
+      - 测试答题页
+    http:
+      method: POST
+      pathTemplate: /api/v1/tests/{test_id}/attempts
+
+  - methodName: submitAnswer
+    summary: 提交单题答案
+    requestType: SubmitAnswerRequest
+    responseType: AnswerResponse
+    authRequired: true
+    pathParams:
+      - name: attemptId
+        mapsTo: attempt_id
+        type: string
+    uiEntry:
+      - 测试答题页
+    http:
+      method: POST
+      pathTemplate: /api/v1/tests/attempts/{attempt_id}/answers
+
+  - methodName: completeAttempt
+    summary: 完成测试并生成结果
+    requestType: none
+    responseType: CompleteAttemptResponse
+    authRequired: true
+    pathParams:
+      - name: attemptId
+        mapsTo: attempt_id
+        type: string
+    uiEntry:
+      - 测试结果页
+    http:
+      method: POST
+      pathTemplate: /api/v1/tests/attempts/{attempt_id}/complete
+
+  - methodName: buildTestShareCard
+    summary: 基于测试结果本地生成分享卡
+    requestType: CompleteAttemptResponse
+    responseType: TestShareCardPayload
+    authRequired: false
+    localOnly: true
+    uiEntry:
+      - 测试结果页
+    note: 仅生成文字/HTML/CSS 分享卡 payload，不调用后端，不使用第三方图片或未授权素材。
+
+  - methodName: getTestHistory
+    summary: 获取用户测试历史
+    requestType: none
+    responseType: TestHistoryResponse
+    authRequired: true
+    uiEntry:
+      - 测试历史页
+    http:
+      method: GET
+      path: /api/v1/tests/history
+
+  - methodName: getAttemptResult
+    summary: 查询已完成 attempt 的结果
+    requestType: none
+    responseType: CompleteAttemptResponse
+    authRequired: true
+    pathParams:
+      - name: attemptId
+        mapsTo: attempt_id
+        type: string
+    uiEntry:
+      - 测试历史页
+      - 测试结果页
+    http:
+      method: GET
+      pathTemplate: /api/v1/tests/attempts/{attempt_id}/result
 
   - methodName: listKnowledgeGaps
     summary: 查看知识库待补充问题
@@ -823,6 +1029,140 @@ types:
         items: { $ref: DailyMoodPoint }
       summary: { type: string }
 
+  WeeklyMoodSummaryResponse:
+    type: object
+    required:
+      - range
+      - summary
+      - top_tags
+      - suggested_actions
+      - generated_by
+    fields:
+      range:
+        type: string
+        enum: [7d]
+      summary: { type: string }
+      top_tags:
+        type: array
+        items: { type: string }
+      suggested_actions:
+        type: array
+        items: { type: string }
+      generated_by:
+        type: enum
+        values:
+          - llm
+          - fallback
+
+  CreateVoiceSessionRequest:
+    type: object
+    fields:
+      thread_id:
+        type: string
+        required: false
+      mode:
+        type: ThreadMode
+        required: false
+        default: companion
+      save_transcript:
+        type: boolean
+        required: false
+        default: true
+
+  CreateVoiceSessionResponse:
+    type: object
+    required:
+      - voice_session_id
+      - thread_id
+      - ws_url
+      - protocol
+    fields:
+      voice_session_id: { type: string }
+      thread_id: { type: string }
+      ws_url: { type: string }
+      protocol:
+        type: enum
+        values:
+          - text-simulated-voice-v1
+
+  VoiceSessionConnectionRequest:
+    type: object
+    required:
+      - voice_session_id
+      - ws_url
+    fields:
+      voice_session_id: { type: string }
+      ws_url: { type: string }
+
+  VoiceSessionWebSocketEvent:
+    type: object
+    required:
+      - type
+    fields:
+      type:
+        type: enum
+        values:
+          - user_text
+          - interrupt
+          - end_session
+          - session_ready
+          - listening
+          - transcript
+          - assistant_delta
+          - assistant_final
+          - session_ended
+          - error
+      text:
+        type: string
+        required: false
+      client_event_id:
+        type: string
+        required: false
+      risk_level:
+        type: RiskLevel
+        required: false
+      suggested_actions:
+        type: array
+        required: false
+        items: { type: string }
+
+  FeedbackTargetType:
+    type: enum
+    values:
+      - assistant_message
+      - knowledge_answer
+      - test_result
+
+  FeedbackRequest:
+    type: object
+    required:
+      - target_type
+      - target_id
+      - rating
+    fields:
+      target_type: { type: FeedbackTargetType }
+      target_id: { type: string }
+      rating:
+        type: integer
+        minimum: 1
+        maximum: 5
+      tags:
+        type: array
+        required: false
+        items: { type: string }
+      note:
+        type: string
+        required: false
+
+  FeedbackResponse:
+    type: object
+    required:
+      - feedback_id
+      - status
+    fields:
+      feedback_id: { type: string }
+      status: { type: string }
+
   SearchKnowledgeQuery:
     type: object
     fields:
@@ -949,8 +1289,10 @@ types:
       - answer
       - related_articles
       - coverage_status
+      - scope_status
       - confidence
       - source_refs
+      - question_suggestion
       - continue_chat_payload
       - risk_level
     fields:
@@ -965,6 +1307,12 @@ types:
           - sufficient
           - partial
           - insufficient
+          - not_applicable
+      scope_status:
+        type: enum
+        values:
+          - in_scope
+          - out_of_scope
       confidence:
         type: enum
         values:
@@ -975,12 +1323,32 @@ types:
         type: array
         items:
           type: KnowledgeSourceRef
+      question_suggestion:
+        type: KnowledgeQuestionSuggestion
+        nullable: true
       gap_id:
         type: string
         required: false
       continue_chat_payload:
         type: object
       risk_level: { type: RiskLevel }
+
+  KnowledgeQuestionSuggestion:
+    type: object
+    required:
+      - original_question
+      - guessed_question
+      - confidence
+      - matched_term
+    fields:
+      original_question: { type: string }
+      guessed_question: { type: string }
+      confidence:
+        type: enum
+        values:
+          - high
+          - medium
+      matched_term: { type: string }
 
   KnowledgeSourceRef:
     type: object
@@ -1007,6 +1375,230 @@ types:
       score:
         type: number
         required: false
+
+  TestListItem:
+    type: object
+    required:
+      - test_id
+      - code
+      - title
+      - test_type
+      - estimated_minutes
+      - audience
+      - status
+    fields:
+      test_id: { type: string }
+      code: { type: string }
+      title: { type: string }
+      test_type:
+        type: enum
+        values:
+          - state
+          - personality
+          - anime
+      estimated_minutes: { type: number }
+      audience: { type: string }
+      status: { type: string }
+
+  TestListResponse:
+    type: object
+    required:
+      - items
+    fields:
+      items:
+        type: array
+        items:
+          type: TestListItem
+
+  TestOption:
+    type: object
+    required:
+      - id
+      - text
+      - score
+    fields:
+      id: { type: string }
+      text: { type: string }
+      score: { type: number }
+
+  TestQuestion:
+    type: object
+    required:
+      - index
+      - text
+      - options
+    fields:
+      index: { type: number }
+      text: { type: string }
+      options:
+        type: array
+        items:
+          type: TestOption
+
+  TestDetailResponse:
+    type: object
+    required:
+      - test_id
+      - code
+      - title
+      - questions
+    fields:
+      test_id: { type: string }
+      code: { type: string }
+      title: { type: string }
+      questions:
+        type: array
+        items:
+          type: TestQuestion
+
+  StartAttemptResponse:
+    type: object
+    required:
+      - attempt_id
+      - test_id
+      - questions
+    fields:
+      attempt_id: { type: string }
+      test_id: { type: string }
+      questions:
+        type: array
+        items:
+          type: TestQuestion
+
+  SubmitAnswerRequest:
+    type: object
+    required:
+      - question_index
+      - option_id
+    fields:
+      question_index: { type: number }
+      option_id: { type: string }
+
+  AnswerResponse:
+    type: object
+    required:
+      - ok
+    fields:
+      ok: { type: boolean }
+
+  ContinueChatContext:
+    type: object
+    required:
+      - mode
+      - context_type
+    fields:
+      mode:
+        type: string
+        default: test
+      context_type:
+        type: string
+        default: test_result
+
+  TestResultProfile:
+    type: object
+    required:
+      - traits
+      - strengths
+      - blind_spots
+      - companion_style
+    fields:
+      sixteen_type_code:
+        type: string
+        required: false
+      sixteen_type_label:
+        type: string
+        required: false
+      traits:
+        type: array
+        items: { type: string }
+      strengths:
+        type: array
+        items: { type: string }
+      blind_spots:
+        type: array
+        items: { type: string }
+      companion_style: { type: string }
+
+  CompleteAttemptResponse:
+    type: object
+    required:
+      - attempt_id
+      - test_code
+      - test_type
+      - result_code
+      - result_title
+      - summary
+      - strengths
+      - blind_spots
+      - suggested_actions
+      - continue_chat_context
+      - profile
+    fields:
+      attempt_id: { type: string }
+      test_code: { type: string }
+      test_type: { type: string }
+      result_code: { type: string }
+      result_title: { type: string }
+      summary: { type: string }
+      strengths:
+        type: array
+        items: { type: string }
+      blind_spots:
+        type: array
+        items: { type: string }
+      suggested_actions:
+        type: array
+        items: { type: string }
+      continue_chat_context:
+        type: ContinueChatContext
+      profile:
+        type: TestResultProfile
+
+  TestShareCardPayload:
+    type: object
+    required:
+      - title
+      - subtitle
+      - summary
+      - highlights
+      - disclaimer
+    fields:
+      title: { type: string }
+      subtitle: { type: string }
+      summary: { type: string }
+      highlights:
+        type: array
+        items: { type: string }
+      disclaimer: { type: string }
+
+  TestHistoryItem:
+    type: object
+    required:
+      - attempt_id
+      - test_id
+      - test_title
+      - result_code
+      - result_label
+      - completed_at
+    fields:
+      attempt_id: { type: string }
+      test_id: { type: string }
+      test_title: { type: string }
+      result_code: { type: string }
+      result_label: { type: string }
+      completed_at:
+        type: string
+        format: date-time
+
+  TestHistoryResponse:
+    type: object
+    required:
+      - items
+    fields:
+      items:
+        type: array
+        items:
+          type: TestHistoryItem
 
   KnowledgeGapQuery:
     type: object
@@ -1168,6 +1760,15 @@ integrationRules:
   - rule: 知识结果继续聊天时，应把标题或 article_id 带入对话上下文，但不得把知识回答包装成诊断。
   - rule: streamMessage 是对话页默认发送路径；收到 graph_update 时展示节点状态和风险等级，收到 final 时展示 suggested_actions。
   - rule: streamMessage 在首个 SSE 事件前失败时回退到 sendMessage；首个事件后中断时不得重发同一输入，只刷新服务端消息。
+  - rule: createVoiceSession 和 connectVoiceSession 仅用于文本模拟语音 MVP；前端不得向用户暗示已接入真实 ASR/TTS/WebRTC。
+  - rule: 语音 MVP 收到 risk_level 为 L2 或 L3 时，必须结束普通语音陪伴状态并打开 SOS/安全提示。
+  - rule: getWeeklyMoodSummary 只展示观察、趋势和建议，不得展示诊断或治疗结论。
+  - rule: submitFeedback 失败不得阻塞聊天、知识问答或测试结果主流程。
+  - rule: buildTestShareCard 必须固定展示“结果仅供自我观察，不代表诊断”一类边界提示。
+  - rule: listTests 可返回 draft 测试，前端只允许用户开始 status 为 published 的测试。
+  - rule: Sprint 3 不发布动漫人物测试；即使 listTests 返回 anime draft，前端也只能展示为未开放。
+  - rule: completeAttempt 结果只能作为自我观察和继续聊天上下文，不得展示为诊断或固定人格标签。
+  - rule: 测试结果继续聊天时，应通过 input_type=test 或明确文本上下文带入结果摘要，并沿用普通对话安全分流。
 
 errorHandling:
   behavior: throw-on-non-2xx

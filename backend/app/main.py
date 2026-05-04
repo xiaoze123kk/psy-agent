@@ -10,7 +10,7 @@ from app.services.knowledge_service import warm_knowledge_search_index
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_title,
-        version="0.2.0",
+        version="0.3.0",
         description="Sprint 1 backend for the counseling agent.",
     )
 

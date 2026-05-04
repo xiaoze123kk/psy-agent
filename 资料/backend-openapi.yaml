@@ -1,15 +1,15 @@
 openapi: 3.1.0
 info:
   title: Counseling Agent Backend API
-  version: 1.2.0-sprint2-mood
+  version: 1.4.0-sprint3-mvp-closeout
   description: |
     心理咨询 Agent 后端接口文档。
 
-    本文档覆盖 Sprint 1 闭环接口，以及 Sprint 2 知识库与情绪趋势 MVP：
-    鉴权、文本对话、记忆管理、情绪记录、情绪趋势、安全资源、危机事件、知识搜索、知识详情与知识问答。
+    本文档覆盖 Sprint 1 闭环接口、Sprint 2 自助支持闭环，以及 Sprint 3 MVP 收口增量：
+    鉴权、文本对话、记忆管理、情绪记录、情绪趋势、每周小结、安全资源、危机事件、知识搜索、知识详情、知识问答、测试中心、语音 MVP 与用户反馈。
 
     以下脚手架或后续 Sprint 占位能力不纳入本次正式契约：
-    tests、voice、完整 RAG。
+    真 ASR/TTS/WebRTC、动漫人物测试 Beta、完整 RAG。
 servers:
   - url: http://localhost:8000
     description: 本地开发环境
@@ -27,11 +27,17 @@ tags:
   - name: memory
     description: 记忆列表与基础维护
   - name: mood
-    description: 情绪记录与 7/30 天趋势
+    description: 情绪记录、7/30 天趋势与每周小结
   - name: safety
     description: SOS 资源与危机事件记录
   - name: knowledge
     description: 知识库搜索、详情和结构化问答
+  - name: tests
+    description: 测试列表、答题、结果和历史记录
+  - name: voice
+    description: Sprint 3 文本模拟语音 MVP
+  - name: feedback
+    description: 内容评分和用户反馈
 paths:
   /health:
     get:
@@ -513,6 +519,36 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /api/v1/moods/weekly-summary:
+    get:
+      tags: [mood]
+      summary: 获取每周情绪小结
+      operationId: getWeeklyMoodSummary
+      description: |
+        Sprint 3 每周情绪小结接口。默认统计近 7 天 mood logs 与可用会话摘要，
+        输出自我观察、主要标签和可执行建议；无 LLM 配置时必须返回稳定 fallback。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 每周小结生成成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyMoodSummaryResponse"
+              example:
+                range: 7d
+                summary: 这周你的情绪整体偏紧绷，焦虑和疲惫出现得比较多。
+                top_tags:
+                  - 焦虑
+                  - 疲惫
+                suggested_actions:
+                  - 选一天提前 30 分钟结束学习任务
+                  - 睡前做一次低刺激放松
+                generated_by: fallback
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/safety/resources:
     get:
       tags: [safety]
@@ -586,6 +622,97 @@ paths:
                 event_id: demo-crisis-event
                 thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
                 status: recorded
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/voice/sessions:
+    post:
+      tags: [voice]
+      summary: 创建语音 MVP 会话
+      operationId: createVoiceSession
+      description: |
+        Sprint 3 文本模拟语音 MVP。该接口只创建语音会话协议上下文，
+        后续通过 WebSocket 传递文本模拟转写、状态事件和 AI 回复事件；
+        不代表真实 ASR/TTS/WebRTC 已接入。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVoiceSessionRequest"
+            example:
+              thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+              mode: companion
+              save_transcript: true
+      responses:
+        "200":
+          description: 语音 MVP 会话创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateVoiceSessionResponse"
+              example:
+                voice_session_id: demo-voice-session
+                thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
+                ws_url: /api/v1/voice/sessions/demo-voice-session/ws
+                protocol: text-simulated-voice-v1
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/voice/sessions/{voice_session_id}/ws:
+    x-websocket: true
+    x-protocol: text-simulated-voice-v1
+    parameters:
+      - in: path
+        name: voice_session_id
+        required: true
+        schema:
+          type: string
+    description: |
+      WebSocket 通道。客户端发送 `user_text`、`interrupt`、`end_session`；
+      服务端发送 `session_ready`、`listening`、`transcript`、`assistant_delta`、
+      `assistant_final`、`session_ended`、`error`。高风险文本必须复用统一安全分流。
+
+  /api/v1/feedback:
+    post:
+      tags: [feedback]
+      summary: 提交用户反馈
+      operationId: submitFeedback
+      description: |
+        Sprint 3 内容反馈接口。用于记录用户对 AI 回复、知识答案或测试结果的 1-5 分评分、
+        标签和备注；反馈不改变当前回复，只用于后续质量评估。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackRequest"
+            example:
+              target_type: assistant_message
+              target_id: message-id
+              rating: 4
+              tags:
+                - 有帮助
+                - 语气合适
+              note: 希望再短一点
+      responses:
+        "200":
+          description: 反馈记录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackResponse"
+              example:
+                feedback_id: demo-feedback-id
+                status: recorded
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -733,6 +860,182 @@ paths:
                 $ref: "#/components/schemas/KnowledgeGapMutationResponse"
         "404":
           description: 知识缺口不存在
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/tests:
+    get:
+      tags: [tests]
+      summary: 获取测试列表
+      operationId: listTests
+      description: |
+        Sprint 2 测试中心列表接口。当前 main 提供今日状态测试、16 型人格风格测试和 draft 状态的动漫测试占位。
+        前端应只允许用户开始 `status=published` 的测试。
+      responses:
+        "200":
+          description: 测试列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestListResponse"
+
+  /api/v1/tests/history:
+    get:
+      tags: [tests]
+      summary: 获取当前用户测试历史
+      operationId: getTestHistory
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 已完成测试历史
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestHistoryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/tests/{test_id}:
+    get:
+      tags: [tests]
+      summary: 获取测试题目
+      operationId: getTest
+      parameters:
+        - in: path
+          name: test_id
+          required: true
+          schema:
+            type: string
+          description: 测试 ID，例如 `state-check-v1` 或 `sixteen-type-v1`
+      responses:
+        "200":
+          description: 测试详情与题目选项
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestDetailResponse"
+        "404":
+          description: 测试不存在
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/tests/{test_id}/attempts:
+    post:
+      tags: [tests]
+      summary: 开始一次测试
+      operationId: startTestAttempt
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: test_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已创建作答 attempt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartAttemptResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: 测试不存在
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/tests/attempts/{attempt_id}/answers:
+    post:
+      tags: [tests]
+      summary: 提交单题答案
+      operationId: submitAnswer
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: attempt_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitAnswerRequest"
+            example:
+              question_index: 0
+              option_id: B
+      responses:
+        "200":
+          description: 答案已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnswerResponse"
+        "400":
+          description: attempt 或答案无效
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/tests/attempts/{attempt_id}/complete:
+    post:
+      tags: [tests]
+      summary: 完成测试并生成结果
+      operationId: completeAttempt
+      description: |
+        结果文案只能作为自我观察和陪伴上下文，不能作为诊断或临床结论。
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: attempt_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 测试结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompleteAttemptResponse"
+        "400":
+          description: attempt 不存在、已完成或题目未答完
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/tests/attempts/{attempt_id}/result:
+    get:
+      tags: [tests]
+      summary: 查询已完成测试结果
+      operationId: getAttemptResult
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: attempt_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已完成测试结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompleteAttemptResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: attempt 不存在或尚未完成
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1261,6 +1564,129 @@ components:
         - daily
         - summary
 
+    WeeklyMoodSummaryResponse:
+      type: object
+      properties:
+        range:
+          type: string
+          enum: [7d]
+        summary:
+          type: string
+        top_tags:
+          type: array
+          items:
+            type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+        generated_by:
+          type: string
+          enum:
+            - llm
+            - fallback
+      required:
+        - range
+        - summary
+        - top_tags
+        - suggested_actions
+        - generated_by
+
+    CreateVoiceSessionRequest:
+      type: object
+      properties:
+        thread_id:
+          type: string
+          nullable: true
+        mode:
+          $ref: "#/components/schemas/ThreadMode"
+          default: companion
+        save_transcript:
+          type: boolean
+          default: true
+      additionalProperties: false
+
+    CreateVoiceSessionResponse:
+      type: object
+      properties:
+        voice_session_id:
+          type: string
+        thread_id:
+          type: string
+        ws_url:
+          type: string
+        protocol:
+          type: string
+          enum:
+            - text-simulated-voice-v1
+      required:
+        - voice_session_id
+        - thread_id
+        - ws_url
+        - protocol
+
+    VoiceSessionWebSocketEvent:
+      type: object
+      description: |
+        WebSocket 事件包。客户端事件 type 包括 user_text、interrupt、end_session；
+        服务端事件 type 包括 session_ready、listening、transcript、assistant_delta、assistant_final、session_ended、error。
+      properties:
+        type:
+          type: string
+        text:
+          type: string
+        client_event_id:
+          type: string
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        suggested_actions:
+          type: array
+          items:
+            type: string
+      required:
+        - type
+
+    FeedbackTargetType:
+      type: string
+      enum:
+        - assistant_message
+        - knowledge_answer
+        - test_result
+
+    FeedbackRequest:
+      type: object
+      properties:
+        target_type:
+          $ref: "#/components/schemas/FeedbackTargetType"
+        target_id:
+          type: string
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        tags:
+          type: array
+          items:
+            type: string
+        note:
+          type: string
+      required:
+        - target_type
+        - target_id
+        - rating
+      additionalProperties: false
+
+    FeedbackResponse:
+      type: object
+      properties:
+        feedback_id:
+          type: string
+        status:
+          type: string
+      required:
+        - feedback_id
+        - status
+
     KnowledgeSearchItem:
       type: object
       properties:
@@ -1434,6 +1860,12 @@ components:
             - sufficient
             - partial
             - insufficient
+            - not_applicable
+        scope_status:
+          type: string
+          enum:
+            - in_scope
+            - out_of_scope
         confidence:
           type: string
           enum:
@@ -1444,6 +1876,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KnowledgeSourceRefResponse"
+        question_suggestion:
+          oneOf:
+            - $ref: "#/components/schemas/KnowledgeQuestionSuggestion"
+            - type: "null"
         gap_id:
           type: string
           nullable: true
@@ -1455,10 +1891,32 @@ components:
         - answer
         - related_articles
         - coverage_status
+        - scope_status
         - confidence
         - source_refs
+        - question_suggestion
         - continue_chat_payload
         - risk_level
+
+    KnowledgeQuestionSuggestion:
+      type: object
+      properties:
+        original_question:
+          type: string
+        guessed_question:
+          type: string
+        confidence:
+          type: string
+          enum:
+            - high
+            - medium
+        matched_term:
+          type: string
+      required:
+        - original_question
+        - guessed_question
+        - confidence
+        - matched_term
 
     KnowledgeGapItemResponse:
       type: object
@@ -1539,6 +1997,250 @@ components:
       required:
         - gap_id
         - status
+
+    TestListItem:
+      type: object
+      properties:
+        test_id:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        test_type:
+          type: string
+          enum:
+            - state
+            - personality
+            - anime
+        estimated_minutes:
+          type: integer
+        audience:
+          type: string
+        status:
+          type: string
+      required:
+        - test_id
+        - code
+        - title
+        - test_type
+        - estimated_minutes
+        - audience
+        - status
+
+    TestListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestListItem"
+      required:
+        - items
+
+    TestOption:
+      type: object
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        score:
+          type: integer
+      required:
+        - id
+        - text
+        - score
+
+    TestQuestion:
+      type: object
+      properties:
+        index:
+          type: integer
+        text:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestOption"
+      required:
+        - index
+        - text
+        - options
+
+    TestDetailResponse:
+      type: object
+      properties:
+        test_id:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestQuestion"
+      required:
+        - test_id
+        - code
+        - title
+        - questions
+
+    StartAttemptResponse:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        test_id:
+          type: string
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestQuestion"
+      required:
+        - attempt_id
+        - test_id
+        - questions
+
+    SubmitAnswerRequest:
+      type: object
+      properties:
+        question_index:
+          type: integer
+        option_id:
+          type: string
+      required:
+        - question_index
+        - option_id
+
+    AnswerResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+
+    ContinueChatContext:
+      type: object
+      properties:
+        mode:
+          type: string
+          default: test
+        context_type:
+          type: string
+          default: test_result
+      required:
+        - mode
+        - context_type
+
+    TestResultProfile:
+      type: object
+      properties:
+        sixteen_type_code:
+          type: string
+          nullable: true
+        sixteen_type_label:
+          type: string
+          nullable: true
+        traits:
+          type: array
+          items:
+            type: string
+        strengths:
+          type: array
+          items:
+            type: string
+        blind_spots:
+          type: array
+          items:
+            type: string
+        companion_style:
+          type: string
+      required:
+        - traits
+        - strengths
+        - blind_spots
+        - companion_style
+
+    CompleteAttemptResponse:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        test_code:
+          type: string
+        test_type:
+          type: string
+        result_code:
+          type: string
+        result_title:
+          type: string
+        summary:
+          type: string
+        strengths:
+          type: array
+          items:
+            type: string
+        blind_spots:
+          type: array
+          items:
+            type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+        continue_chat_context:
+          $ref: "#/components/schemas/ContinueChatContext"
+        profile:
+          $ref: "#/components/schemas/TestResultProfile"
+      required:
+        - attempt_id
+        - test_code
+        - test_type
+        - result_code
+        - result_title
+        - summary
+        - strengths
+        - blind_spots
+        - suggested_actions
+        - continue_chat_context
+        - profile
+
+    TestHistoryItem:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        test_id:
+          type: string
+        test_title:
+          type: string
+        result_code:
+          type: string
+        result_label:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+      required:
+        - attempt_id
+        - test_id
+        - test_title
+        - result_code
+        - result_label
+        - completed_at
+
+    TestHistoryResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestHistoryItem"
+      required:
+        - items
 
     SafetyResourceItem:
       type: object

@@ -5,6 +5,8 @@ import type {
   CaptchaResponse,
   CompleteAttemptResponse,
   CurrentUserResponse,
+  FeedbackCreateRequest,
+  FeedbackResponse,
   KnowledgeArticleResponse,
   KnowledgeGapListResponse,
   KnowledgeGapMutationResponse,
@@ -42,6 +44,8 @@ import type {
   UpdateMemoryRequest,
   UserSettingsResponse,
   UserSettingsUpdateRequest,
+  VoiceSessionResponse,
+  WeeklySummaryResponse,
 } from "../types/api";
 
 export class CounselingApi {
@@ -195,5 +199,26 @@ export class CounselingApi {
 
   getAttemptResult(attemptId: string): Promise<CompleteAttemptResponse> {
     return this.client.get<CompleteAttemptResponse>(`/api/v1/tests/attempts/${attemptId}/result`);
+  }
+
+  // --- Sprint 3: Voice MVP ---
+
+  createVoiceSession(threadId?: string, mode = "companion"): Promise<VoiceSessionResponse> {
+    return this.client.post<VoiceSessionResponse, { thread_id?: string; mode: string }>(
+      "/api/v1/voice/sessions",
+      { thread_id: threadId, mode },
+    );
+  }
+
+  // --- Sprint 3: Feedback ---
+
+  submitFeedback(payload: FeedbackCreateRequest): Promise<FeedbackResponse> {
+    return this.client.post<FeedbackResponse, FeedbackCreateRequest>("/api/v1/feedback", payload);
+  }
+
+  // --- Sprint 3: Weekly Summary ---
+
+  getWeeklySummary(): Promise<WeeklySummaryResponse> {
+    return this.client.get<WeeklySummaryResponse>("/api/v1/moods/weekly-summary");
   }
 }

@@ -518,3 +518,117 @@ export interface KnowledgeQuizBankStatsResponse {
   by_type: Record<string, number>;
   by_topic: Record<string, number>;
 }
+
+// --- Sprint 3: Voice MVP ---
+
+export interface VoiceSessionResponse {
+  voice_session_id: string;
+  thread_id: string;
+  ws_url: string;
+  protocol: string;
+}
+
+export type VoiceState = "idle" | "connecting" | "ready" | "listening" | "processing" | "responding" | "error";
+
+export type WsServerEventType =
+  | "session_ready"
+  | "listening"
+  | "processing"
+  | "assistant_delta"
+  | "assistant_final"
+  | "session_ended"
+  | "error"
+  | "safety_escalation";
+
+export interface WsSessionReadyEvent {
+  type: "session_ready";
+  voice_session_id: string;
+  thread_id: string;
+}
+
+export interface WsListeningEvent {
+  type: "listening";
+  message: string;
+}
+
+export interface WsProcessingEvent {
+  type: "processing";
+  client_event_id: string;
+}
+
+export interface WsAssistantDeltaEvent {
+  type: "assistant_delta";
+  text: string;
+}
+
+export interface WsAssistantFinalEvent {
+  type: "assistant_final";
+  text: string;
+  risk_level: RiskLevel;
+  suggested_actions: string[];
+}
+
+export interface WsSessionEndedEvent {
+  type: "session_ended";
+  voice_session_id: string;
+}
+
+export interface WsErrorEvent {
+  type: "error";
+  error_code: string;
+  message: string;
+}
+
+export interface WsSafetyEscalationEvent {
+  type: "safety_escalation";
+  risk_level: RiskLevel;
+  message: string;
+}
+
+export type WsServerEvent =
+  | WsSessionReadyEvent
+  | WsListeningEvent
+  | WsProcessingEvent
+  | WsAssistantDeltaEvent
+  | WsAssistantFinalEvent
+  | WsSessionEndedEvent
+  | WsErrorEvent
+  | WsSafetyEscalationEvent;
+
+// --- Sprint 3: Feedback ---
+
+export interface FeedbackCreateRequest {
+  target_type: "assistant_message" | "knowledge_answer" | "test_result";
+  target_id?: string | null;
+  rating: number;
+  tags?: string[];
+  note?: string | null;
+}
+
+export interface FeedbackResponse {
+  feedback_id: string;
+  status: string;
+}
+
+// --- Sprint 3: Weekly Summary ---
+
+export interface WeeklySummaryResponse {
+  range: string;
+  summary: string;
+  top_tags: string[];
+  suggested_actions: string[];
+  generated_by: string;
+}
+
+// --- Sprint 3: Share Card ---
+
+export interface ShareCardData {
+  title: string;
+  subtitle: string;
+  summary: string;
+  highlights: string[];
+  disclaimer: string;
+  testType: "mood_check" | "sixteen_type";
+  resultCode?: string;
+  resultLabel?: string;
+}

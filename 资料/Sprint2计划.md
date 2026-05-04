@@ -379,6 +379,7 @@ Sprint 评审现场必须跑通以下场景：
 - `资料/Sprint2计划.md`
 - `资料/backend-openapi.yaml`
 - `资料/frontend-api.yaml`
+- `资料/安全评测集开发计划.md`
 - `database/migrations/0004_knowledge.sql`
 - `database/migrations/0005_tests.sql`
 - `database/migrations/0006_user_settings_and_feedback.sql`

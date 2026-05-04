@@ -32,3 +32,11 @@ class MoodTrendResponse(BaseModel):
     top_tags: list[str]
     daily: list[DailyMoodPoint]
     summary: str
+
+
+class WeeklySummaryResponse(BaseModel):
+    range: str = "7d"
+    summary: str
+    top_tags: list[str]
+    suggested_actions: list[str]
+    generated_by: str = "fallback"  # "llm" | "fallback"
