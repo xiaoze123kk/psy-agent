@@ -33,7 +33,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -42,6 +43,7 @@ button {
   cursor: pointer;
 }
 
-input {
+input,
+textarea {
   outline: none;
 }

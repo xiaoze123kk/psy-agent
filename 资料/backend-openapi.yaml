@@ -1,15 +1,15 @@
 openapi: 3.1.0
 info:
   title: Counseling Agent Backend API
-  version: 1.1.0-sprint2-knowledge
+  version: 1.2.0-sprint2-mood
   description: |
     心理咨询 Agent 后端接口文档。
 
-    本文档覆盖 Sprint 1 闭环接口，以及 Sprint 2 知识库 MVP：
-    鉴权、文本对话、记忆管理、情绪记录、安全资源、危机事件、知识搜索、知识详情与知识问答。
+    本文档覆盖 Sprint 1 闭环接口，以及 Sprint 2 知识库与情绪趋势 MVP：
+    鉴权、文本对话、记忆管理、情绪记录、情绪趋势、安全资源、危机事件、知识搜索、知识详情与知识问答。
 
     以下脚手架或后续 Sprint 占位能力不纳入本次正式契约：
-    tests、voice、完整 RAG、mood trends。
+    tests、voice、完整 RAG。
 servers:
   - url: http://localhost:8000
     description: 本地开发环境
@@ -25,7 +25,7 @@ tags:
   - name: memory
     description: 记忆列表与基础维护
   - name: mood
-    description: 基础情绪记录
+    description: 情绪记录与 7/30 天趋势
   - name: safety
     description: SOS 资源与危机事件记录
   - name: knowledge
@@ -430,6 +430,52 @@ paths:
                 log_id: demo-log-id
                 created_at: "2026-04-24T12:00:00Z"
                 mood_score: 2
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/moods/trends:
+    get:
+      tags: [mood]
+      summary: 获取情绪趋势
+      operationId: getMoodTrend
+      description: |
+        Sprint 2 情绪趋势接口。趋势口径仅使用 `mood_score` 与 `mood_tags`，
+        `anxiety_score`、`energy_score`、`sleep_quality` 仅随记录保存，暂不参与趋势图。
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: range
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d]
+            default: 7d
+          description: 趋势范围，仅支持近 7 天或近 30 天。
+      responses:
+        "200":
+          description: 趋势聚合成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodTrendResponse"
+              example:
+                range: 7d
+                avg_mood_score: 3
+                top_tags:
+                  - 焦虑
+                  - 疲惫
+                daily:
+                  - date: "2026-05-03"
+                    mood_score: 3
+                    tags:
+                      - 焦虑
+                      - 疲惫
+                summary: 最近 7 天共记录 2 次情绪，平均情绪分为 3。 高频标签主要是：焦虑、疲惫。
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1042,6 +1088,48 @@ components:
         - log_id
         - created_at
         - mood_score
+
+    DailyMoodPoint:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        mood_score:
+          type: number
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - date
+        - mood_score
+        - tags
+
+    MoodTrendResponse:
+      type: object
+      properties:
+        range:
+          type: string
+          enum: [7d, 30d]
+        avg_mood_score:
+          type: number
+        top_tags:
+          type: array
+          items:
+            type: string
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyMoodPoint"
+        summary:
+          type: string
+      required:
+        - range
+        - avg_mood_score
+        - top_tags
+        - daily
+        - summary
 
     KnowledgeSearchItem:
       type: object

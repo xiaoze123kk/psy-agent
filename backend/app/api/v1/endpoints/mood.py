@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,12 @@ from app.schemas.mood import DailyMoodPoint, MoodLogRequest, MoodLogResponse, Mo
 
 
 router = APIRouter(prefix="/moods", tags=["mood"])
+
+
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @router.post("", response_model=MoodLogResponse)
@@ -40,7 +47,7 @@ async def create_mood_log(
 
 @router.get("/trends", response_model=MoodTrendResponse)
 async def get_mood_trend(
-    range: str = "7d",
+    range: Literal["7d", "30d"] = Query(default="7d"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> MoodTrendResponse:
@@ -69,11 +76,13 @@ async def get_mood_trend(
     daily_tags: dict[str, Counter[str]] = defaultdict(Counter)
 
     for log in logs:
-        day = log.created_at.astimezone(timezone.utc).date().isoformat()
+        day = _to_utc(log.created_at).date().isoformat()
         daily_scores[day].append(log.mood_score)
         for tag in log.mood_tags or []:
-            tag_counter[tag] += 1
-            daily_tags[day][tag] += 1
+            normalized_tag = tag.strip() if isinstance(tag, str) else ""
+            if normalized_tag:
+                tag_counter[normalized_tag] += 1
+                daily_tags[day][normalized_tag] += 1
 
     daily = [
         DailyMoodPoint(
