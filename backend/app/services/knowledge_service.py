@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.db.models import KnowledgeArticle, KnowledgeChunk, KnowledgeGap, KnowledgeSource, utcnow
-from app.graphs.nodes import risk_classifier
+from app.graphs.nodes import risk_classifier, sync_risk_classify
 from app.schemas.knowledge import (
     AskKnowledgeResponse,
     ContinueChatPayload,
@@ -1139,6 +1139,10 @@ def search_articles(
 ) -> KnowledgeSearchResponse:
     ensure_seed_articles(db)
     if query.strip():
+        risk_level = sync_risk_classify(query)
+        if risk_level in {"L2", "L3"}:
+            # 高风险查询不返回知识内容
+            return KnowledgeSearchResponse(items=[])
         hits = _search_chunk_hits(db, query=query, category=category, audience=audience, limit=max(limit * 2, 8))
         articles = _unique_articles_from_hits(hits, limit=limit)
         return KnowledgeSearchResponse(items=[article_to_search_item(article) for article in articles])
