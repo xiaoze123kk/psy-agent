@@ -254,6 +254,56 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /api/v1/chat/threads/{thread_id}/stream:
+    post:
+      tags: [chat]
+      summary: SSE 流式发送消息
+      operationId: streamMessage
+      description: |
+        对话页默认使用该接口接收 text/event-stream。事件顺序通常为
+        graph_update -> token* -> final。若首个 SSE 事件前失败，前端可回退到
+        `/api/v1/chat/threads/{thread_id}/messages`；若首个事件后中断，前端不得重发同一输入，
+        应刷新该 thread 的消息列表以避免重复写入。
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: thread_id
+          required: true
+          description: 会话 ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events carrying graph_update, token, and final events.
+              examples:
+                stream:
+                  summary: token 与最终动作
+                  value: |
+                    event: graph_update
+                    data: {"node":"risk_classifier","risk_level":"L1"}
+
+                    event: token
+                    data: {"text":"我听到了"}
+
+                    event: final
+                    data: {"thread_id":"0f8fad5b-d9cb-469f-a165-70867728950e","message_id":"client-msg-001","assistant_message_id":"assistant-msg-001","assistant_text":"我听到了。","risk_level":"L1","intent":"vent","suggested_actions":["继续说","帮我梳理"],"session_summary":"risk=L1","should_write_memory":true}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /api/v1/memories:
     get:
       tags: [memory]
@@ -614,6 +664,9 @@ components:
       bearerFormat: JWT
 
   responses:
+    Unauthorized:
+      description: 未登录或 access token 已失效
+
     ValidationError:
       description: 请求参数校验失败
       content:
@@ -842,6 +895,58 @@ components:
       required:
         - thread_id
         - assistant_message
+
+    ChatStreamTokenEvent:
+      type: object
+      properties:
+        text:
+          type: string
+      required:
+        - text
+
+    ChatStreamGraphUpdateEvent:
+      type: object
+      properties:
+        node:
+          type: string
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+      required:
+        - node
+
+    ChatStreamFinalEvent:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        message_id:
+          type: string
+        assistant_message_id:
+          type: string
+        assistant_text:
+          type: string
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        intent:
+          type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+        session_summary:
+          type: string
+        should_write_memory:
+          type: boolean
+      required:
+        - thread_id
+        - message_id
+        - assistant_message_id
+        - assistant_text
+        - risk_level
+        - intent
+        - suggested_actions
+        - session_summary
+        - should_write_memory
 
     MemoryItem:
       type: object
