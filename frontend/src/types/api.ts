@@ -2,6 +2,7 @@ export type UserMode = "teen" | "adult";
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 export type RiskLevel = "L0" | "L1" | "L2" | "L3";
+export type MemoryMode = "off" | "summary_only" | "long_term";
 export type ChatStreamEventName = "token" | "graph_update" | "final";
 
 export interface CaptchaResponse {
@@ -73,9 +74,10 @@ export interface CurrentUserResponse {
   user_mode: UserMode;
   usage_goals: string[];
   onboarding_completed: boolean;
-  memory_mode: string;
+  memory_mode: MemoryMode;
   companion_style: string;
   voice_enabled: boolean;
+  save_voice_audio: boolean;
 }
 
 export interface StartThreadRequest {
@@ -121,6 +123,7 @@ export interface AssistantMessage {
   suggested_actions: string[];
   session_summary: string;
   should_write_memory: boolean;
+  referenced_memories: MemoryReference[];
   created_at: string;
 }
 
@@ -164,6 +167,7 @@ export interface ChatStreamFinalEvent {
   suggested_actions: string[];
   session_summary: string;
   should_write_memory: boolean;
+  referenced_memories: MemoryReference[];
   risk_reasons?: string[];
   memory_candidates?: unknown[];
 }
@@ -178,8 +182,42 @@ export interface MemoryItem {
   updated_at?: string;
 }
 
+export interface MemoryReference {
+  memory_id: string;
+  memory_type: string;
+  content: string;
+}
+
 export interface ListMemoriesResponse {
   items: MemoryItem[];
+}
+
+export interface UpdateMemoryRequest {
+  content: string;
+}
+
+export interface MemoryMutationResponse {
+  memory_id?: string;
+  content?: string | null;
+  status: string;
+}
+
+export interface StatusResponse {
+  status: string;
+}
+
+export interface UserSettingsUpdateRequest {
+  memory_mode?: MemoryMode;
+  companion_style?: string;
+  voice_enabled?: boolean;
+  save_voice_audio?: boolean;
+}
+
+export interface UserSettingsResponse {
+  memory_mode: MemoryMode;
+  companion_style: string;
+  voice_enabled: boolean;
+  save_voice_audio: boolean;
 }
 
 export interface MoodLogRequest {

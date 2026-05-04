@@ -1,0 +1,19 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from app.schemas.common import MemoryMode
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    memory_mode: MemoryMode | None = None
+    companion_style: str | None = Field(default=None, min_length=1, max_length=32)
+    voice_enabled: bool | None = None
+    save_voice_audio: bool | None = None
+
+
+class UserSettingsResponse(BaseModel):
+    memory_mode: MemoryMode
+    companion_style: str
+    voice_enabled: bool
+    save_voice_audio: bool

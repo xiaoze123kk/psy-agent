@@ -32,6 +32,7 @@ client:
       - updateMemory
       - deleteMemory
       - clearMemories
+      - updateSettings
       - createMoodLog
       - getMoodTrend
       - searchKnowledge
@@ -242,6 +243,18 @@ methods:
       method: DELETE
       path: /api/v1/memories
 
+  - methodName: updateSettings
+    summary: 更新当前用户设置
+    requestType: UserSettingsUpdateRequest
+    responseType: UserSettingsResponse
+    authRequired: true
+    uiEntry:
+      - 我的页
+      - 记忆中心
+    http:
+      method: PATCH
+      path: /api/v1/me/settings
+
   - methodName: createMoodLog
     summary: 提交基础情绪记录
     requestType: MoodLogRequest
@@ -410,6 +423,13 @@ types:
       - L2
       - L3
 
+  MemoryMode:
+    type: enum
+    values:
+      - off
+      - summary_only
+      - long_term
+
   SafetyAudience:
     type: enum
     values:
@@ -471,12 +491,59 @@ types:
     type: object
     required:
       - user_id
+      - username
       - nickname
+      - age_range
       - user_mode
+      - usage_goals
+      - onboarding_completed
+      - memory_mode
+      - companion_style
+      - voice_enabled
+      - save_voice_audio
     fields:
       user_id: { type: string }
+      username: { type: string }
       nickname: { type: string }
+      age_range: { type: AgeRange }
       user_mode: { type: UserMode }
+      usage_goals:
+        type: array
+        items: { type: string }
+      onboarding_completed: { type: boolean }
+      memory_mode: { type: MemoryMode }
+      companion_style: { type: string }
+      voice_enabled: { type: boolean }
+      save_voice_audio: { type: boolean }
+
+  UserSettingsUpdateRequest:
+    type: object
+    fields:
+      memory_mode:
+        type: MemoryMode
+        required: false
+      companion_style:
+        type: string
+        required: false
+      voice_enabled:
+        type: boolean
+        required: false
+      save_voice_audio:
+        type: boolean
+        required: false
+
+  UserSettingsResponse:
+    type: object
+    required:
+      - memory_mode
+      - companion_style
+      - voice_enabled
+      - save_voice_audio
+    fields:
+      memory_mode: { type: MemoryMode }
+      companion_style: { type: string }
+      voice_enabled: { type: boolean }
+      save_voice_audio: { type: boolean }
 
   StartThreadRequest:
     type: object
@@ -525,6 +592,7 @@ types:
       - suggested_actions
       - session_summary
       - should_write_memory
+      - referenced_memories
     fields:
       assistant_text: { type: string }
       risk_level: { type: RiskLevel }
@@ -534,6 +602,10 @@ types:
         items: { type: string }
       session_summary: { type: string }
       should_write_memory: { type: boolean }
+      referenced_memories:
+        type: array
+        items:
+          type: MemoryReference
 
   SendMessageResponse:
     type: object
@@ -574,6 +646,7 @@ types:
       - suggested_actions
       - session_summary
       - should_write_memory
+      - referenced_memories
     fields:
       thread_id: { type: string }
       message_id: { type: string }
@@ -586,6 +659,10 @@ types:
         items: { type: string }
       session_summary: { type: string }
       should_write_memory: { type: boolean }
+      referenced_memories:
+        type: array
+        items:
+          type: MemoryReference
 
   ChatStreamEvent:
     type: sse
@@ -595,6 +672,21 @@ types:
       final: ChatStreamFinalEvent
 
   MemoryItem:
+    type: object
+    required:
+      - memory_id
+      - memory_type
+      - content
+      - created_at
+      - updated_at
+    fields:
+      memory_id: { type: string }
+      memory_type: { type: string }
+      content: { type: string }
+      created_at: { type: string }
+      updated_at: { type: string }
+
+  MemoryReference:
     type: object
     required:
       - memory_id

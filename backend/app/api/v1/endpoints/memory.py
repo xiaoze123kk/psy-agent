@@ -61,6 +61,7 @@ async def update_memory(
             UserMemory.id == memory_id,
             UserMemory.user_id == current_user.id,
             UserMemory.status == "active",
+            UserMemory.visibility == "user_visible",
         )
     )
     if memory is None:
@@ -84,6 +85,7 @@ async def delete_memory(
             UserMemory.id == memory_id,
             UserMemory.user_id == current_user.id,
             UserMemory.status == "active",
+            UserMemory.visibility == "user_visible",
         )
     )
     if memory is None:

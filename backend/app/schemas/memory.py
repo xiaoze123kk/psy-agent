@@ -13,6 +13,12 @@ class MemoryItemResponse(BaseModel):
     updated_at: datetime
 
 
+class MemoryReferenceResponse(BaseModel):
+    memory_id: str
+    memory_type: str
+    content: str
+
+
 class ListMemoriesResponse(BaseModel):
     items: list[MemoryItemResponse]
 

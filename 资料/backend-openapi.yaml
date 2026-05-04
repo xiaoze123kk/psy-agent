@@ -20,6 +20,8 @@ tags:
     description: API 根路径与联调入口
   - name: auth
     description: 注册、登录、获取当前用户
+  - name: user
+    description: 当前用户设置
   - name: chat
     description: 创建会话、发送文本消息
   - name: memory
@@ -144,6 +146,38 @@ paths:
                 user_id: demo-user
                 nickname: demo
                 user_mode: adult
+                memory_mode: summary_only
+                companion_style: gentle
+                voice_enabled: false
+                save_voice_audio: false
+
+  /api/v1/me/settings:
+    patch:
+      tags: [user]
+      summary: 更新当前用户设置
+      operationId: updateSettings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserSettingsUpdateRequest"
+            example:
+              memory_mode: long_term
+              companion_style: gentle
+              voice_enabled: false
+              save_voice_audio: false
+      responses:
+        "200":
+          description: 设置更新结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettingsResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/chat/threads:
     post:
@@ -764,6 +798,14 @@ components:
       description: |
         L0=正常，L1=中低风险情绪波动，L2/L3=需进入安全分流。
 
+    MemoryMode:
+      type: string
+      enum:
+        - off
+        - summary_only
+        - long_term
+      description: 关闭、只记摘要、长期记忆。
+
     SafetyAudience:
       type: string
       enum:
@@ -851,14 +893,70 @@ components:
       properties:
         user_id:
           type: string
+        username:
+          type: string
         nickname:
           type: string
+        age_range:
+          $ref: "#/components/schemas/AgeRange"
         user_mode:
           $ref: "#/components/schemas/UserMode"
+        usage_goals:
+          type: array
+          items:
+            type: string
+        onboarding_completed:
+          type: boolean
+        memory_mode:
+          $ref: "#/components/schemas/MemoryMode"
+        companion_style:
+          type: string
+        voice_enabled:
+          type: boolean
+        save_voice_audio:
+          type: boolean
       required:
         - user_id
+        - username
         - nickname
+        - age_range
         - user_mode
+        - usage_goals
+        - onboarding_completed
+        - memory_mode
+        - companion_style
+        - voice_enabled
+        - save_voice_audio
+
+    UserSettingsUpdateRequest:
+      type: object
+      properties:
+        memory_mode:
+          $ref: "#/components/schemas/MemoryMode"
+        companion_style:
+          type: string
+        voice_enabled:
+          type: boolean
+        save_voice_audio:
+          type: boolean
+      additionalProperties: false
+
+    UserSettingsResponse:
+      type: object
+      properties:
+        memory_mode:
+          $ref: "#/components/schemas/MemoryMode"
+        companion_style:
+          type: string
+        voice_enabled:
+          type: boolean
+        save_voice_audio:
+          type: boolean
+      required:
+        - memory_mode
+        - companion_style
+        - voice_enabled
+        - save_voice_audio
 
     StartThreadRequest:
       type: object
@@ -923,6 +1021,10 @@ components:
           description: 当前轮对话摘要，供首页续聊展示使用
         should_write_memory:
           type: boolean
+        referenced_memories:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryReference"
       required:
         - assistant_text
         - risk_level
@@ -930,6 +1032,7 @@ components:
         - suggested_actions
         - session_summary
         - should_write_memory
+        - referenced_memories
 
     SendMessageResponse:
       type: object
@@ -983,6 +1086,10 @@ components:
           type: string
         should_write_memory:
           type: boolean
+        referenced_memories:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryReference"
       required:
         - thread_id
         - message_id
@@ -993,8 +1100,9 @@ components:
         - suggested_actions
         - session_summary
         - should_write_memory
+        - referenced_memories
 
-    MemoryItem:
+    MemoryReference:
       type: object
       properties:
         memory_id:
@@ -1007,6 +1115,28 @@ components:
         - memory_id
         - memory_type
         - content
+
+    MemoryItem:
+      type: object
+      properties:
+        memory_id:
+          type: string
+        memory_type:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - memory_id
+        - memory_type
+        - content
+        - created_at
+        - updated_at
 
     ListMemoriesResponse:
       type: object

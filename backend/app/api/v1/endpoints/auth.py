@@ -279,4 +279,5 @@ async def me(current_user: User = Depends(get_current_user)) -> CurrentUserRespo
         memory_mode=settings.memory_mode,
         companion_style=settings.companion_style,
         voice_enabled=settings.voice_enabled,
+        save_voice_audio=settings.save_voice_audio,
     )

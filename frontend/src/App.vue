@@ -17,6 +17,8 @@ import type {
   KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
   MemoryItem,
+  MemoryMode,
+  MemoryReference,
   MessageItem,
   MoodLogRequest,
   MoodTrendResponse,
@@ -49,6 +51,8 @@ interface ChatMessage {
   riskLevel?: RiskLevel | null;
   graphNode?: string | null;
   suggestedActions?: string[];
+  referencedMemories?: MemoryReference[];
+  memoryRefsExpanded?: boolean;
   streaming?: boolean;
   streamError?: boolean;
 }
@@ -154,6 +158,9 @@ const demoMessages: Record<string, ChatMessage[]> = {
       text: "那我们先把目标从“立刻睡着”调成“让大脑慢下来一点”。你愿意先一起找出睡前最容易开始转动的那类念头吗？",
       createdAt: new Date().toISOString(),
       riskLevel: "L0",
+      referencedMemories: [
+        { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
+      ],
     },
   ],
   "demo-anxiety": [
@@ -169,7 +176,7 @@ const demoMessages: Record<string, ChatMessage[]> = {
 
 const demoMemories: MemoryItem[] = [
   { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
-  { memory_id: "m2", memory_type: "support", content: "高压场景前适合先做 60 秒呼吸。" },
+  { memory_id: "m2", memory_type: "support_strategy", content: "高压场景前适合先做 60 秒呼吸。" },
 ];
 
 const demoMoodTrend: MoodTrendResponse = {
@@ -191,6 +198,11 @@ const moodTagOptions = ["焦虑", "疲惫", "难过", "委屈", "平静", "睡�
 const moodRangeOptions: Array<{ id: MoodRange; label: string }> = [
   { id: "7d", label: "7天" },
   { id: "30d", label: "30天" },
+];
+const memoryModeOptions: Array<{ id: MemoryMode; label: string; description: string }> = [
+  { id: "off", label: "关闭", description: "不读取也不新增可见记忆" },
+  { id: "summary_only", label: "只记摘要", description: "只保存对话摘要" },
+  { id: "long_term", label: "长期记忆", description: "保存偏好、触发点和支持方式" },
 ];
 
 function storageText(key: string) {
@@ -239,6 +251,13 @@ const selectedGoal = ref<string | null>(storageOption(GOAL_KEY, goalOptions));
 const threads = ref<ThreadListItem[]>([]);
 const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
+const currentMemoryMode = ref<MemoryMode>("summary_only");
+const saveVoiceAudio = ref(false);
+const editingMemoryId = ref<string | null>(null);
+const editingMemoryContent = ref("");
+const memoryError = ref("");
+const isSettingsSaving = ref(false);
+const isMemoryMutating = ref(false);
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const moodRange = ref<MoodRange>("7d");
 const moodDraft = ref<MoodLogRequest>({
@@ -293,6 +312,7 @@ const selectedStyleLabel = computed(
   () => styleOptions.find((option) => option.id === selectedStyle.value)?.label ?? "未设置",
 );
 const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
+const memoryModeLabel = computed(() => memoryModeOptions.find((option) => option.id === currentMemoryMode.value)?.label ?? "只记摘要");
 const canSubmitAuth = computed(
   () =>
     Boolean(authUsername.value.trim()) &&
@@ -530,6 +550,35 @@ function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeMemoryReferences(value: unknown): MemoryReference[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => isObjectRecord(item))
+    .map((item) => ({
+      memory_id: String(item.memory_id ?? ""),
+      memory_type: String(item.memory_type ?? ""),
+      content: String(item.content ?? "").trim(),
+    }))
+    .filter((item) => Boolean(item.memory_id && item.content));
+}
+
+function memoryTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    session_summary: "对话摘要",
+    preference: "陪伴偏好",
+    recurring_trigger: "触发点",
+    support_strategy: "支持方式",
+    state: "长期状态",
+    relationship: "关系记忆",
+  };
+  return labels[type] ?? "记忆";
+}
+
+function formatMemoryDate(value?: string) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
+}
+
 function graphStatusLabel(node?: string | null) {
   if (node === "risk_classifier") return "正在识别风险";
   if (node === "intent_classifier") return "正在理解意图";
@@ -579,6 +628,11 @@ function clearSession() {
   currentUserId.value = "";
   username.value = "";
   activeThreadId.value = "";
+  currentMemoryMode.value = "summary_only";
+  saveVoiceAudio.value = false;
+  editingMemoryId.value = null;
+  editingMemoryContent.value = "";
+  memoryError.value = "";
   [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_ID_KEY, USERNAME_KEY, THREAD_ID_KEY].forEach((key) => localStorage.removeItem(key));
 }
 
@@ -620,6 +674,7 @@ function mapMessage(item: MessageItem): ChatMessage | null {
     createdAt: item.created_at,
     riskLevel: item.risk_level,
     suggestedActions: normalizeStringList(item.metadata.suggested_actions),
+    referencedMemories: normalizeMemoryReferences(item.metadata.referenced_memories),
   };
 }
 
@@ -652,8 +707,14 @@ async function loadApp() {
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
     applyAgeRange(user.age_range);
+    currentMemoryMode.value = user.memory_mode;
+    saveVoiceAudio.value = user.save_voice_audio;
+    if (styleOptions.some((option) => option.id === user.companion_style)) {
+      selectedStyle.value = user.companion_style;
+    }
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
+    memoryError.value = "";
     moodTrend.value = mood;
     activeThreadId.value = activeThreadId.value || threads.value[0]?.thread_id || "";
     if (activeThreadId.value) {
@@ -669,6 +730,117 @@ async function loadApp() {
   } finally {
     isLoadingApp.value = false;
   }
+}
+
+async function refreshMemories() {
+  if (isDemoMode.value || !accessToken.value) return;
+  const memoryList = await api.listMemories();
+  memories.value = memoryList.items;
+}
+
+async function changeMemoryMode(mode: MemoryMode) {
+  if (mode === currentMemoryMode.value || isSettingsSaving.value) return;
+  const previousMode = currentMemoryMode.value;
+  currentMemoryMode.value = mode;
+  memoryError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    apiNotice.value = `记忆模式已切换为${memoryModeLabel.value}。`;
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings({ memory_mode: mode });
+    currentMemoryMode.value = response.memory_mode;
+    saveVoiceAudio.value = response.save_voice_audio;
+    apiNotice.value = `记忆模式已切换为${memoryModeLabel.value}。`;
+  } catch (error) {
+    currentMemoryMode.value = previousMode;
+    memoryError.value = error instanceof Error ? error.message : "记忆模式更新失败。";
+  } finally {
+    isSettingsSaving.value = false;
+  }
+}
+
+function beginEditMemory(item: MemoryItem) {
+  editingMemoryId.value = item.memory_id;
+  editingMemoryContent.value = item.content;
+  memoryError.value = "";
+}
+
+function cancelEditMemory() {
+  editingMemoryId.value = null;
+  editingMemoryContent.value = "";
+}
+
+async function saveMemoryEdit(item: MemoryItem) {
+  const content = editingMemoryContent.value.trim();
+  if (!content || isMemoryMutating.value) return;
+  memoryError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    memories.value = memories.value.map((memory) =>
+      memory.memory_id === item.memory_id ? { ...memory, content, updated_at: new Date().toISOString() } : memory,
+    );
+    cancelEditMemory();
+    return;
+  }
+
+  try {
+    isMemoryMutating.value = true;
+    await api.updateMemory(item.memory_id, { content });
+    await refreshMemories();
+    cancelEditMemory();
+  } catch (error) {
+    memoryError.value = error instanceof Error ? error.message : "记忆保存失败。";
+  } finally {
+    isMemoryMutating.value = false;
+  }
+}
+
+async function deleteMemoryItem(item: MemoryItem) {
+  if (isMemoryMutating.value) return;
+  memoryError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    memories.value = memories.value.filter((memory) => memory.memory_id !== item.memory_id);
+    return;
+  }
+
+  try {
+    isMemoryMutating.value = true;
+    await api.deleteMemory(item.memory_id);
+    await refreshMemories();
+  } catch (error) {
+    memoryError.value = error instanceof Error ? error.message : "记忆删除失败。";
+  } finally {
+    isMemoryMutating.value = false;
+  }
+}
+
+async function clearAllMemories() {
+  if (memories.value.length === 0 || isMemoryMutating.value) return;
+  if (!window.confirm("确定清空全部可见记忆吗？")) return;
+  memoryError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    memories.value = [];
+    return;
+  }
+
+  try {
+    isMemoryMutating.value = true;
+    await api.clearMemories();
+    memories.value = [];
+    cancelEditMemory();
+  } catch (error) {
+    memoryError.value = error instanceof Error ? error.message : "记忆清空失败。";
+  } finally {
+    isMemoryMutating.value = false;
+  }
+}
+
+function toggleMemoryReferences(messageId: number) {
+  messages.value = messages.value.map((message) =>
+    message.id === messageId ? { ...message, memoryRefsExpanded: !message.memoryRefsExpanded } : message,
+  );
 }
 
 async function loadMoodTrend(range: MoodRange = moodRange.value) {
@@ -763,6 +935,9 @@ function enterDemoMode() {
   selectedAge.value = "18-24";
   selectedStyle.value ||= "gentle";
   selectedGoal.value ||= "anxiety";
+  currentMemoryMode.value = "summary_only";
+  saveVoiceAudio.value = false;
+  memoryError.value = "";
   threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
   demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
   memories.value = demoMemories.map((item) => ({ ...item }));
@@ -922,11 +1097,13 @@ function applySendMessageResponse(assistantId: number, userContent: string, resp
     riskLevel: risk,
     graphNode: null,
     suggestedActions: actions,
+    referencedMemories: assistant.referenced_memories ?? [],
     streaming: false,
     streamError: false,
   });
   quickActions.value = actions.slice(0, 4);
   syncLocalThread(reply, risk);
+  if (assistant.should_write_memory) void refreshMemories();
   if (risk === "L2" || risk === "L3") openSafety();
 }
 
@@ -990,8 +1167,11 @@ async function submitMessage(text = composerText.value) {
             riskLevel: risk,
             graphNode: null,
             suggestedActions: finalActions,
+            referencedMemories: normalizeMemoryReferences(data.referenced_memories),
+            streaming: false,
             streamError: false,
           });
+          if (Boolean(data.should_write_memory)) void refreshMemories();
         }
       },
     );
@@ -1543,6 +1723,16 @@ onMounted(async () => {
                 </span>
                 <span v-if="message.streamError" class="stream-status">已切换到稳定回复</span>
               </div>
+              <div v-if="message.role === 'assistant' && message.referencedMemories?.length" class="memory-reference">
+                <button type="button" @click="toggleMemoryReferences(message.id)">
+                  引用了 {{ message.referencedMemories.length }} 条记忆
+                </button>
+                <div v-if="message.memoryRefsExpanded" class="memory-reference__list">
+                  <span v-for="memory in message.referencedMemories" :key="`${message.id}-${memory.memory_id}`">
+                    {{ memoryTypeLabel(memory.memory_type) }}：{{ memory.content }}
+                  </span>
+                </div>
+              </div>
               <div
                 v-if="message.role === 'assistant' && message.suggestedActions?.length"
                 class="message-actions"
@@ -1859,12 +2049,59 @@ onMounted(async () => {
             </button>
           </div>
 
-          <section class="section-block">
+          <section class="section-block memory-center">
             <div class="section-title">
-              <h2>记忆摘要</h2>
+              <h2>记忆中心</h2>
+              <span>{{ memoryModeLabel }}</span>
             </div>
-            <article v-for="item in memories" :key="item.memory_id" class="memory-item">{{ item.content }}</article>
-            <p v-if="memories.length === 0" class="empty-copy">还没有记忆摘要。</p>
+
+            <div class="memory-mode-control" role="radiogroup" aria-label="记忆模式">
+              <button
+                v-for="option in memoryModeOptions"
+                :key="option.id"
+                :class="{ active: currentMemoryMode === option.id }"
+                type="button"
+                :disabled="isSettingsSaving"
+                @click="changeMemoryMode(option.id)"
+              >
+                <strong>{{ option.label }}</strong>
+                <span>{{ option.description }}</span>
+              </button>
+            </div>
+
+            <p v-if="memoryError" class="notice notice--error">{{ memoryError }}</p>
+
+            <article v-for="item in memories" :key="item.memory_id" class="memory-item memory-item--editable">
+              <div class="memory-item__head">
+                <span>{{ memoryTypeLabel(item.memory_type) }}</span>
+                <small>{{ formatMemoryDate(item.updated_at || item.created_at) }}</small>
+              </div>
+              <textarea
+                v-if="editingMemoryId === item.memory_id"
+                v-model="editingMemoryContent"
+                class="memory-edit-field"
+                rows="3"
+                :disabled="isMemoryMutating"
+              />
+              <p v-else>{{ item.content }}</p>
+              <div class="memory-item__actions">
+                <template v-if="editingMemoryId === item.memory_id">
+                  <button type="button" :disabled="!editingMemoryContent.trim() || isMemoryMutating" @click="saveMemoryEdit(item)">
+                    保存
+                  </button>
+                  <button type="button" :disabled="isMemoryMutating" @click="cancelEditMemory">取消</button>
+                </template>
+                <template v-else>
+                  <button type="button" :disabled="isMemoryMutating" @click="beginEditMemory(item)">编辑</button>
+                  <button type="button" :disabled="isMemoryMutating" @click="deleteMemoryItem(item)">删除</button>
+                </template>
+              </div>
+            </article>
+
+            <p v-if="memories.length === 0" class="empty-copy">还没有可见记忆。</p>
+            <button class="secondary-action memory-clear-action" type="button" :disabled="memories.length === 0 || isMemoryMutating" @click="clearAllMemories">
+              清空全部记忆
+            </button>
           </section>
 
           <button class="secondary-action logout-action" type="button" @click="logout">
@@ -2423,6 +2660,7 @@ onMounted(async () => {
 }
 
 .card-title span,
+.section-title span,
 .section-title button {
   color: var(--text-muted);
   background: transparent;
@@ -2564,6 +2802,37 @@ onMounted(async () => {
 .stream-status {
   background: #fff6ed;
   color: #9a4a25;
+}
+
+.memory-reference {
+  display: grid;
+  gap: 7px;
+  border-radius: 14px;
+  background: #f5faf7;
+  border: 1px solid rgba(30, 118, 103, 0.14);
+  padding: 8px;
+}
+
+.memory-reference button {
+  justify-self: start;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  color: var(--teal-dark);
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.memory-reference__list {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-reference__list span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .message-actions {
@@ -3333,6 +3602,117 @@ onMounted(async () => {
 
 .profile-card h2 {
   margin: 0 0 4px;
+}
+
+.memory-center {
+  padding-bottom: 4px;
+}
+
+.memory-mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.memory-mode-control button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  min-height: 78px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text-muted);
+  padding: 10px;
+  text-align: left;
+}
+
+.memory-mode-control button.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.memory-mode-control button:disabled,
+.memory-item__actions button:disabled,
+.memory-clear-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-mode-control strong {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.memory-mode-control span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.memory-item--editable {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-item__head,
+.memory-item__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.memory-item__head span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.memory-item__head small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.memory-item--editable p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.memory-edit-field {
+  width: 100%;
+  resize: vertical;
+  min-height: 86px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbfdfb;
+  padding: 10px;
+  color: var(--text-main);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.memory-item__actions {
+  justify-content: flex-end;
+}
+
+.memory-item__actions button {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #f8fbf8;
+  color: var(--teal-dark);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.memory-clear-action {
+  width: 100%;
 }
 
 .logout-action {

@@ -1,0 +1,369 @@
+from __future__ import annotations
+
+import unittest
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine
+
+from app.api.v1.endpoints import auth, me, memory
+from app.core.security import create_access_token
+from app.db.models import Base, ConversationThread, RiskEvent, User, UserMemory, UserProfile, UserSettings
+from app.db.session import get_db_session
+from app.schemas.chat import SendMessageRequest
+from app.services import chat_service
+
+
+class MemoryApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, class_=Session)
+        self.db = self.SessionLocal()
+
+        self.app = FastAPI()
+        self.app.include_router(auth.router, prefix="/api/v1")
+        self.app.include_router(me.router, prefix="/api/v1")
+        self.app.include_router(memory.router, prefix="/api/v1")
+
+        def override_db_session():
+            yield self.db
+
+        self.app.dependency_overrides[get_db_session] = override_db_session
+        self.client = TestClient(self.app)
+
+    def tearDown(self) -> None:
+        self.db.close()
+        Base.metadata.drop_all(self.engine)
+        self.engine.dispose()
+
+    def create_user(self, username: str = "demo", *, memory_mode: str = "summary_only") -> User:
+        user = User(username=username, password_hash="test-hash")
+        self.db.add(user)
+        self.db.flush()
+        self.db.add_all(
+            [
+                UserProfile(
+                    user_id=user.id,
+                    nickname=username,
+                    age_range="18_plus",
+                    user_mode="adult",
+                    usage_goals=[],
+                    onboarding_completed=True,
+                ),
+                UserSettings(
+                    user_id=user.id,
+                    memory_mode=memory_mode,
+                    companion_style="gentle",
+                    voice_enabled=False,
+                    save_voice_audio=False,
+                    save_transcript=True,
+                    crisis_resource_region="CN",
+                ),
+            ]
+        )
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def auth_headers(self, user: User) -> dict[str, str]:
+        return {"Authorization": f"Bearer {create_access_token(user.id)}"}
+
+    def add_memory(
+        self,
+        user: User,
+        *,
+        content: str,
+        memory_type: str = "session_summary",
+        visibility: str = "user_visible",
+    ) -> UserMemory:
+        memory_record = UserMemory(
+            user_id=user.id,
+            memory_type=memory_type,
+            content=content,
+            visibility=visibility,
+            status="active",
+        )
+        self.db.add(memory_record)
+        self.db.commit()
+        self.db.refresh(memory_record)
+        return memory_record
+
+    def test_memory_center_lists_only_active_user_visible_memories(self) -> None:
+        user = self.create_user()
+        self.add_memory(user, content="可见摘要")
+        self.add_memory(user, content="内部安全记录", visibility="internal_safety")
+        deleted = self.add_memory(user, content="已删除摘要")
+        deleted.status = "deleted"
+        self.db.commit()
+
+        response = self.client.get("/api/v1/memories", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["content"] for item in response.json()["items"]], ["可见摘要"])
+
+    def test_memory_mutations_are_scoped_to_owner_and_visible_memories(self) -> None:
+        user = self.create_user("owner")
+        other = self.create_user("other")
+        visible = self.add_memory(user, content="旧内容")
+        hidden = self.add_memory(user, content="内部安全记录", visibility="internal_safety")
+        other_memory = self.add_memory(other, content="他人的记忆")
+
+        update_response = self.client.patch(
+            f"/api/v1/memories/{visible.id}",
+            headers=self.auth_headers(user),
+            json={"content": "新内容"},
+        )
+        hidden_response = self.client.patch(
+            f"/api/v1/memories/{hidden.id}",
+            headers=self.auth_headers(user),
+            json={"content": "不应修改"},
+        )
+        other_response = self.client.delete(f"/api/v1/memories/{other_memory.id}", headers=self.auth_headers(user))
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["content"], "新内容")
+        self.assertEqual(hidden_response.status_code, 404)
+        self.assertEqual(other_response.status_code, 404)
+
+    def test_clear_memories_soft_deletes_only_visible_memories(self) -> None:
+        user = self.create_user()
+        visible = self.add_memory(user, content="可见摘要")
+        hidden = self.add_memory(user, content="内部安全记录", visibility="internal_safety")
+
+        response = self.client.delete("/api/v1/memories", headers=self.auth_headers(user))
+        self.db.refresh(visible)
+        self.db.refresh(hidden)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(visible.status, "deleted")
+        self.assertEqual(hidden.status, "active")
+
+    def test_update_settings_and_auth_me_return_latest_values(self) -> None:
+        user = self.create_user()
+
+        response = self.client.patch(
+            "/api/v1/me/settings",
+            headers=self.auth_headers(user),
+            json={
+                "memory_mode": "long_term",
+                "companion_style": "steady",
+                "voice_enabled": True,
+                "save_voice_audio": True,
+            },
+        )
+        me_response = self.client.get("/api/v1/auth/me", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["memory_mode"], "long_term")
+        self.assertEqual(me_response.status_code, 200)
+        self.assertEqual(me_response.json()["memory_mode"], "long_term")
+        self.assertEqual(me_response.json()["companion_style"], "steady")
+        self.assertTrue(me_response.json()["voice_enabled"])
+        self.assertTrue(me_response.json()["save_voice_audio"])
+
+    def test_update_settings_rejects_invalid_memory_mode(self) -> None:
+        user = self.create_user()
+
+        response = self.client.patch(
+            "/api/v1/me/settings",
+            headers=self.auth_headers(user),
+            json={"memory_mode": "everything"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+
+class FakeGraphRuntime:
+    def __init__(self, *, risk_level: str = "L0") -> None:
+        self.risk_level = risk_level
+        self.calls: list[dict] = []
+
+    async def invoke_turn(self, **kwargs) -> dict[str, object]:
+        self.calls.append(kwargs)
+        retrieved_memories = list(kwargs.get("retrieved_memories") or [])
+        referenced_memories = []
+        if self.risk_level not in {"L2", "L3"}:
+            referenced_memories = [
+                {
+                    "memory_id": memory["id"],
+                    "memory_type": memory["memory_type"],
+                    "content": memory["content"],
+                }
+                for memory in retrieved_memories
+                if memory.get("visibility") == "user_visible"
+            ]
+
+        candidates = [
+            {"memory_type": "session_summary", "content": "本轮可见摘要", "importance": 3},
+            {"memory_type": "preference", "content": "用户喜欢先被安抚", "importance": 4},
+            {"memory_type": "recurring_trigger", "content": "考试前容易焦虑", "importance": 4},
+            {"memory_type": "support_strategy", "content": "60 秒呼吸有帮助", "importance": 4},
+        ]
+        if self.risk_level in {"L2", "L3"}:
+            candidates = [{"memory_type": "safety_summary", "content": "本轮安全摘要", "importance": 5}]
+
+        return {
+            "assistant_text": "我在。",
+            "risk_level": self.risk_level,
+            "intent": "other",
+            "risk_reasons": [],
+            "suggested_actions": ["继续说"],
+            "session_summary": "本轮可见摘要" if self.risk_level == "L0" else "本轮安全摘要",
+            "memory_candidates": candidates,
+            "should_write_memory": True,
+            "referenced_memories": referenced_memories,
+        }
+
+
+class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, class_=Session)
+        self.db = self.SessionLocal()
+        self.original_graph_runtime = chat_service.graph_runtime
+
+    def tearDown(self) -> None:
+        chat_service.graph_runtime = self.original_graph_runtime
+        self.db.close()
+        Base.metadata.drop_all(self.engine)
+        self.engine.dispose()
+
+    def create_user_with_thread(self, *, memory_mode: str) -> tuple[User, ConversationThread]:
+        user = User(username=f"user-{memory_mode}", password_hash="test-hash")
+        self.db.add(user)
+        self.db.flush()
+        self.db.add_all(
+            [
+                UserProfile(
+                    user_id=user.id,
+                    nickname="demo",
+                    age_range="18_plus",
+                    user_mode="adult",
+                    usage_goals=[],
+                    onboarding_completed=True,
+                ),
+                UserSettings(
+                    user_id=user.id,
+                    memory_mode=memory_mode,
+                    companion_style="gentle",
+                    voice_enabled=False,
+                    save_voice_audio=False,
+                    save_transcript=True,
+                    crisis_resource_region="CN",
+                ),
+            ]
+        )
+        thread = ConversationThread(user_id=user.id, langgraph_thread_id=f"lg-{memory_mode}", title="new session")
+        self.db.add(thread)
+        self.db.commit()
+        self.db.refresh(user)
+        self.db.refresh(thread)
+        return user, thread
+
+    def add_memory(self, user: User, *, memory_type: str, content: str, importance: int = 3) -> UserMemory:
+        memory_record = UserMemory(
+            user_id=user.id,
+            memory_type=memory_type,
+            content=content,
+            importance=importance,
+            visibility="user_visible",
+            status="active",
+        )
+        self.db.add(memory_record)
+        self.db.commit()
+        self.db.refresh(memory_record)
+        return memory_record
+
+    async def test_off_mode_does_not_retrieve_or_write_memories(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="off")
+        self.add_memory(user, memory_type="session_summary", content="旧摘要")
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        _, _, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我最近压力好大"),
+        )
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual(fake_runtime.calls[0]["retrieved_memories"], [])
+        self.assertEqual(result["referenced_memories"], [])
+        self.assertEqual(len(memories), 1)
+
+    async def test_summary_only_mode_retrieves_and_writes_only_session_summaries(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        summary_memory = self.add_memory(user, memory_type="session_summary", content="旧摘要", importance=1)
+        self.add_memory(user, memory_type="preference", content="旧偏好", importance=5)
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        _, _, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我希望你先安抚我"),
+        )
+        memory_types = list(self.db.scalars(select(UserMemory.memory_type).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual([memory["id"] for memory in fake_runtime.calls[0]["retrieved_memories"]], [summary_memory.id])
+        self.assertEqual(result["referenced_memories"][0]["memory_id"], summary_memory.id)
+        self.assertEqual(memory_types.count("session_summary"), 2)
+        self.assertEqual(memory_types.count("preference"), 1)
+
+    async def test_long_term_mode_writes_categorized_visible_memories(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        self.add_memory(user, memory_type="preference", content="旧偏好", importance=5)
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我希望你先听我说，再帮我梳理"),
+        )
+        memory_types = set(self.db.scalars(select(UserMemory.memory_type).where(UserMemory.user_id == user.id)))
+
+        self.assertTrue({"session_summary", "preference", "recurring_trigger", "support_strategy"}.issubset(memory_types))
+        self.assertGreaterEqual(len(fake_runtime.calls[0]["retrieved_memories"]), 1)
+
+    async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        fake_runtime = FakeGraphRuntime(risk_level="L2")
+        chat_service.graph_runtime = fake_runtime
+
+        _, _, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我真的不想活了"),
+        )
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+        risk_events = list(self.db.scalars(select(RiskEvent).where(RiskEvent.user_id == user.id)))
+
+        self.assertEqual(result["referenced_memories"], [])
+        self.assertEqual(len(risk_events), 1)
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0].memory_type, "safety_summary")
+        self.assertEqual(memories[0].visibility, "internal_safety")
+
+
+if __name__ == "__main__":
+    unittest.main()

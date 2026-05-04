@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.common import InputType, RiskLevel, ThreadMode, UserMode
+from app.schemas.memory import MemoryReferenceResponse
 
 
 class StartThreadRequest(BaseModel):
@@ -50,6 +51,7 @@ class AssistantMessageResponse(BaseModel):
     suggested_actions: list[str]
     session_summary: str
     should_write_memory: bool
+    referenced_memories: list[MemoryReferenceResponse] = Field(default_factory=list)
     created_at: datetime
 
 
