@@ -423,7 +423,7 @@ const shareCardSaving = ref(false);
 // --- Sprint 3: Feedback ---
 const feedbackVisible = ref(false);
 const feedbackTargetType = ref<"assistant_message" | "knowledge_answer" | "test_result">("assistant_message");
-const feedbackTargetId = ref<string | null>(null);
+const feedbackTargetId = ref<string>("");
 const feedbackRating = ref(0);
 const feedbackNote = ref("");
 const isFeedbackSubmitting = ref(false);
@@ -2083,9 +2083,9 @@ async function downloadShareImage() {
 
 // --- Sprint 3: Feedback ---
 
-function openFeedback(type: "assistant_message" | "knowledge_answer" | "test_result", targetId?: string | null) {
+function openFeedback(type: "assistant_message" | "knowledge_answer" | "test_result", targetId: string) {
   feedbackTargetType.value = type;
-  feedbackTargetId.value = targetId ?? null;
+  feedbackTargetId.value = targetId;
   feedbackRating.value = 0;
   feedbackNote.value = "";
   feedbackDone.value = false;
@@ -2888,6 +2888,7 @@ onMounted(async () => {
                     {{ item.title }}
                   </button>
                 </section>
+                <button class="text-action knowledge-feedback" type="button" @click="openFeedback('knowledge_answer', String(message.id))">评价答案</button>
                 <button class="text-action knowledge-continue" type="button" @click="continueKnowledgeChat">
                   带到咨询对话里聊
                 </button>

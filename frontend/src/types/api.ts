@@ -599,7 +599,7 @@ export type WsServerEvent =
 
 export interface FeedbackCreateRequest {
   target_type: "assistant_message" | "knowledge_answer" | "test_result";
-  target_id?: string | null;
+  target_id: string;
   rating: number;
   tags?: string[];
   note?: string | null;

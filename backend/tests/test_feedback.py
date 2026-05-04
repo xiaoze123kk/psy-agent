@@ -78,7 +78,7 @@ class FeedbackApiTests(unittest.TestCase):
             headers=self.auth_headers(user),
             json={
                 "target_type": "knowledge_answer",
-                "target_id": None,
+                "target_id": "knowledge-msg-001",
                 "rating": 3,
             },
         )
@@ -163,6 +163,7 @@ class FeedbackApiTests(unittest.TestCase):
             headers=self.auth_headers(user),
             json={
                 "target_type": "assistant_message",
+                "target_id": "msg-test-001",
                 "rating": 2,
                 "tags": [],
             },
