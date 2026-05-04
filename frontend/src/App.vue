@@ -6,6 +6,9 @@ import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  ChatStreamFinalEvent,
+  ChatStreamGraphUpdateEvent,
+  ChatStreamTokenEvent,
   KnowledgeArticleResponse,
   KnowledgeQuizBankStatsResponse,
   KnowledgeQuizMode,
@@ -16,6 +19,7 @@ import type {
   MemoryItem,
   MessageItem,
   MoodTrendResponse,
+  SendMessageResponse,
   ThreadListItem,
   UserMode,
 } from "./types/api";
@@ -41,7 +45,10 @@ interface ChatMessage {
   text: string;
   createdAt?: string;
   riskLevel?: RiskLevel | null;
+  graphNode?: string | null;
+  suggestedActions?: string[];
   streaming?: boolean;
+  streamError?: boolean;
 }
 
 interface KnowledgeChatMessage {
@@ -200,6 +207,7 @@ const captchaImageDataUrl = ref("");
 const captchaCode = ref("");
 const authError = ref("");
 const apiError = ref("");
+const apiNotice = ref("");
 
 const selectedAge = ref<AgeOptionId | null>(null);
 const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
@@ -339,6 +347,11 @@ function selectedUserMode(): UserMode {
   return isTeenMode.value ? "teen" : "adult";
 }
 
+function clearApiFeedback() {
+  apiError.value = "";
+  apiNotice.value = "";
+}
+
 function formatTime(value?: string | null) {
   if (!value) return "刚刚";
   const time = new Date(value).getTime();
@@ -362,6 +375,39 @@ function riskClass(level?: RiskLevel | null) {
   if (level === "L2") return "risk--warning";
   if (level === "L1") return "risk--watch";
   return "risk--steady";
+}
+
+function normalizeRiskLevel(value: unknown): RiskLevel | null {
+  return value === "L0" || value === "L1" || value === "L2" || value === "L3" ? value : null;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function graphStatusLabel(node?: string | null) {
+  if (node === "risk_classifier") return "正在识别风险";
+  if (node === "intent_classifier") return "正在理解意图";
+  if (node === "memory_retrieval") return "正在整理上下文";
+  if (node === "summary_memory_node") return "正在整理摘要";
+  if (node) return "正在推进对话";
+  return "";
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
+}
+
+function isTokenEventData(data: unknown): data is ChatStreamTokenEvent {
+  return isObjectRecord(data) && typeof data.text === "string";
+}
+
+function isGraphUpdateEventData(data: unknown): data is ChatStreamGraphUpdateEvent {
+  return isObjectRecord(data) && typeof data.node === "string";
+}
+
+function isFinalEventData(data: unknown): data is ChatStreamFinalEvent {
+  return isObjectRecord(data) && typeof data.assistant_text === "string" && normalizeRiskLevel(data.risk_level) !== null;
 }
 
 function sortThreads(items: ThreadListItem[]) {
@@ -428,6 +474,7 @@ function mapMessage(item: MessageItem): ChatMessage | null {
     text: item.content,
     createdAt: item.created_at,
     riskLevel: item.risk_level,
+    suggestedActions: normalizeStringList(item.metadata.suggested_actions),
   };
 }
 
@@ -582,7 +629,7 @@ function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = 
   return id;
 }
 
-function updateMessage(id: number, patch: Partial<Pick<ChatMessage, "text" | "riskLevel" | "streaming">>) {
+function updateMessage(id: number, patch: Partial<Omit<ChatMessage, "id">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
 }
 
@@ -664,10 +711,29 @@ function syncLocalThread(summary: string, risk: RiskLevel | null) {
   demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
 }
 
+function applySendMessageResponse(assistantId: number, userContent: string, response: SendMessageResponse) {
+  const assistant = response.assistant_message;
+  const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
+  const reply = assistant.assistant_text || assistant.content;
+  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : inferContextualActions(userContent, risk);
+  updateMessage(assistantId, {
+    text: reply,
+    riskLevel: risk,
+    graphNode: null,
+    suggestedActions: actions,
+    streaming: false,
+    streamError: false,
+  });
+  quickActions.value = actions.slice(0, 4);
+  syncLocalThread(reply, risk);
+  if (risk === "L2" || risk === "L3") openSafety();
+}
+
 async function submitMessage(text = composerText.value) {
   const content = text.trim();
   if (!content || isSending.value) return;
   composerText.value = "";
+  clearApiFeedback();
   activeTab.value = "chat";
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
@@ -682,47 +748,104 @@ async function submitMessage(text = composerText.value) {
     return;
   }
 
-  let assistantId: number | null = null;
+  const payload = { user_id: currentUserId.value, content, input_type: "text" as const, user_mode: selectedUserMode() };
+  const assistantId = addMessage("assistant", "", null, true);
   let streamed = "";
   let risk: RiskLevel | null = null;
+  let receivedStreamEvent = false;
+  let receivedFinalEvent = false;
   try {
     isSending.value = true;
-    assistantId = addMessage("assistant", "", null, true);
     await api.streamMessage(
       activeThreadId.value,
-      { user_id: currentUserId.value, content, input_type: "text", user_mode: selectedUserMode() },
+      payload,
       (event, data) => {
-        if (event === "token" && typeof data.text === "string") {
+        if (event === "graph_update" && isGraphUpdateEventData(data)) {
+          receivedStreamEvent = true;
+          const graphRisk = normalizeRiskLevel(data.risk_level);
+          risk = graphRisk ?? risk;
+          updateMessage(assistantId, {
+            graphNode: data.node,
+            riskLevel: graphRisk ?? risk,
+            streamError: false,
+          });
+        }
+
+        if (event === "token" && isTokenEventData(data)) {
+          receivedStreamEvent = true;
           streamed += data.text;
-          appendMessageText(assistantId as number, data.text);
+          appendMessageText(assistantId, data.text);
         }
         if (event === "final") {
-          risk = data.risk_level === "L1" || data.risk_level === "L2" || data.risk_level === "L3" ? data.risk_level : "L0";
-          const actions = Array.isArray(data.suggested_actions) ? data.suggested_actions.filter((item): item is string => typeof item === "string") : [];
-          quickActions.value = actions.length ? actions.slice(0, 4) : inferContextualActions(content, risk);
-          if (!streamed && typeof data.assistant_text === "string") {
-            streamed = data.assistant_text;
-            updateMessage(assistantId as number, { text: streamed, riskLevel: risk });
-          }
+          receivedStreamEvent = true;
+          receivedFinalEvent = true;
+          risk = normalizeRiskLevel(data.risk_level) ?? "L0";
+          const actions = normalizeStringList(data.suggested_actions);
+          const finalActions = actions.length ? actions : inferContextualActions(content, risk);
+          quickActions.value = finalActions.slice(0, 4);
+          if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
+          updateMessage(assistantId, {
+            text: streamed,
+            riskLevel: risk,
+            graphNode: null,
+            suggestedActions: finalActions,
+            streamError: false,
+          });
         }
       },
     );
-    if (!streamed && assistantId) {
+
+    if (receivedStreamEvent && !receivedFinalEvent) {
+      apiNotice.value = "流式连接提前结束，已刷新服务端记录。";
+      updateMessage(assistantId, { streaming: false, streamError: true });
+      await loadThreadMessages(activeThreadId.value);
+      return;
+    }
+
+    if (!receivedStreamEvent) {
+      apiNotice.value = "流式连接无返回，已切换到稳定发送。";
+      const response = await api.sendMessage(activeThreadId.value, payload);
+      applySendMessageResponse(assistantId, content, response);
+      return;
+    }
+
+    if (!streamed) {
       streamed = buildReply(content);
       updateMessage(assistantId, { text: streamed, riskLevel: risk });
     }
     syncLocalThread(streamed, risk);
     if (risk === "L2" || risk === "L3") openSafety();
   } catch (error) {
-    apiError.value = error instanceof Error ? error.message : "发送失败，已使用本地回复。";
-    const reply = buildReply(content);
-    quickActions.value = inferContextualActions(content, localRisk);
-    if (assistantId) updateMessage(assistantId, { text: reply, riskLevel: localRisk });
-    else addMessage("assistant", reply, localRisk);
-    syncLocalThread(reply, localRisk);
-    if (localRisk === "L2" || localRisk === "L3") openSafety();
+    if (receivedStreamEvent) {
+      apiNotice.value = error instanceof Error ? `流式连接中断，已刷新服务端记录：${error.message}` : "流式连接中断，已刷新服务端记录。";
+      updateMessage(assistantId, { streaming: false, streamError: true });
+      await loadThreadMessages(activeThreadId.value);
+      return;
+    }
+
+    try {
+      apiNotice.value = "流式连接失败，已切换到稳定发送。";
+      const response = await api.sendMessage(activeThreadId.value, payload);
+      applySendMessageResponse(assistantId, content, response);
+    } catch (fallbackError) {
+      apiError.value =
+        fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
+      const reply = buildReply(content);
+      const actions = inferContextualActions(content, localRisk);
+      quickActions.value = actions;
+      updateMessage(assistantId, {
+        text: reply,
+        riskLevel: localRisk,
+        graphNode: null,
+        suggestedActions: actions,
+        streaming: false,
+        streamError: true,
+      });
+      syncLocalThread(reply, localRisk);
+      if (localRisk === "L2" || localRisk === "L3") openSafety();
+    }
   } finally {
-    if (assistantId) updateMessage(assistantId, { streaming: false });
+    updateMessage(assistantId, { streaming: false });
     isSending.value = false;
   }
 }
@@ -746,7 +869,7 @@ function updateKnowledgeMessage(id: number, patch: Partial<KnowledgeChatMessage>
 async function searchKnowledge(query = "焦虑") {
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     const response = await api.searchKnowledge(query.trim());
     knowledgeItems.value = response.items;
     if (!response.items[0]) {
@@ -762,7 +885,7 @@ async function searchKnowledge(query = "焦虑") {
 async function openKnowledgeArticle(articleId: string) {
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     selectedKnowledgeArticle.value = await api.getKnowledgeArticle(articleId);
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "知识详情加载失败。";
@@ -809,7 +932,7 @@ async function loadKnowledgeQuizStats() {
 async function startKnowledgeQuiz(mode = quizMode.value) {
   try {
     isQuizLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     quizMode.value = mode;
     quizResult.value = null;
     quizAnswers.value = {};
@@ -835,7 +958,7 @@ async function submitKnowledgeQuiz() {
   if (!quizSession.value || !canSubmitQuiz.value) return;
   try {
     isQuizLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     quizResult.value = await api.submitKnowledgeQuiz({
       session_id: quizSession.value.session_id,
       answers: Object.entries(quizAnswers.value).map(([question_id, answer]) => ({ question_id, answer })),
@@ -864,7 +987,7 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
   const assistantId = addKnowledgeMessage({ role: "assistant", text: "我先查一下知识库。", streaming: true });
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     const response = await api.askKnowledge({
       question,
       use_my_context: Boolean(accessToken.value),
@@ -1072,6 +1195,7 @@ onMounted(async () => {
           <button class="sos-button" type="button" @click="openSafety">SOS</button>
         </header>
 
+        <p v-if="apiNotice" class="notice notice--info">{{ apiNotice }}</p>
         <p v-if="apiError" class="notice notice--error">{{ apiError }}</p>
 
         <section v-if="activeTab === 'home'" class="tab-page">
@@ -1135,12 +1259,38 @@ onMounted(async () => {
               :class="['message', message.role === 'user' ? 'message--user' : 'message--assistant']"
             >
               <p>{{ message.text || "..." }}</p>
+              <div
+                v-if="message.role === 'assistant' && (message.riskLevel || message.graphNode || message.streamError)"
+                class="message-meta"
+              >
+                <span v-if="message.riskLevel" :class="['risk-pill', riskClass(message.riskLevel)]">
+                  {{ riskLabel(message.riskLevel) }}
+                </span>
+                <span v-if="message.graphNode && message.streaming" class="graph-status">
+                  {{ graphStatusLabel(message.graphNode) }}
+                </span>
+                <span v-if="message.streamError" class="stream-status">已切换到稳定回复</span>
+              </div>
+              <div
+                v-if="message.role === 'assistant' && message.suggestedActions?.length"
+                class="message-actions"
+              >
+                <button
+                  v-for="action in message.suggestedActions"
+                  :key="`${message.id}-${action}`"
+                  type="button"
+                  :disabled="isSending"
+                  @click="submitMessage(action)"
+                >
+                  {{ action }}
+                </button>
+              </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
           </div>
 
           <div class="quick-actions">
-            <button v-for="action in quickActions" :key="action" type="button" @click="submitMessage(action)">
+            <button v-for="action in quickActions" :key="action" type="button" :disabled="isSending" @click="submitMessage(action)">
               {{ action }}
             </button>
           </div>
@@ -1740,6 +1890,11 @@ onMounted(async () => {
   color: #9a4a25;
 }
 
+.notice--info {
+  background: #edf7ef;
+  color: var(--teal-dark);
+}
+
 .screen-header {
   display: grid;
   gap: 12px;
@@ -1915,6 +2070,11 @@ onMounted(async () => {
   font-size: 12px;
 }
 
+.quick-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .thread-tabs button.active {
   color: var(--teal-dark);
   background: var(--mint-soft);
@@ -1934,11 +2094,57 @@ onMounted(async () => {
   max-width: 84%;
   border-radius: 22px;
   padding: 13px 15px;
+  display: grid;
+  gap: 9px;
 }
 
 .message p {
   margin: 0;
   line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.graph-status,
+.stream-status {
+  border-radius: 999px;
+  padding: 6px 8px;
+  background: #f4f7f5;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.stream-status {
+  background: #fff6ed;
+  color: #9a4a25;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.message-actions button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: var(--teal-dark);
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.message-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .message--assistant {

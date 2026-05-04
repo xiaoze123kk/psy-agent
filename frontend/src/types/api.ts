@@ -1,6 +1,8 @@
 export type UserMode = "teen" | "adult";
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
+export type RiskLevel = "L0" | "L1" | "L2" | "L3";
+export type ChatStreamEventName = "token" | "graph_update" | "final";
 
 export interface CaptchaResponse {
   captcha_id: string;
@@ -114,7 +116,7 @@ export interface AssistantMessage {
   role: string;
   content: string;
   assistant_text: string;
-  risk_level: "L0" | "L1" | "L2" | "L3";
+  risk_level: RiskLevel;
   intent: string;
   suggested_actions: string[];
   session_summary: string;
@@ -134,7 +136,7 @@ export interface MessageItem {
   role: "user" | "assistant" | "system";
   content: string;
   input_type: string;
-  risk_level: "L0" | "L1" | "L2" | "L3" | null;
+  risk_level: RiskLevel | null;
   metadata: Record<string, unknown>;
   created_at: string;
 }
@@ -142,6 +144,31 @@ export interface MessageItem {
 export interface MessageListResponse {
   items: MessageItem[];
 }
+
+export interface ChatStreamTokenEvent {
+  text: string;
+}
+
+export interface ChatStreamGraphUpdateEvent {
+  node: string;
+  risk_level?: RiskLevel;
+}
+
+export interface ChatStreamFinalEvent {
+  thread_id: string;
+  message_id: string;
+  assistant_message_id: string;
+  assistant_text: string;
+  risk_level: RiskLevel;
+  intent: string;
+  suggested_actions: string[];
+  session_summary: string;
+  should_write_memory: boolean;
+  risk_reasons?: string[];
+  memory_candidates?: unknown[];
+}
+
+export type ChatStreamEventData = ChatStreamTokenEvent | ChatStreamGraphUpdateEvent | ChatStreamFinalEvent;
 
 export interface MemoryItem {
   memory_id: string;

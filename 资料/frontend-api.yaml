@@ -55,7 +55,6 @@ scope:
   excluded:
     - tests
     - voice
-    - stream chat
     - mood trends
 
 implementationStatus:
@@ -161,6 +160,32 @@ methods:
     http:
       method: POST
       pathTemplate: /api/v1/chat/threads/{thread_id}/messages
+
+  - methodName: streamMessage
+    summary: 流式发送用户消息并逐步接收助手回复
+    requestType: SendMessageRequest
+    responseType: ChatStreamEvent
+    authRequired: true
+    pathParams:
+      - name: threadId
+        mapsTo: thread_id
+        type: string
+    uiEntry:
+      - 对话页
+    http:
+      method: POST
+      pathTemplate: /api/v1/chat/threads/{thread_id}/stream
+      responseContentType: text/event-stream
+    events:
+      - event: graph_update
+        schema: ChatStreamGraphUpdateEvent
+      - event: token
+        schema: ChatStreamTokenEvent
+      - event: final
+        schema: ChatStreamFinalEvent
+    fallback:
+      beforeFirstEvent: call sendMessage with the same payload and fill the current assistant bubble
+      afterFirstEvent: do not resend; refresh thread messages from the server
 
   - methodName: listMemories
     summary: 获取记忆列表
@@ -505,6 +530,55 @@ types:
       thread_id: { type: string }
       assistant_message:
         type: AssistantMessage
+
+  ChatStreamTokenEvent:
+    type: object
+    required:
+      - text
+    fields:
+      text: { type: string }
+
+  ChatStreamGraphUpdateEvent:
+    type: object
+    required:
+      - node
+    fields:
+      node: { type: string }
+      risk_level:
+        type: RiskLevel
+        required: false
+
+  ChatStreamFinalEvent:
+    type: object
+    required:
+      - thread_id
+      - message_id
+      - assistant_message_id
+      - assistant_text
+      - risk_level
+      - intent
+      - suggested_actions
+      - session_summary
+      - should_write_memory
+    fields:
+      thread_id: { type: string }
+      message_id: { type: string }
+      assistant_message_id: { type: string }
+      assistant_text: { type: string }
+      risk_level: { type: RiskLevel }
+      intent: { type: string }
+      suggested_actions:
+        type: array
+        items: { type: string }
+      session_summary: { type: string }
+      should_write_memory: { type: boolean }
+
+  ChatStreamEvent:
+    type: sse
+    events:
+      token: ChatStreamTokenEvent
+      graph_update: ChatStreamGraphUpdateEvent
+      final: ChatStreamFinalEvent
 
   MemoryItem:
     type: object
@@ -942,6 +1016,8 @@ integrationRules:
   - rule: getSafetyResources 可在未登录状态下调用，便于 SOS 页面兜底展示。
   - rule: askKnowledge 返回 risk_level 为 L2 或 L3 时，前端必须停止普通知识展示路径并打开 SOS/安全提示。
   - rule: 知识结果继续聊天时，应把标题或 article_id 带入对话上下文，但不得把知识回答包装成诊断。
+  - rule: streamMessage 是对话页默认发送路径；收到 graph_update 时展示节点状态和风险等级，收到 final 时展示 suggested_actions。
+  - rule: streamMessage 在首个 SSE 事件前失败时回退到 sendMessage；首个事件后中断时不得重发同一输入，只刷新服务端消息。
 
 errorHandling:
   behavior: throw-on-non-2xx
