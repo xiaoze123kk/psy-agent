@@ -22,6 +22,10 @@ export class ApiClient {
     return this.request<T>(path, { method: "GET" });
   }
 
+  async getText(path: string): Promise<string> {
+    return this.requestText(path, { method: "GET" });
+  }
+
   async post<T, B = unknown>(path: string, body?: B): Promise<T> {
     return this.request<T>(path, {
       method: "POST",
@@ -114,6 +118,28 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 
+  private async requestText(path: string, init: RequestInit, allowAuthRefresh = true): Promise<string> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: this.createTextHeaders(init.headers),
+    });
+
+    if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {
+      return this.requestText(path, init, false);
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API ${response.status}: ${errorText}`);
+    }
+
+    if (response.status === 204) {
+      return "";
+    }
+
+    return await response.text();
+  }
+
   private async tryRefreshAuth(): Promise<boolean> {
     if (!this.onUnauthorized) {
       return false;
@@ -129,6 +155,18 @@ export class ApiClient {
   private createJsonHeaders(headers?: HeadersInit): Headers {
     const nextHeaders = new Headers(headers);
     nextHeaders.set("Content-Type", "application/json");
+
+    const token = this.getAccessToken?.();
+    if (token) {
+      nextHeaders.set("Authorization", `Bearer ${token}`);
+    }
+
+    return nextHeaders;
+  }
+
+  private createTextHeaders(headers?: HeadersInit): Headers {
+    const nextHeaders = new Headers(headers);
+    nextHeaders.set("Accept", "text/markdown");
 
     const token = this.getAccessToken?.();
     if (token) {

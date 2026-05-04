@@ -355,11 +355,12 @@ const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
 const currentMemoryMode = ref<MemoryMode>("summary_only");
 const saveVoiceAudio = ref(false);
-const editingMemoryId = ref<string | null>(null);
-const editingMemoryContent = ref("");
+const isMemoryDocOpen = ref(false);
+const isMemoryDocLoading = ref(false);
+const memoryDocContent = ref("");
+const memoryDocError = ref("");
 const memoryError = ref("");
 const isSettingsSaving = ref(false);
-const isMemoryMutating = ref(false);
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const moodRange = ref<MoodRange>("7d");
 const moodDraft = ref<MoodLogRequest>({
@@ -690,11 +691,6 @@ function memoryTypeLabel(type: string) {
   return labels[type] ?? "记忆";
 }
 
-function formatMemoryDate(value?: string) {
-  if (!value) return "";
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
-}
-
 function graphStatusLabel(node?: string | null) {
   if (node === "risk_classifier") return "正在识别风险";
   if (node === "intent_classifier") return "正在理解意图";
@@ -746,8 +742,10 @@ function clearSession() {
   activeThreadId.value = "";
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
-  editingMemoryId.value = null;
-  editingMemoryContent.value = "";
+  isMemoryDocOpen.value = false;
+  isMemoryDocLoading.value = false;
+  memoryDocContent.value = "";
+  memoryDocError.value = "";
   memoryError.value = "";
   [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_ID_KEY, USERNAME_KEY, THREAD_ID_KEY].forEach((key) => localStorage.removeItem(key));
 }
@@ -878,79 +876,104 @@ async function changeMemoryMode(mode: MemoryMode) {
   }
 }
 
-function beginEditMemory(item: MemoryItem) {
-  editingMemoryId.value = item.memory_id;
-  editingMemoryContent.value = item.content;
-  memoryError.value = "";
+function formatMemoryDocumentTimestamp(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
-function cancelEditMemory() {
-  editingMemoryId.value = null;
-  editingMemoryContent.value = "";
+function formatMarkdownBullet(content: string) {
+  const normalized = content.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized ? normalized.split("\n") : ["(空)"];
+  return [`- ${lines[0]}`, ...lines.slice(1).map((line) => `  ${line}`)];
 }
 
-async function saveMemoryEdit(item: MemoryItem) {
-  const content = editingMemoryContent.value.trim();
-  if (!content || isMemoryMutating.value) return;
-  memoryError.value = "";
+function buildMemoryDocumentMarkdown(items: MemoryItem[]) {
+  const lines = ["# 记忆文档", "", `生成时间：${formatMemoryDocumentTimestamp(new Date())}`, `记忆模式：${memoryModeLabel.value}`, ""];
+  if (items.length === 0) {
+    lines.push("当前没有可见记忆。");
+    return `${lines.join("\n")}\n`;
+  }
+
+  const grouped = new Map<string, MemoryItem[]>();
+  items.forEach((item) => {
+    grouped.set(item.memory_type, [...(grouped.get(item.memory_type) ?? []), item]);
+  });
+
+  const knownOrder = ["session_summary", "preference", "recurring_trigger", "support_strategy", "state", "relationship", "safety_summary"];
+  const knownTypes = knownOrder.filter((type) => grouped.has(type));
+  const unknownTypes = [...grouped.keys()].filter((type) => !knownOrder.includes(type)).sort();
+
+  [...knownTypes, ...unknownTypes].forEach((type) => {
+    const list = grouped.get(type) ?? [];
+    if (list.length === 0) return;
+    lines.push(`## ${memoryTypeLabel(type)}`);
+    list
+      .slice()
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())
+      .forEach((item) => {
+        lines.push(...formatMarkdownBullet(item.content));
+        lines.push(`  - 更新时间：${formatMemoryDocumentTimestamp(item.updated_at || item.created_at || new Date())}`);
+      });
+    lines.push("");
+  });
+
+  return `${lines.join("\n").trim()}\n`;
+}
+
+async function fetchMemoryDocument() {
+  memoryDocError.value = "";
   if (isDemoMode.value || !accessToken.value) {
-    memories.value = memories.value.map((memory) =>
-      memory.memory_id === item.memory_id ? { ...memory, content, updated_at: new Date().toISOString() } : memory,
-    );
-    cancelEditMemory();
-    return;
+    return buildMemoryDocumentMarkdown(memories.value);
   }
-
   try {
-    isMemoryMutating.value = true;
-    await api.updateMemory(item.memory_id, { content });
-    await refreshMemories();
-    cancelEditMemory();
+    return await api.getMemoryDocument();
   } catch (error) {
-    memoryError.value = error instanceof Error ? error.message : "记忆保存失败。";
-  } finally {
-    isMemoryMutating.value = false;
+    memoryDocError.value = error instanceof Error ? error.message : "记忆文档加载失败。";
+    return "";
   }
 }
 
-async function deleteMemoryItem(item: MemoryItem) {
-  if (isMemoryMutating.value) return;
-  memoryError.value = "";
-  if (isDemoMode.value || !accessToken.value) {
-    memories.value = memories.value.filter((memory) => memory.memory_id !== item.memory_id);
-    return;
-  }
-
-  try {
-    isMemoryMutating.value = true;
-    await api.deleteMemory(item.memory_id);
-    await refreshMemories();
-  } catch (error) {
-    memoryError.value = error instanceof Error ? error.message : "记忆删除失败。";
-  } finally {
-    isMemoryMutating.value = false;
-  }
+async function openMemoryDocument() {
+  if (isMemoryDocLoading.value) return;
+  isMemoryDocOpen.value = true;
+  isMemoryDocLoading.value = true;
+  memoryDocContent.value = "";
+  const content = await fetchMemoryDocument();
+  memoryDocContent.value = content;
+  isMemoryDocLoading.value = false;
 }
 
-async function clearAllMemories() {
-  if (memories.value.length === 0 || isMemoryMutating.value) return;
-  if (!window.confirm("确定清空全部可见记忆吗？")) return;
-  memoryError.value = "";
-  if (isDemoMode.value || !accessToken.value) {
-    memories.value = [];
-    return;
-  }
+function closeMemoryDocument() {
+  isMemoryDocOpen.value = false;
+  memoryDocError.value = "";
+  memoryDocContent.value = "";
+}
 
-  try {
-    isMemoryMutating.value = true;
-    await api.clearMemories();
-    memories.value = [];
-    cancelEditMemory();
-  } catch (error) {
-    memoryError.value = error instanceof Error ? error.message : "记忆清空失败。";
-  } finally {
-    isMemoryMutating.value = false;
+async function downloadMemoryDocument() {
+  if (isMemoryDocLoading.value) return;
+  let content = memoryDocContent.value;
+  if (!content) {
+    isMemoryDocLoading.value = true;
+    content = await fetchMemoryDocument();
+    isMemoryDocLoading.value = false;
+    memoryDocContent.value = content;
   }
+  if (!content) return;
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `memories-${new Date().toISOString().slice(0, 10)}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function toggleMemoryReferences(messageId: number) {
@@ -1054,6 +1077,10 @@ function enterDemoMode() {
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
   memoryError.value = "";
+  isMemoryDocOpen.value = false;
+  isMemoryDocLoading.value = false;
+  memoryDocContent.value = "";
+  memoryDocError.value = "";
   threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
   demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
   memories.value = demoMemories.map((item) => ({ ...item }));
@@ -2628,37 +2655,22 @@ onMounted(async () => {
 
             <p v-if="memoryError" class="notice notice--error">{{ memoryError }}</p>
 
-            <article v-for="item in memories" :key="item.memory_id" class="memory-item memory-item--editable">
-              <div class="memory-item__head">
-                <span>{{ memoryTypeLabel(item.memory_type) }}</span>
-                <small>{{ formatMemoryDate(item.updated_at || item.created_at) }}</small>
+            <article class="memory-document-card">
+              <div class="memory-document-main">
+                <h3>记忆文档</h3>
+                <p>把当前可见的记忆集中在一个文档里查看与下载。</p>
+                <small v-if="memories.length">当前可见记忆：{{ memories.length }} 条</small>
+                <small v-else>当前没有可见记忆。</small>
               </div>
-              <textarea
-                v-if="editingMemoryId === item.memory_id"
-                v-model="editingMemoryContent"
-                class="memory-edit-field"
-                rows="3"
-                :disabled="isMemoryMutating"
-              />
-              <p v-else>{{ item.content }}</p>
-              <div class="memory-item__actions">
-                <template v-if="editingMemoryId === item.memory_id">
-                  <button type="button" :disabled="!editingMemoryContent.trim() || isMemoryMutating" @click="saveMemoryEdit(item)">
-                    保存
-                  </button>
-                  <button type="button" :disabled="isMemoryMutating" @click="cancelEditMemory">取消</button>
-                </template>
-                <template v-else>
-                  <button type="button" :disabled="isMemoryMutating" @click="beginEditMemory(item)">编辑</button>
-                  <button type="button" :disabled="isMemoryMutating" @click="deleteMemoryItem(item)">删除</button>
-                </template>
+              <div class="memory-document-actions">
+                <button class="secondary-action" type="button" :disabled="isMemoryDocLoading" @click="openMemoryDocument">
+                  查看
+                </button>
+                <button class="text-action" type="button" :disabled="isMemoryDocLoading" @click="downloadMemoryDocument">
+                  下载 .md
+                </button>
               </div>
             </article>
-
-            <p v-if="memories.length === 0" class="empty-copy">还没有可见记忆。</p>
-            <button class="secondary-action memory-clear-action" type="button" :disabled="memories.length === 0 || isMemoryMutating" @click="clearAllMemories">
-              清空全部记忆
-            </button>
           </section>
 
           <button class="secondary-action logout-action" type="button" @click="logout">
@@ -2673,6 +2685,28 @@ onMounted(async () => {
           <button :class="{ active: activeTab === 'knowledge' }" type="button" @click="activeTab = 'knowledge'">知识</button>
           <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
         </nav>
+      </section>
+
+      <section v-if="isMemoryDocOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
+        <div class="memory-document-panel">
+          <header class="memory-document-header">
+            <div>
+              <h3>记忆文档</h3>
+              <small>{{ memoryModeLabel }}</small>
+            </div>
+            <button class="text-action" type="button" @click="closeMemoryDocument">关闭</button>
+          </header>
+          <div class="memory-document-body">
+            <p v-if="isMemoryDocLoading" class="empty-copy">正在生成记忆文档...</p>
+            <p v-else-if="memoryDocError" class="notice notice--error">{{ memoryDocError }}</p>
+            <pre v-else class="memory-document-content">{{ memoryDocContent }}</pre>
+          </div>
+          <footer class="memory-document-footer">
+            <button class="secondary-action" type="button" :disabled="isMemoryDocLoading" @click="downloadMemoryDocument">
+              下载 .md
+            </button>
+          </footer>
+        </div>
       </section>
 
       <section v-if="isSafetyOpen" class="safety-screen" role="dialog" aria-modal="true">
@@ -2785,7 +2819,7 @@ onMounted(async () => {
 .safety-content p,
 .empty-copy,
 .empty-chat p,
-.memory-item {
+.memory-document-card {
   margin: 0;
   color: var(--text-muted);
   line-height: 1.65;
@@ -3202,7 +3236,7 @@ onMounted(async () => {
 .summary-card,
 .profile-card,
 .thread-card,
-.memory-item {
+.memory-document-card {
   border-radius: 22px;
   background: #ffffff;
   padding: 16px;
@@ -4193,8 +4227,8 @@ onMounted(async () => {
 }
 
 .memory-mode-control button:disabled,
-.memory-item__actions button:disabled,
-.memory-clear-action:disabled {
+.memory-document-actions button:disabled,
+.memory-document-footer button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -4211,66 +4245,113 @@ onMounted(async () => {
   line-height: 1.35;
 }
 
-.memory-item--editable {
+.memory-document-card {
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  box-shadow: var(--shadow-soft);
 }
 
-.memory-item__head,
-.memory-item__actions {
+.memory-document-main {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-document-main h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.memory-document-main p,
+.memory-document-main small {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.memory-document-actions {
   display: flex;
-  justify-content: space-between;
   gap: 10px;
   align-items: center;
 }
 
-.memory-item__head span {
-  color: var(--teal-dark);
-  font-size: 12px;
-  font-weight: 900;
+.memory-document-actions .secondary-action {
+  min-height: 44px;
 }
 
-.memory-item__head small {
+.memory-document-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  align-items: center;
+  padding: 18px;
+  background: rgba(15, 20, 18, 0.38);
+}
+
+.memory-document-panel {
+  width: 100%;
+  max-height: min(82dvh, 760px);
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.memory-document-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.memory-document-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.memory-document-header small {
+  display: block;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 800;
 }
 
-.memory-item--editable p {
-  margin: 0;
-  color: var(--text-muted);
-  line-height: 1.65;
+.memory-document-body {
+  min-height: 0;
+  display: grid;
 }
 
-.memory-edit-field {
+.memory-document-content {
   width: 100%;
-  resize: vertical;
-  min-height: 86px;
+  height: 100%;
+  min-height: 240px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fbfdfb;
-  padding: 10px;
+  padding: 12px 14px;
   color: var(--text-main);
   font: inherit;
-  line-height: 1.55;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow: auto;
 }
 
-.memory-item__actions {
-  justify-content: flex-end;
-}
-
-.memory-item__actions button {
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: #f8fbf8;
-  color: var(--teal-dark);
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.memory-clear-action {
-  width: 100%;
+.memory-document-footer {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  background: #ffffff;
 }
 
 .logout-action {
@@ -4673,6 +4754,15 @@ input:focus-visible {
   .chat-page,
   .knowledge-page {
     height: calc(100dvh - 268px);
+  }
+
+  .memory-document-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .memory-document-viewer {
+    align-items: end;
   }
 }
 </style>
