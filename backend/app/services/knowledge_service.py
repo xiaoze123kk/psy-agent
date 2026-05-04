@@ -1,22 +1,103 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from threading import Lock
 from uuid import UUID
 
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, or_, select
+from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import KnowledgeArticle
+from app.core.config import settings
+from app.db.models import KnowledgeArticle, KnowledgeChunk, KnowledgeGap, KnowledgeSource, utcnow
 from app.graphs.nodes import risk_classifier
 from app.schemas.knowledge import (
     AskKnowledgeResponse,
     ContinueChatPayload,
     KnowledgeAnswer,
     KnowledgeArticleResponse,
+    KnowledgeGapItemResponse,
+    KnowledgeGapListResponse,
+    KnowledgeGapMutationResponse,
+    KnowledgeQuestionSuggestion,
     KnowledgeSearchItemResponse,
     KnowledgeSearchResponse,
+    KnowledgeSourceRefResponse,
 )
 from app.services.deepseek_client import deepseek_client
+from app.services.knowledge_taxonomy import (
+    ExpandedKnowledgeQuery,
+    KnowledgeScopeStatus,
+    OUT_OF_SCOPE_TERMS,
+    SEXUAL_KNOWLEDGE_TERMS,
+    apply_known_typo_corrections,
+    classify_knowledge_scope,
+    contains_any,
+    expand_knowledge_query,
+    normalize_knowledge_text,
+)
+from app.services.knowledge_seed_expansion import EXPANDED_SEED_ARTICLES
+
+
+@dataclass(frozen=True)
+class ChunkHit:
+    article: KnowledgeArticle
+    chunk: KnowledgeChunk
+    score: int
+
+
+@dataclass(frozen=True)
+class GeneratedKnowledgeAnswer:
+    answer: KnowledgeAnswer
+    scope_status: KnowledgeScopeStatus = "in_scope"
+
+
+@dataclass(frozen=True)
+class QuestionGuess:
+    guessed_question: str
+    matched_term: str
+    confidence: str
+
+
+SEED_SOURCES: list[dict[str, object]] = [
+    {
+        "source_key": "internal_curated",
+        "name": "内部审核心理知识种子库",
+        "base_url": "local://internal-curated",
+        "terms_url": None,
+        "license": "internal-curated",
+        "language": "zh-CN",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "nimh_public_domain",
+        "name": "National Institute of Mental Health",
+        "base_url": "https://www.nimh.nih.gov/health/publications",
+        "terms_url": "https://www.nimh.nih.gov/site-info/policies",
+        "license": "public-domain-text",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "medlineplus_public_domain",
+        "name": "MedlinePlus Health Topic Summaries",
+        "base_url": "https://medlineplus.gov/mentalhealthandbehavior.html",
+        "terms_url": "https://medlineplus.gov/about/using/usingcontent/",
+        "license": "public-domain-health-topic-summaries",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+    {
+        "source_key": "childmind_mhdb",
+        "name": "Child Mind Institute MHDB",
+        "base_url": "https://matter.childmind.org/mhdb.html",
+        "terms_url": "https://creativecommons.org/licenses/by/4.0/",
+        "license": "CC BY 4.0",
+        "language": "en",
+        "is_commercial_allowed": True,
+    },
+]
 
 
 SEED_ARTICLES: list[dict[str, object]] = [
@@ -141,6 +222,19 @@ SEED_ARTICLES.extend(
             "actions": ["把呼气拉长到 6 秒，重复 5 轮。", "说出眼前 5 个看得到的物品，提醒自己正在这里。", "记录发作前的压力、咖啡因、睡眠和场景。"],
             "seek_help_when": ["惊恐反复出现并让你开始回避出门、上课或工作。", "症状像心脏或呼吸急症，或你无法判断安全性。"],
             "tags": ["惊恐发作", "心慌", "呼吸", "身体警报"],
+        },
+        {
+            "slug": "ptsd-basics",
+            "title": "PTSD 是什么",
+            "category": "emotion",
+            "audience": "all",
+            "summary_30s": "PTSD 通常指创伤后应激障碍，是人在经历或目睹严重威胁事件后，身心警报长期难以恢复的一类反应。",
+            "explanation_3min": "PTSD 可能表现为反复闯入的画面或噩梦、回避相关地点和话题、持续紧绷警觉、容易被惊吓，以及对自己或世界产生很负面的看法。不是每个经历创伤的人都会发展成 PTSD，也不能只凭一个症状自我诊断。如果这些反应持续影响睡眠、学习、工作或关系，更适合找心理咨询师、精神科医生或创伤知情的专业人员评估和支持。",
+            "advanced_text": "知识问答只做心理健康科普，不提供诊断。PTSD 的诊断需要专业人员结合创伤暴露、症状持续时间、功能影响和排除其他因素综合判断。",
+            "common_misunderstandings": ["PTSD 不是矫情或意志力差。", "创伤反应不一定会立刻出现，也可能被某些场景重新触发。"],
+            "actions": ["先把它理解为身心警报系统在创伤后过度敏感。", "如果被触发，优先用脚踩地、观察环境等稳定练习回到当下。", "持续受影响时，联系可信任的人或专业支持。"],
+            "seek_help_when": ["反复噩梦、闪回或回避已经影响日常功能。", "出现强烈解离、失控感、自伤想法或现实安全风险。", "你需要判断是否达到 PTSD 或其他临床问题标准。"],
+            "tags": ["PTSD", "创伤后应激障碍", "创伤后应激", "创伤", "闪回", "噩梦"],
         },
         {
             "slug": "cognitive-distortions",
@@ -289,24 +383,173 @@ SEED_ARTICLES.extend(
 )
 
 
-def ensure_seed_articles(db: Session) -> None:
+SEED_ARTICLES.extend(EXPANDED_SEED_ARTICLES)
+
+_SEEDED_BIND_IDS: set[int] = set()
+_CHUNK_INDEX_BY_BIND: dict[int, list[tuple[KnowledgeChunk, KnowledgeArticle]]] = {}
+_SEED_LOCK = Lock()
+
+
+def _ensure_seed_sources(db: Session) -> dict[str, KnowledgeSource]:
     changed = False
-    for payload in SEED_ARTICLES:
-        slug = str(payload["slug"])
-        article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
-        if article is None:
-            article = KnowledgeArticle(**payload)
-            db.add(article)
+    sources: dict[str, KnowledgeSource] = {}
+    for payload in SEED_SOURCES:
+        source_key = str(payload["source_key"])
+        source = db.scalar(select(KnowledgeSource).where(KnowledgeSource.source_key == source_key))
+        if source is None:
+            source = KnowledgeSource(**payload)
+            db.add(source)
+            db.flush()
+            changed = True
+        else:
+            for key, value in payload.items():
+                if getattr(source, key) != value:
+                    setattr(source, key, value)
+                    changed = True
+        sources[source_key] = source
+
+    if changed:
+        db.flush()
+    return sources
+
+
+def _source_ref_from_article(article: KnowledgeArticle) -> dict[str, object]:
+    source = article.source
+    return {
+        "source_name": source.name if source else "内部审核心理知识种子库",
+        "source_url": article.source_url or (source.base_url if source else None),
+        "license": article.license or (source.license if source else "internal-curated"),
+        "article_id": article.id,
+        "article_title": article.title,
+    }
+
+
+def _split_text_chunks(text: str, *, max_chars: int = 600) -> list[str]:
+    paragraphs = [part.strip() for part in text.split("\n") if part.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs:
+        if len(current) + len(paragraph) + 1 <= max_chars:
+            current = f"{current}\n{paragraph}".strip()
+            continue
+        if current:
+            chunks.append(current)
+        current = paragraph
+
+    if current:
+        chunks.append(current)
+    return chunks or [text.strip()]
+
+
+def _article_chunk_texts(article: KnowledgeArticle) -> list[str]:
+    parts = [
+        f"标题：{article.title}",
+        f"30秒摘要：{article.summary_30s}",
+        f"解释：{article.explanation_3min}",
+    ]
+    if article.advanced_text:
+        parts.append(f"补充说明：{article.advanced_text}")
+    if article.common_misunderstandings:
+        parts.append("常见误区：" + "；".join(article.common_misunderstandings))
+    if article.actions:
+        parts.append("可以先做：" + "；".join(article.actions))
+    if article.seek_help_when:
+        parts.append("需要现实支持时：" + "；".join(article.seek_help_when))
+    return _split_text_chunks("\n".join(parts))
+
+
+def _sync_article_chunks(db: Session, article: KnowledgeArticle) -> bool:
+    changed = False
+    existing = {
+        chunk.chunk_index: chunk
+        for chunk in db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.article_id == article.id))
+    }
+    expected_chunks = _article_chunk_texts(article)
+    for index, content in enumerate(expected_chunks):
+        chunk = existing.get(index)
+        payload = {
+            "title": article.title,
+            "content": content,
+            "keywords": list(article.tags or []),
+            "tags": list(article.tags or []),
+            "token_count": max(1, len(content) // 2),
+            "source_url": article.source_url,
+            "license": article.license,
+            "status": article.status,
+        }
+        if chunk is None:
+            db.add(KnowledgeChunk(article_id=article.id, chunk_index=index, **payload))
             changed = True
             continue
 
         for key, value in payload.items():
-            if getattr(article, key) != value:
-                setattr(article, key, value)
+            if getattr(chunk, key) != value:
+                setattr(chunk, key, value)
                 changed = True
 
-    if changed:
-        db.commit()
+    for index, chunk in existing.items():
+        if index >= len(expected_chunks) and chunk.status != "archived":
+            chunk.status = "archived"
+            changed = True
+
+    return changed
+
+
+def ensure_seed_articles(db: Session, *, force: bool = False) -> None:
+    bind_id = id(db.get_bind())
+    if not force and bind_id in _SEEDED_BIND_IDS:
+        return
+
+    changed = False
+    with _SEED_LOCK:
+        if not force and bind_id in _SEEDED_BIND_IDS:
+            return
+
+        sources = _ensure_seed_sources(db)
+        for payload in SEED_ARTICLES:
+            raw_payload = dict(payload)
+            slug = str(raw_payload["slug"])
+            article = db.scalar(select(KnowledgeArticle).where(KnowledgeArticle.slug == slug))
+            source_key = str(raw_payload.pop("source_key", "internal_curated"))
+            source = sources.get(source_key, sources["internal_curated"])
+            source_url = str(raw_payload.get("source_url") or source.base_url or "local://internal-curated")
+            license_name = str(raw_payload.get("license") or source.license or "internal-curated")
+            payload = {
+                **raw_payload,
+                "source_id": source.id,
+                "review_status": "published",
+                "license": license_name,
+                "source_url": source_url,
+                "published_at": utcnow(),
+            }
+            if not payload.get("source_refs"):
+                payload["source_refs"] = [
+                    {
+                        "source_name": source.name,
+                        "source_url": source_url,
+                        "license": license_name,
+                    }
+                ]
+            if article is None:
+                article = KnowledgeArticle(**payload)
+                db.add(article)
+                db.flush()
+                changed = True
+            else:
+                for key, value in payload.items():
+                    if key == "published_at" and getattr(article, key) is not None:
+                        continue
+                    if getattr(article, key) != value:
+                        setattr(article, key, value)
+                        changed = True
+
+            if _sync_article_chunks(db, article):
+                changed = True
+
+        if changed:
+            db.commit()
+            _CHUNK_INDEX_BY_BIND.pop(bind_id, None)
+        _SEEDED_BIND_IDS.add(bind_id)
 
 
 def article_to_search_item(article: KnowledgeArticle) -> KnowledgeSearchItemResponse:
@@ -322,6 +565,9 @@ def article_to_search_item(article: KnowledgeArticle) -> KnowledgeSearchItemResp
 
 
 def article_to_detail(article: KnowledgeArticle) -> KnowledgeArticleResponse:
+    source_refs = list(article.source_refs or [])
+    if not source_refs:
+        source_refs = [_source_ref_from_article(article)]
     return KnowledgeArticleResponse(
         article_id=article.id,
         slug=article.slug,
@@ -334,7 +580,7 @@ def article_to_detail(article: KnowledgeArticle) -> KnowledgeArticleResponse:
         common_misunderstandings=list(article.common_misunderstandings or []),
         actions=list(article.actions or []),
         seek_help_when=list(article.seek_help_when or []),
-        source_refs=list(article.source_refs or []),
+        source_refs=source_refs,
         tags=list(article.tags or []),
         updated_at=article.updated_at,
     )
@@ -349,50 +595,538 @@ def _article_blob(article: KnowledgeArticle) -> str:
         article.advanced_text or "",
         " ".join(article.tags or []),
     ]
-    return " ".join(parts).lower()
+    return normalize_knowledge_text(" ".join(parts))
 
 
-def _score_article(article: KnowledgeArticle, query: str) -> int:
-    normalized_query = query.strip().lower()
-    if not normalized_query:
+def _score_article(article: KnowledgeArticle, query: str | ExpandedKnowledgeQuery) -> int:
+    expanded = expand_knowledge_query(query) if isinstance(query, str) else query
+    if not expanded.normalized:
         return 1
 
     score = 0
-    article_title = article.title.lower()
-    article_tags = [tag.lower() for tag in article.tags or []]
-    article_category = article.category.lower()
-    article_summary = article.summary_30s.lower()
-    article_explanation = article.explanation_3min.lower()
+    article_title = normalize_knowledge_text(article.title)
+    article_tags = [normalize_knowledge_text(tag) for tag in article.tags or []]
+    article_category = normalize_knowledge_text(article.category)
+    article_summary = normalize_knowledge_text(article.summary_30s)
+    article_explanation = normalize_knowledge_text(article.explanation_3min)
+    article_blob = _article_blob(article)
 
-    if normalized_query in article_title:
+    if expanded.normalized in article_title:
         score += 50
-    if any(tag and normalized_query in tag for tag in article_tags):
+    if any(tag and expanded.normalized in tag for tag in article_tags):
         score += 35
-    if normalized_query in article_category:
+    if expanded.normalized in article_category:
         score += 20
-    if normalized_query in article_summary:
+    if expanded.normalized in article_summary:
         score += 15
-    if normalized_query in article_explanation:
+    if expanded.normalized in article_explanation:
         score += 8
 
+    primary_term = expanded.strong_terms[0] if expanded.strong_terms else ""
+    if len(primary_term) >= 3:
+        if primary_term in article_title:
+            score += 150
+        if any(primary_term == tag or primary_term in tag for tag in article_tags):
+            score += 130
+        if primary_term in article_summary:
+            score += 60
+        if primary_term in article_explanation:
+            score += 35
+
     for phrase in [article_title, *article_tags]:
-        if phrase and phrase in normalized_query:
+        if phrase and phrase in expanded.normalized:
             score += 28
 
-    query_terms = [token for token in normalized_query.split() if token]
-    if not query_terms:
-        query_terms = [tag for tag in article_tags if tag and tag in normalized_query]
+    for term in expanded.strong_terms:
+        if term in article_title:
+            score += 42
+        if any(term == tag or term in tag for tag in article_tags):
+            score += 38
+        if term in article_category:
+            score += 12
+        if term in article_summary:
+            score += 14
+        if term in article_explanation:
+            score += 8
 
-    for token in query_terms:
-        if token and token in _article_blob(article):
+    for term in expanded.weak_terms:
+        if term in article_title:
+            score += 12
+        if any(term == tag or term in tag for tag in article_tags):
+            score += 10
+        if term in article_summary:
+            score += 6
+        if term in article_explanation:
             score += 4
 
-    query_chars = {char for char in normalized_query if "\u4e00" <= char <= "\u9fff"}
-    if query_chars:
-        article_chars = {char for char in _article_blob(article) if "\u4e00" <= char <= "\u9fff"}
-        score += min(len(query_chars & article_chars), 12)
+    if score > 0:
+        query_chars = {char for char in expanded.normalized if "\u4e00" <= char <= "\u9fff"}
+        if query_chars:
+            article_chars = {char for char in article_blob if "\u4e00" <= char <= "\u9fff"}
+            score += min(len(query_chars & article_chars), 4)
 
     return score
+
+
+def _chunk_blob(hit: KnowledgeChunk, article: KnowledgeArticle) -> str:
+    parts = [
+        hit.title,
+        hit.content,
+        article.title,
+        article.category,
+        " ".join(article.tags or []),
+        " ".join(hit.tags or []),
+        " ".join(hit.keywords or []),
+    ]
+    return normalize_knowledge_text(" ".join(parts))
+
+
+def _score_chunk(chunk: KnowledgeChunk, article: KnowledgeArticle, query: str | ExpandedKnowledgeQuery) -> int:
+    expanded = expand_knowledge_query(query) if isinstance(query, str) else query
+    if not expanded.normalized:
+        return 1
+
+    score = _score_article(article, expanded)
+    blob = _chunk_blob(chunk, article)
+    chunk_title = normalize_knowledge_text(chunk.title)
+    chunk_content = normalize_knowledge_text(chunk.content)
+    tags = [
+        normalize_knowledge_text(tag)
+        for tag in set(list(article.tags or []) + list(chunk.tags or []) + list(chunk.keywords or []))
+    ]
+
+    if expanded.normalized in chunk_title:
+        score += 35
+    if expanded.normalized in chunk_content:
+        score += 28
+
+    for term in expanded.strong_terms:
+        if term in chunk_title:
+            score += 38
+        if any(tag and (term == tag or term in tag) for tag in tags):
+            score += 34
+        if term in chunk_content:
+            score += 18
+
+    for term in expanded.weak_terms:
+        if term in chunk_title:
+            score += 12
+        if any(tag and (term == tag or term in tag) for tag in tags):
+            score += 10
+        if term in chunk_content:
+            score += 5
+
+    if score > 0:
+        query_chars = {char for char in expanded.normalized if "\u4e00" <= char <= "\u9fff"}
+        if query_chars:
+            chunk_chars = {char for char in blob if "\u4e00" <= char <= "\u9fff"}
+            score += min(len(query_chars & chunk_chars), 4)
+
+    return score
+
+
+def _search_chunk_hits(
+    db: Session,
+    *,
+    query: str,
+    category: str | None = None,
+    audience: str | None = None,
+    limit: int = 8,
+) -> list[ChunkHit]:
+    ensure_seed_articles(db)
+    rows = _published_chunk_rows(db)
+    expanded_query = expand_knowledge_query(query)
+
+    hits: list[ChunkHit] = []
+    for chunk, article in rows:
+        if category and article.category != category:
+            continue
+        if audience and article.audience not in {"all", audience}:
+            continue
+        score = _score_chunk(chunk, article, expanded_query)
+        if score > 0:
+            hits.append(ChunkHit(article=article, chunk=chunk, score=score))
+
+    hits.sort(key=lambda hit: (-hit.score, hit.article.title, hit.chunk.chunk_index))
+    return hits[:limit]
+
+
+def _published_chunk_rows(db: Session) -> list[tuple[KnowledgeChunk, KnowledgeArticle]]:
+    bind_id = id(db.get_bind())
+    cached = _CHUNK_INDEX_BY_BIND.get(bind_id)
+    if cached is not None:
+        return cached
+
+    rows = db.execute(
+        select(KnowledgeChunk, KnowledgeArticle)
+        .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
+        .options(joinedload(KnowledgeArticle.source))
+        .where(
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+            KnowledgeChunk.status == "published",
+        )
+    ).all()
+
+    cached_rows = [(chunk, article) for chunk, article in rows]
+    _CHUNK_INDEX_BY_BIND[bind_id] = cached_rows
+    return cached_rows
+
+
+def warm_knowledge_search_index(db: Session) -> None:
+    ensure_seed_articles(db)
+    _published_chunk_rows(db)
+
+
+def _unique_articles_from_hits(hits: list[ChunkHit], *, limit: int) -> list[KnowledgeArticle]:
+    seen: set[str] = set()
+    articles: list[KnowledgeArticle] = []
+    for hit in hits:
+        if hit.article.id in seen:
+            continue
+        seen.add(hit.article.id)
+        articles.append(hit.article)
+        if len(articles) >= limit:
+            break
+    return articles
+
+
+def _coverage_from_hits(hits: list[ChunkHit]) -> tuple[str, str, int]:
+    top_score = hits[0].score if hits else 0
+    if top_score >= 52:
+        return "sufficient", "high", top_score
+    if top_score >= 35:
+        return "partial", "medium", top_score
+    return "insufficient", "low", top_score
+
+
+def _source_refs_from_hits(hits: list[ChunkHit], *, limit: int = 4) -> list[KnowledgeSourceRefResponse]:
+    refs: list[KnowledgeSourceRefResponse] = []
+    seen: set[tuple[str, str]] = set()
+    for hit in hits:
+        key = (hit.article.id, hit.chunk.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = hit.article.source
+        refs.append(
+            KnowledgeSourceRefResponse(
+                source_name=source.name if source else "内部审核心理知识种子库",
+                source_url=hit.chunk.source_url or hit.article.source_url or (source.base_url if source else None),
+                license=hit.chunk.license or hit.article.license or (source.license if source else None),
+                article_id=hit.article.id,
+                article_title=hit.article.title,
+                chunk_id=hit.chunk.id,
+                chunk_index=hit.chunk.chunk_index,
+                score=hit.score,
+            )
+        )
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _source_refs_as_dicts(refs: list[KnowledgeSourceRefResponse]) -> list[dict]:
+    return [ref.model_dump() for ref in refs]
+
+
+def _classify_knowledge_scope(question: str) -> KnowledgeScopeStatus:
+    return classify_knowledge_scope(question)
+
+
+QUESTION_CLEANUP_PHRASES: tuple[str, ...] = (
+    "是什么",
+    "是啥",
+    "什么意思",
+    "啥意思",
+    "怎么办",
+    "怎么回事",
+    "有用吗",
+    "为什么",
+    "如何",
+    "怎么",
+)
+
+FUZZY_EXCLUDED_TERMS: set[str] = {
+    "心理",
+    "心理学",
+    "心理健康",
+    "情绪",
+    "关系",
+    "自助",
+    "求助",
+    "安全",
+    "风险",
+    "支持",
+    "all",
+}
+
+
+def _contains_explicit_out_of_scope_terms(question: str) -> bool:
+    normalized = normalize_knowledge_text(question)
+    return contains_any(normalized, SEXUAL_KNOWLEDGE_TERMS) or contains_any(normalized, OUT_OF_SCOPE_TERMS)
+
+
+def _known_typo_guess(question: str) -> QuestionGuess | None:
+    guessed_question, replacements = apply_known_typo_corrections(question)
+    if not replacements or guessed_question == normalize_knowledge_text(question):
+        return None
+
+    return QuestionGuess(
+        guessed_question=guessed_question,
+        matched_term=replacements[0][1],
+        confidence="high",
+    )
+
+
+def _suggestion_response(question: str, guess: QuestionGuess | None) -> KnowledgeQuestionSuggestion | None:
+    if guess is None:
+        return None
+    confidence = "high" if guess.confidence == "high" else "medium"
+    return KnowledgeQuestionSuggestion(
+        original_question=question,
+        guessed_question=guess.guessed_question,
+        confidence=confidence,
+        matched_term=guess.matched_term,
+    )
+
+
+def _clean_candidate_term(term: str) -> str:
+    normalized = normalize_knowledge_text(term)
+    for phrase in QUESTION_CLEANUP_PHRASES:
+        normalized = normalized.replace(phrase, " ")
+    return " ".join(normalized.split())
+
+
+def _iter_knowledge_terms(db: Session) -> list[str]:
+    ensure_seed_articles(db)
+    articles = db.scalars(
+        select(KnowledgeArticle).where(
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+        )
+    )
+    terms: set[str] = set()
+    for article in articles:
+        raw_terms = [article.title, *(article.tags or [])]
+        for raw_term in raw_terms:
+            term = _clean_candidate_term(str(raw_term))
+            if term in FUZZY_EXCLUDED_TERMS:
+                continue
+            if len(term) < 2 or len(term) > 18:
+                continue
+            terms.add(term)
+    return sorted(terms, key=lambda item: (-len(item), item))
+
+
+def _substring_windows(text: str, target_length: int) -> list[str]:
+    compact = text.replace(" ", "")
+    lengths = {target_length}
+    if target_length >= 4:
+        lengths.update({target_length - 1, target_length + 1})
+    elif target_length == 3:
+        lengths.add(2)
+
+    windows: set[str] = set()
+    for length in lengths:
+        if length <= 0 or length > len(compact):
+            continue
+        for index in range(0, len(compact) - length + 1):
+            windows.add(compact[index : index + length])
+    return list(windows)
+
+
+def _best_term_window(query: str, term: str) -> tuple[float, str]:
+    normalized_query = normalize_knowledge_text(query)
+    normalized_term = normalize_knowledge_text(term)
+    if not normalized_query or not normalized_term or normalized_term in normalized_query:
+        return 0.0, ""
+
+    best_score = 0.0
+    best_window = ""
+    if normalized_term.isascii():
+        tokens = [token for token in normalized_query.replace("-", " ").split() if token.isascii()]
+        tokens.extend(_substring_windows(normalized_query, len(normalized_term)))
+        candidates = tokens
+    else:
+        candidates = _substring_windows(normalized_query, len(normalized_term))
+
+    for candidate in candidates:
+        if not candidate or candidate == normalized_term:
+            continue
+        score = SequenceMatcher(None, candidate, normalized_term).ratio()
+        if score > best_score:
+            best_score = score
+            best_window = candidate
+    return best_score, best_window
+
+
+def _passes_fuzzy_threshold(term: str, score: float) -> bool:
+    if term.isascii():
+        return len(term) >= 3 and score >= 0.74
+    if len(term) >= 4:
+        return score >= 0.74
+    if len(term) == 3:
+        return score >= 0.67
+    return False
+
+
+def _fuzzy_question_guess(db: Session, question: str) -> QuestionGuess | None:
+    if _contains_explicit_out_of_scope_terms(question):
+        return None
+
+    normalized_question = normalize_knowledge_text(question)
+    best: tuple[float, str, str] | None = None
+    for term in _iter_knowledge_terms(db):
+        score, window = _best_term_window(normalized_question, term)
+        if not window or not _passes_fuzzy_threshold(term, score):
+            continue
+        if best is None or score > best[0] or (score == best[0] and len(term) > len(best[1])):
+            best = (score, term, window)
+
+    if best is None:
+        return None
+
+    score, term, window = best
+    guessed_question = normalized_question.replace(window, term, 1)
+    if guessed_question == normalized_question:
+        return None
+
+    return QuestionGuess(
+        guessed_question=guessed_question,
+        matched_term=term,
+        confidence="high" if score >= 0.86 else "medium",
+    )
+
+
+def _out_of_scope_knowledge_answer() -> KnowledgeAnswer:
+    return KnowledgeAnswer(
+        summary_30s="抱歉，这个问题不属于心理健康知识问答范围。",
+        explanation_3min=(
+            "这里主要回答情绪、压力、睡眠、关系、自我理解和求助边界相关的问题。"
+            "如果这个词或场景让你感到困扰，可以描述你的具体感受，我可以从心理支持角度陪你整理。"
+        ),
+        actions=[],
+        seek_help_when=[],
+    )
+
+
+def _is_broad_psychology_request(question: str) -> bool:
+    normalized = " ".join(question.strip().lower().split())
+    if not normalized:
+        return False
+
+    broad_phrases = (
+        "心理学知识",
+        "心理知识",
+        "心理健康知识",
+        "讲点心理",
+        "介绍心理",
+        "科普心理",
+        "一些心理",
+        "一点心理",
+        "心理学科普",
+    )
+    if any(phrase in normalized for phrase in broad_phrases):
+        return True
+
+    return "心理" in normalized and any(verb in normalized for verb in ("给我", "讲讲", "介绍", "科普", "随便"))
+
+
+def _broad_psychology_hits(db: Session) -> list[ChunkHit]:
+    preferred_slugs = [
+        "medlineplus-mental-health-35",
+        "medlineplus-how-to-improve-mental-health-7407",
+        "cognitive-distortions",
+        "anxiety-basics",
+        "medlineplus-stress-3",
+        "sleep-rumination",
+        "boundaries",
+        "when-to-seek-help",
+    ]
+    hits: list[ChunkHit] = []
+    for index, slug in enumerate(preferred_slugs):
+        row = db.execute(
+            select(KnowledgeArticle, KnowledgeChunk)
+            .join(KnowledgeChunk, KnowledgeChunk.article_id == KnowledgeArticle.id)
+            .where(
+                KnowledgeArticle.slug == slug,
+                KnowledgeArticle.status == "published",
+                KnowledgeArticle.review_status == "published",
+                KnowledgeChunk.status == "published",
+            )
+            .order_by(KnowledgeChunk.chunk_index)
+            .limit(1)
+        ).first()
+        if row is None:
+            continue
+        article, chunk = row
+        hits.append(ChunkHit(article=article, chunk=chunk, score=96 - index))
+    return hits
+
+
+def _broad_psychology_answer() -> KnowledgeAnswer:
+    return KnowledgeAnswer(
+        summary_30s="可以。入门心理知识可以先从情绪、认知、关系、压力睡眠和求助边界这几块理解，它们比单个技巧更能帮你看懂自己的状态。",
+        explanation_3min=(
+            "心理学和心理健康知识不只是解释“我怎么了”，也包括看见情绪怎么被触发、想法怎么影响感受、关系里边界和依恋如何运作、"
+            "压力和睡眠怎样互相放大，以及什么时候需要现实支持。一个实用的理解方式是：先分清身体反应、自动想法、情绪和行动冲动，"
+            "再看它们是在什么场景里反复出现。这里的内容只用于科普和自助整理，不能替代诊断、治疗或用药建议。"
+        ),
+        actions=[
+            "先选一个方向继续问：情绪调节、焦虑、睡眠、关系边界、认知偏差或求助资源。",
+            "把最近一个困扰拆成四栏：发生了什么、我想到什么、我有什么感受、我做了什么。",
+            "如果你只是想随便学一点，可以从“认知偏差”“压力和睡眠”“边界感”三个主题开始。",
+        ],
+        seek_help_when=[
+            "情绪或睡眠问题持续影响学习、工作、关系或基本生活。",
+            "出现自伤想法、明显失控感、现实安全风险或强烈绝望感。",
+            "你需要诊断、治疗计划或药物相关建议。",
+        ],
+    )
+
+
+def _record_knowledge_gap(
+    db: Session,
+    *,
+    question: str,
+    category: str | None,
+    audience: str | None,
+    top_score: int,
+    source_refs: list[KnowledgeSourceRefResponse],
+    thread_id: str | None,
+) -> KnowledgeGap:
+    normalized = " ".join(question.strip().lower().split())
+    gap = db.scalar(
+        select(KnowledgeGap).where(
+            KnowledgeGap.normalized_question == normalized,
+            KnowledgeGap.status == "open",
+        )
+    )
+    now = utcnow()
+    if gap is None:
+        gap = KnowledgeGap(
+            question=question,
+            normalized_question=normalized,
+            category=category,
+            audience=audience,
+            coverage_status="insufficient",
+            confidence="low",
+            top_score=top_score,
+            source_refs=_source_refs_as_dicts(source_refs),
+            thread_id=thread_id,
+        )
+        db.add(gap)
+        db.flush()
+    else:
+        gap.hit_count += 1
+        gap.top_score = max(gap.top_score, top_score)
+        gap.source_refs = _source_refs_as_dicts(source_refs)
+        gap.updated_at = now
+        if thread_id:
+            gap.thread_id = thread_id
+    db.commit()
+    return gap
 
 
 def search_articles(
@@ -404,7 +1138,19 @@ def search_articles(
     limit: int = 8,
 ) -> KnowledgeSearchResponse:
     ensure_seed_articles(db)
-    articles = list(db.scalars(select(KnowledgeArticle).where(KnowledgeArticle.status == "published")))
+    if query.strip():
+        hits = _search_chunk_hits(db, query=query, category=category, audience=audience, limit=max(limit * 2, 8))
+        articles = _unique_articles_from_hits(hits, limit=limit)
+        return KnowledgeSearchResponse(items=[article_to_search_item(article) for article in articles])
+
+    articles = list(
+        db.scalars(
+            select(KnowledgeArticle).where(
+                KnowledgeArticle.status == "published",
+                KnowledgeArticle.review_status == "published",
+            )
+        )
+    )
 
     filtered = []
     for article in articles:
@@ -433,23 +1179,25 @@ def get_article(db: Session, article_id: str) -> KnowledgeArticle | None:
     return db.scalar(
         select(KnowledgeArticle).where(
             KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
             or_(*filters),
         )
     )
 
 
-def _article_context(article: KnowledgeArticle, index: int) -> str:
+def _chunk_context(hit: ChunkHit, index: int) -> str:
+    article = hit.article
     actions = "；".join(list(article.actions or [])[:3])
     seek_help = "；".join(list(article.seek_help_when or [])[:3])
     misunderstandings = "；".join(list(article.common_misunderstandings or [])[:2])
     return (
         f"[{index}] 标题：{article.title}\n"
         f"分类：{article.category}；适用人群：{article.audience}\n"
-        f"30秒摘要：{article.summary_30s}\n"
-        f"解释：{article.explanation_3min}\n"
+        f"知识片段：{hit.chunk.content}\n"
         f"常见误区：{misunderstandings or '无'}\n"
         f"可做行动：{actions or '无'}\n"
-        f"何时求助：{seek_help or '无'}"
+        f"何时求助：{seek_help or '无'}\n"
+        f"来源许可：{hit.chunk.license or article.license or 'unknown'}"
     )
 
 
@@ -490,39 +1238,49 @@ def _string_list(value: object, *, fallback: list[str], limit: int = 4) -> list[
     return (items or fallback)[:limit]
 
 
-def _answer_from_model_payload(payload: dict, fallback: KnowledgeAnswer) -> KnowledgeAnswer | None:
+def _answer_from_model_payload(payload: dict, fallback: KnowledgeAnswer) -> GeneratedKnowledgeAnswer | None:
     summary = str(payload.get("summary_30s", "")).strip()
     explanation = str(payload.get("explanation_3min", "")).strip()
     if not summary or not explanation:
         return None
 
-    return KnowledgeAnswer(
+    scope_status: KnowledgeScopeStatus = "out_of_scope" if payload.get("scope_status") == "out_of_scope" else "in_scope"
+    answer = KnowledgeAnswer(
         summary_30s=summary[:260],
         explanation_3min=explanation[:900],
-        actions=_string_list(payload.get("actions"), fallback=fallback.actions, limit=4),
-        seek_help_when=_string_list(payload.get("seek_help_when"), fallback=fallback.seek_help_when, limit=4),
+        actions=_string_list(payload.get("actions"), fallback=fallback.actions if scope_status == "in_scope" else [], limit=4),
+        seek_help_when=_string_list(
+            payload.get("seek_help_when"),
+            fallback=fallback.seek_help_when if scope_status == "in_scope" else [],
+            limit=4,
+        ),
     )
+    return GeneratedKnowledgeAnswer(answer=answer, scope_status=scope_status)
 
 
 async def _generate_knowledge_answer(
     *,
     question: str,
-    articles: list[KnowledgeArticle],
+    hits: list[ChunkHit],
     use_my_context: bool,
-) -> KnowledgeAnswer | None:
-    if not articles:
+) -> GeneratedKnowledgeAnswer | None:
+    if not hits:
         return None
 
-    fallback = _fallback_answer(articles[0], use_my_context=use_my_context)
-    if not deepseek_client.is_configured:
-        return fallback
+    fallback = _fallback_answer(hits[0].article, use_my_context=use_my_context)
+    if not settings.knowledge_llm_answers_enabled or not deepseek_client.is_configured:
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
-    source_context = "\n\n".join(_article_context(article, index + 1) for index, article in enumerate(articles[:4]))
+    source_context = "\n\n".join(_chunk_context(hit, index + 1) for index, hit in enumerate(hits[:4]))
     context_note = "可以轻微承接用户近况，但不要假装知道未提供的个人信息。" if use_my_context else "不要引用用户个人近况。"
     system_prompt = (
         "你是心理健康知识问答 agent，负责把已检索到的知识库内容组织成清楚、温和、可执行的回答。"
         "你不是医生或心理咨询师，不做诊断，不承诺疗效，不编造知识库以外的事实。"
-        "如果问题超出资料范围，要说明只能基于现有资料回答，并引导用户换更具体的问题。"
+        "回答边界：只回答心理健康知识范围，包括情绪、压力、睡眠、关系、自我理解、认知偏差、创伤、心理健康科普和求助资源。"
+        "不要回答泛百科、代码、金融、路线、娱乐、性俚语、性技巧、生理细节、医学诊断或用药等非心理知识。"
+        "如果用户的核心问题不属于心理健康知识范围，即使检索资料里有相似词，也必须把 scope_status 设为 out_of_scope，并使用范围外抱歉话术。"
+        "如果非心理词汇出现在心理困扰语境中，只回应焦虑、羞耻、失控、影响生活等心理支持部分，不解释非心理知识本身。"
+        "如果问题属于心理健康范围但超出资料范围，要说明只能基于现有资料回答，并引导用户换更具体的问题。"
         "用简体中文，语气稳定、克制，避免说教。只输出 JSON，不要 Markdown。"
     )
     user_prompt = (
@@ -531,11 +1289,16 @@ async def _generate_knowledge_answer(
         f"可用知识库资料：\n{source_context}\n\n"
         "请输出 JSON，字段如下：\n"
         "{\n"
+        '  "scope_status": "in_scope 或 out_of_scope。只有核心问题属于心理健康知识范围时才用 in_scope",\n'
         '  "summary_30s": "用 1-2 句话直接回答",\n'
         '  "explanation_3min": "用 1 段解释原因、机制和边界，120-260 字",\n'
         '  "actions": ["2-4 个安全、具体、轻量的行动"],\n'
         '  "seek_help_when": ["2-4 个需要现实或专业帮助的信号"]\n'
-        "}"
+        "}\n"
+        "范围外固定话术：summary_30s 写“抱歉，这个问题不属于心理健康知识问答范围。”；"
+        "explanation_3min 写“这里主要回答情绪、压力、睡眠、关系、自我理解和求助边界相关的问题。"
+        "如果这个词或场景让你感到困扰，可以描述你的具体感受，我可以从心理支持角度陪你整理。”；"
+        "actions 和 seek_help_when 返回空数组。"
     )
 
     reply = await deepseek_client.chat(
@@ -543,17 +1306,18 @@ async def _generate_knowledge_answer(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
+        model=deepseek_client.knowledge_model,
         temperature=0.35,
         max_tokens=760,
     )
     if not reply:
-        return fallback
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
     payload = _json_from_model(reply)
     if payload is None:
-        return fallback
+        return GeneratedKnowledgeAnswer(answer=fallback)
 
-    return _answer_from_model_payload(payload, fallback) or fallback
+    return _answer_from_model_payload(payload, fallback) or GeneratedKnowledgeAnswer(answer=fallback)
 
 
 async def ask_knowledge(
@@ -582,40 +1346,201 @@ async def ask_knowledge(
                 context_type="safety_escalation",
                 thread_id=thread_id,
             ),
+            coverage_status="insufficient",
+            scope_status="in_scope",
+            confidence="low",
+            source_refs=[],
             risk_level=risk_level,
         )
 
-    related = search_articles(db, query=question, limit=4).items
-    if not related:
-        related = search_articles(db, query="", limit=4).items
+    question_guess = _known_typo_guess(question)
+    effective_question = question_guess.guessed_question if question_guess else question
+    scope_status = _classify_knowledge_scope(effective_question)
+    if scope_status == "out_of_scope" and not _contains_explicit_out_of_scope_terms(question):
+        fuzzy_guess = _fuzzy_question_guess(db, effective_question)
+        if fuzzy_guess is not None:
+            question_guess = fuzzy_guess
+            effective_question = fuzzy_guess.guessed_question
+            scope_status = _classify_knowledge_scope(effective_question)
 
-    articles = [article for item in related if (article := get_article(db, item.article_id)) is not None]
-    if not articles:
+    if scope_status == "out_of_scope":
+        return AskKnowledgeResponse(
+            answer=_out_of_scope_knowledge_answer(),
+            related_articles=[],
+            coverage_status="not_applicable",
+            scope_status=scope_status,
+            confidence="low",
+            source_refs=[],
+            gap_id=None,
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_out_of_scope",
+                thread_id=thread_id,
+            ),
+            risk_level=risk_level,
+        )
+
+    question_suggestion = _suggestion_response(question, question_guess)
+
+    if _is_broad_psychology_request(effective_question):
+        hits = _broad_psychology_hits(db)
+        articles = _unique_articles_from_hits(hits, limit=4)
+        return AskKnowledgeResponse(
+            answer=_broad_psychology_answer(),
+            related_articles=[article_to_search_item(article) for article in articles],
+            coverage_status="sufficient",
+            scope_status="in_scope",
+            confidence="high",
+            source_refs=_source_refs_from_hits(hits),
+            question_suggestion=question_suggestion,
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_overview",
+                article_id=hits[0].article.id if hits else None,
+                thread_id=thread_id,
+            ),
+            risk_level=risk_level,
+        )
+
+    hits = _search_chunk_hits(db, query=effective_question, limit=8)
+    coverage_status, confidence, top_score = _coverage_from_hits(hits)
+    if coverage_status == "insufficient" and question_guess is None:
+        fuzzy_guess = _fuzzy_question_guess(db, effective_question)
+        if fuzzy_guess is not None:
+            question_guess = fuzzy_guess
+            effective_question = fuzzy_guess.guessed_question
+            question_suggestion = _suggestion_response(question, question_guess)
+            hits = _search_chunk_hits(db, query=effective_question, limit=8)
+            coverage_status, confidence, top_score = _coverage_from_hits(hits)
+
+    source_refs = _source_refs_from_hits(hits)
+    articles = _unique_articles_from_hits(hits, limit=4)
+    related = [article_to_search_item(article) for article in articles]
+
+    if coverage_status == "insufficient":
+        gap = _record_knowledge_gap(
+            db,
+            question=question,
+            category=articles[0].category if articles else None,
+            audience=articles[0].audience if articles else None,
+            top_score=top_score,
+            source_refs=source_refs,
+            thread_id=thread_id,
+        )
         return AskKnowledgeResponse(
             answer=KnowledgeAnswer(
-                summary_30s="暂时没有匹配到足够可靠的知识条目。",
-                explanation_3min="MVP 知识库只回答已收录主题。你可以换一个更具体的问题，或回到对话里先描述你的情况。",
-                actions=["换一个关键词搜索", "回到对话里继续说具体场景"],
-                seek_help_when=["问题涉及现实安全、伤害风险或持续功能受损"],
+                summary_30s="当前知识库还没有足够可靠的资料来回答这个问题。",
+                explanation_3min=(
+                    "我已经把这个问题记录为待补充主题。为了避免误导，我不会用大模型凭空扩写答案。"
+                    "你可以换一个更具体的关键词再问，或回到对话里先描述你的具体场景。"
+                ),
+                actions=["换一个更具体的关键词提问", "回到咨询对话里描述具体场景", "等待知识库补充后再查看"],
+                seek_help_when=["问题涉及现实安全、自伤风险、持续失眠或明显功能受损时，请优先联系现实支持或专业人员"],
             ),
-            related_articles=[],
+            related_articles=related,
+            coverage_status=coverage_status,
+            scope_status="in_scope",
+            confidence=confidence,
+            source_refs=[],
+            question_suggestion=question_suggestion,
+            gap_id=gap.id,
             continue_chat_payload=ContinueChatPayload(mode="knowledge", context_type="knowledge_fallback", thread_id=thread_id),
             risk_level=risk_level,
         )
 
-    answer = await _generate_knowledge_answer(
-        question=question,
-        articles=articles,
+    generated = await _generate_knowledge_answer(
+        question=effective_question,
+        hits=hits,
         use_my_context=use_my_context,
     )
+    if generated and generated.scope_status == "out_of_scope":
+        return AskKnowledgeResponse(
+            answer=generated.answer,
+            related_articles=[],
+            coverage_status="not_applicable",
+            scope_status="out_of_scope",
+            confidence="low",
+            source_refs=[],
+            question_suggestion=question_suggestion,
+            gap_id=None,
+            continue_chat_payload=ContinueChatPayload(
+                mode="knowledge",
+                context_type="knowledge_out_of_scope",
+                thread_id=thread_id,
+            ),
+            risk_level=risk_level,
+        )
+
     return AskKnowledgeResponse(
-        answer=answer or _fallback_answer(articles[0], use_my_context=use_my_context),
+        answer=generated.answer if generated else _fallback_answer(hits[0].article, use_my_context=use_my_context),
         related_articles=related,
+        coverage_status=coverage_status,
+        scope_status="in_scope",
+        confidence=confidence,
+        source_refs=source_refs,
+        question_suggestion=question_suggestion,
         continue_chat_payload=ContinueChatPayload(
             mode="knowledge",
-            context_type="knowledge_article",
-            article_id=articles[0].id,
+            context_type="knowledge_article_guess" if question_suggestion else "knowledge_article",
+            article_id=hits[0].article.id,
             thread_id=thread_id,
         ),
         risk_level=risk_level,
     )
+
+
+def gap_to_item(gap: KnowledgeGap) -> KnowledgeGapItemResponse:
+    return KnowledgeGapItemResponse(
+        gap_id=gap.id,
+        question=gap.question,
+        category=gap.category,
+        audience=gap.audience,
+        coverage_status=gap.coverage_status,
+        confidence=gap.confidence,
+        top_score=gap.top_score,
+        status=gap.status,
+        hit_count=gap.hit_count,
+        source_refs=list(gap.source_refs or []),
+        created_at=gap.created_at,
+        updated_at=gap.updated_at,
+        resolved_at=gap.resolved_at,
+    )
+
+
+def list_knowledge_gaps(
+    db: Session,
+    *,
+    status_filter: str = "open",
+    limit: int = 50,
+) -> KnowledgeGapListResponse:
+    query = select(KnowledgeGap)
+    if status_filter != "all":
+        query = query.where(KnowledgeGap.status == status_filter)
+    gaps = list(db.scalars(query.order_by(desc(KnowledgeGap.hit_count), desc(KnowledgeGap.updated_at)).limit(limit)))
+    return KnowledgeGapListResponse(items=[gap_to_item(gap) for gap in gaps])
+
+
+def resolve_knowledge_gap(
+    db: Session,
+    *,
+    gap_id: str,
+    article_id: str | None,
+    reviewer_note: str | None,
+) -> KnowledgeGapMutationResponse:
+    gap = db.scalar(select(KnowledgeGap).where(KnowledgeGap.id == gap_id))
+    if gap is None:
+        raise ValueError("Knowledge gap not found.")
+
+    if article_id:
+        article = get_article(db, article_id)
+        if article is None:
+            raise ValueError("Knowledge article not found.")
+        gap.resolved_article_id = article.id
+        if reviewer_note:
+            article.reviewer_note = reviewer_note
+
+    gap.status = "resolved"
+    gap.resolved_at = utcnow()
+    gap.updated_at = gap.resolved_at
+    db.commit()
+    return KnowledgeGapMutationResponse(gap_id=gap.id, status=gap.status)

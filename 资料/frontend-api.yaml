@@ -1,14 +1,14 @@
 version: 1
 name: counseling-agent-frontend-sdk-contract
-sprint: Sprint 2 knowledge MVP
+sprint: Sprint 2 mood trend MVP
 description: |
   心理咨询 Agent 前端 API 契约。
 
   目标是支撑如下前端闭环：
-  登录/注册 -> 年龄模式落库 -> 首页创建会话 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆/情绪打点 -> 知识库搜索/详情/问答。
+  登录/注册 -> 年龄模式落库 -> 首页情绪记录与趋势 -> 文本聊天 -> 高风险时展示 SOS -> 基础记忆 -> 知识库搜索/详情/问答。
 
   本契约不包含后续 Sprint 或占位能力：
-  tests、voice、完整 RAG、mood trends。
+  tests、voice、完整 RAG。
 
 client:
   className: CounselingApi
@@ -33,9 +33,12 @@ client:
       - deleteMemory
       - clearMemories
       - createMoodLog
+      - getMoodTrend
       - searchKnowledge
       - getKnowledgeArticle
       - askKnowledge
+      - listKnowledgeGaps
+      - resolveKnowledgeGap
       - createCrisisEvent
     note: 当前后端脚手架尚未强制校验 token，但联调时前端仍应按正式 Bearer 方式传递。
   baseUrl:
@@ -53,8 +56,6 @@ scope:
   excluded:
     - tests
     - voice
-    - stream chat
-    - mood trends
 
 implementationStatus:
   currentSdkImplementedMethods:
@@ -62,11 +63,14 @@ implementationStatus:
     - sendMessage
     - streamMessage
     - listMemories
+    - createMoodLog
     - getMoodTrend
     - searchKnowledge
     - getKnowledgeArticle
     - askKnowledge
-  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库 MVP 所需方法。
+    - listKnowledgeGaps
+    - resolveKnowledgeGap
+  note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库与情绪趋势 MVP 所需方法。
 
 flows:
   sprint1Demo:
@@ -88,6 +92,8 @@ flows:
       when: 我的页查看基础记忆
     - step: createMoodLog
       when: 用户完成基础情绪记录
+    - step: getMoodTrend
+      when: 首页展示 7 天或 30 天趋势
     - step: searchKnowledge
       when: 用户进入知识页或搜索主题
     - step: getKnowledgeArticle
@@ -158,6 +164,32 @@ methods:
       method: POST
       pathTemplate: /api/v1/chat/threads/{thread_id}/messages
 
+  - methodName: streamMessage
+    summary: 流式发送用户消息并逐步接收助手回复
+    requestType: SendMessageRequest
+    responseType: ChatStreamEvent
+    authRequired: true
+    pathParams:
+      - name: threadId
+        mapsTo: thread_id
+        type: string
+    uiEntry:
+      - 对话页
+    http:
+      method: POST
+      pathTemplate: /api/v1/chat/threads/{thread_id}/stream
+      responseContentType: text/event-stream
+    events:
+      - event: graph_update
+        schema: ChatStreamGraphUpdateEvent
+      - event: token
+        schema: ChatStreamTokenEvent
+      - event: final
+        schema: ChatStreamFinalEvent
+    fallback:
+      beforeFirstEvent: call sendMessage with the same payload and fill the current assistant bubble
+      afterFirstEvent: do not resend; refresh thread messages from the server
+
   - methodName: listMemories
     summary: 获取记忆列表
     requestType: none
@@ -216,11 +248,22 @@ methods:
     responseType: MoodLogResponse
     authRequired: true
     uiEntry:
-      - 我的页
-      - 情绪记录弹窗
+      - 首页
+      - 情绪 check-in 表单
     http:
       method: POST
       path: /api/v1/moods
+
+  - methodName: getMoodTrend
+    summary: 获取 7 天或 30 天情绪趋势
+    requestType: MoodTrendQuery
+    responseType: MoodTrendResponse
+    authRequired: true
+    uiEntry:
+      - 首页趋势卡片
+    http:
+      method: GET
+      path: /api/v1/moods/trends?range={range}
 
   - methodName: searchKnowledge
     summary: 搜索知识库文章
@@ -259,6 +302,41 @@ methods:
     http:
       method: POST
       path: /api/v1/knowledge/ask
+
+  - methodName: listKnowledgeGaps
+    summary: 查看知识库待补充问题
+    requestType: KnowledgeGapQuery
+    responseType: KnowledgeGapListResponse
+    authRequired: false
+    query:
+      - name: status
+        type: string
+        required: false
+        default: open
+      - name: limit
+        type: number
+        required: false
+        default: 50
+    uiEntry:
+      - 后台知识审核页
+    http:
+      method: GET
+      path: /api/v1/knowledge/gaps
+
+  - methodName: resolveKnowledgeGap
+    summary: 人工补内容后标记知识缺口已解决
+    requestType: ResolveKnowledgeGapRequest
+    responseType: KnowledgeGapMutationResponse
+    authRequired: false
+    pathParams:
+      - name: gapId
+        mapsTo: gap_id
+        type: string
+    uiEntry:
+      - 后台知识审核页
+    http:
+      method: POST
+      pathTemplate: /api/v1/knowledge/gaps/{gap_id}/resolve
 
   - methodName: getSafetyResources
     summary: 获取 SOS 资源列表
@@ -467,6 +545,55 @@ types:
       assistant_message:
         type: AssistantMessage
 
+  ChatStreamTokenEvent:
+    type: object
+    required:
+      - text
+    fields:
+      text: { type: string }
+
+  ChatStreamGraphUpdateEvent:
+    type: object
+    required:
+      - node
+    fields:
+      node: { type: string }
+      risk_level:
+        type: RiskLevel
+        required: false
+
+  ChatStreamFinalEvent:
+    type: object
+    required:
+      - thread_id
+      - message_id
+      - assistant_message_id
+      - assistant_text
+      - risk_level
+      - intent
+      - suggested_actions
+      - session_summary
+      - should_write_memory
+    fields:
+      thread_id: { type: string }
+      message_id: { type: string }
+      assistant_message_id: { type: string }
+      assistant_text: { type: string }
+      risk_level: { type: RiskLevel }
+      intent: { type: string }
+      suggested_actions:
+        type: array
+        items: { type: string }
+      session_summary: { type: string }
+      should_write_memory: { type: boolean }
+
+  ChatStreamEvent:
+    type: sse
+    events:
+      token: ChatStreamTokenEvent
+      graph_update: ChatStreamGraphUpdateEvent
+      final: ChatStreamFinalEvent
+
   MemoryItem:
     type: object
     required:
@@ -559,6 +686,50 @@ types:
         type: string
         format: date-time
       mood_score: { type: integer }
+
+  MoodTrendQuery:
+    type: object
+    fields:
+      range:
+        type: string
+        enum: [7d, 30d]
+        default: 7d
+
+  DailyMoodPoint:
+    type: object
+    required:
+      - date
+      - mood_score
+      - tags
+    fields:
+      date:
+        type: string
+        format: date
+      mood_score: { type: number }
+      tags:
+        type: array
+        items: { type: string }
+
+  MoodTrendResponse:
+    type: object
+    required:
+      - range
+      - avg_mood_score
+      - top_tags
+      - daily
+      - summary
+    fields:
+      range:
+        type: string
+        enum: [7d, 30d]
+      avg_mood_score: { type: number }
+      top_tags:
+        type: array
+        items: { type: string }
+      daily:
+        type: array
+        items: { $ref: DailyMoodPoint }
+      summary: { type: string }
 
   SearchKnowledgeQuery:
     type: object
@@ -685,6 +856,9 @@ types:
     required:
       - answer
       - related_articles
+      - coverage_status
+      - confidence
+      - source_refs
       - continue_chat_payload
       - risk_level
     fields:
@@ -693,9 +867,136 @@ types:
         type: array
         items:
           type: KnowledgeSearchItem
+      coverage_status:
+        type: enum
+        values:
+          - sufficient
+          - partial
+          - insufficient
+      confidence:
+        type: enum
+        values:
+          - high
+          - medium
+          - low
+      source_refs:
+        type: array
+        items:
+          type: KnowledgeSourceRef
+      gap_id:
+        type: string
+        required: false
       continue_chat_payload:
         type: object
       risk_level: { type: RiskLevel }
+
+  KnowledgeSourceRef:
+    type: object
+    required:
+      - source_name
+      - article_id
+      - article_title
+    fields:
+      source_name: { type: string }
+      source_url:
+        type: string
+        required: false
+      license:
+        type: string
+        required: false
+      article_id: { type: string }
+      article_title: { type: string }
+      chunk_id:
+        type: string
+        required: false
+      chunk_index:
+        type: number
+        required: false
+      score:
+        type: number
+        required: false
+
+  KnowledgeGapQuery:
+    type: object
+    fields:
+      status:
+        type: string
+        required: false
+        default: open
+      limit:
+        type: number
+        required: false
+        default: 50
+
+  KnowledgeGapItem:
+    type: object
+    required:
+      - gap_id
+      - question
+      - coverage_status
+      - confidence
+      - top_score
+      - status
+      - hit_count
+      - source_refs
+      - created_at
+      - updated_at
+    fields:
+      gap_id: { type: string }
+      question: { type: string }
+      category:
+        type: string
+        required: false
+      audience:
+        type: string
+        required: false
+      coverage_status: { type: string }
+      confidence: { type: string }
+      top_score: { type: number }
+      status: { type: string }
+      hit_count: { type: number }
+      source_refs:
+        type: array
+        items: { type: object }
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+      resolved_at:
+        type: string
+        format: date-time
+        required: false
+
+  KnowledgeGapListResponse:
+    type: object
+    required:
+      - items
+    fields:
+      items:
+        type: array
+        items:
+          type: KnowledgeGapItem
+
+  ResolveKnowledgeGapRequest:
+    type: object
+    fields:
+      article_id:
+        type: string
+        required: false
+      reviewer_note:
+        type: string
+        required: false
+
+  KnowledgeGapMutationResponse:
+    type: object
+    required:
+      - gap_id
+      - status
+    fields:
+      gap_id: { type: string }
+      status: { type: string }
 
   GetSafetyResourcesQuery:
     type: object
@@ -773,6 +1074,8 @@ integrationRules:
   - rule: getSafetyResources 可在未登录状态下调用，便于 SOS 页面兜底展示。
   - rule: askKnowledge 返回 risk_level 为 L2 或 L3 时，前端必须停止普通知识展示路径并打开 SOS/安全提示。
   - rule: 知识结果继续聊天时，应把标题或 article_id 带入对话上下文，但不得把知识回答包装成诊断。
+  - rule: streamMessage 是对话页默认发送路径；收到 graph_update 时展示节点状态和风险等级，收到 final 时展示 suggested_actions。
+  - rule: streamMessage 在首个 SSE 事件前失败时回退到 sendMessage；首个事件后中断时不得重发同一输入，只刷新服务端消息。
 
 errorHandling:
   behavior: throw-on-non-2xx

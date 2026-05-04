@@ -16,6 +16,8 @@ class DeepSeekClient:
         self.api_key = settings.deepseek_api_key
         self.base_url = settings.deepseek_base_url.rstrip("/")
         self.model = settings.deepseek_model
+        self.chat_model = settings.deepseek_chat_model
+        self.knowledge_model = settings.deepseek_knowledge_model
         self.timeout_seconds = settings.deepseek_timeout_seconds
 
     @property
@@ -26,6 +28,7 @@ class DeepSeekClient:
         self,
         messages: list[dict[str, str]],
         *,
+        model: str | None = None,
         temperature: float = 0.6,
         max_tokens: int = 420,
     ) -> str | None:
@@ -33,7 +36,7 @@ class DeepSeekClient:
             return None
 
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": model or self.chat_model or self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,

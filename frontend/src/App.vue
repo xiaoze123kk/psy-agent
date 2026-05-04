@@ -6,12 +6,22 @@ import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  ChatStreamFinalEvent,
+  ChatStreamGraphUpdateEvent,
+  ChatStreamTokenEvent,
   CompleteAttemptResponse,
   KnowledgeArticleResponse,
+  KnowledgeQuizBankStatsResponse,
+  KnowledgeQuizMode,
+  KnowledgeQuizQuestion,
+  KnowledgeQuizResultResponse,
+  KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
   MemoryItem,
   MessageItem,
+  MoodLogRequest,
   MoodTrendResponse,
+  SendMessageResponse,
   StartAttemptResponse,
   TestDetailResponse,
   TestHistoryItem,
@@ -27,6 +37,8 @@ type AuthMode = "login" | "register";
 type ChatRole = "assistant" | "user";
 type RiskLevel = "L0" | "L1" | "L2" | "L3";
 type SafetyAction = "trusted" | "resources" | "breathing" | null;
+type KnowledgePanel = "qa" | "quiz";
+type MoodRange = "7d" | "30d";
 
 interface SelectOption {
   id: string;
@@ -40,7 +52,10 @@ interface ChatMessage {
   text: string;
   createdAt?: string;
   riskLevel?: RiskLevel | null;
+  graphNode?: string | null;
+  suggestedActions?: string[];
   streaming?: boolean;
+  streamError?: boolean;
 }
 
 interface KnowledgeChatMessage {
@@ -49,8 +64,20 @@ interface KnowledgeChatMessage {
   text: string;
   answer?: AskKnowledgeResponse["answer"];
   relatedArticles?: KnowledgeSearchItem[];
+  sourceRefs?: AskKnowledgeResponse["source_refs"];
+  questionSuggestion?: AskKnowledgeResponse["question_suggestion"];
+  coverageStatus?: AskKnowledgeResponse["coverage_status"];
+  scopeStatus?: AskKnowledgeResponse["scope_status"];
+  confidence?: AskKnowledgeResponse["confidence"];
+  gapId?: string | null;
   riskLevel?: RiskLevel | null;
   streaming?: boolean;
+}
+
+interface LocalMoodLog {
+  created_at: string;
+  mood_score: number;
+  mood_tags: string[];
 }
 
 const ACCESS_TOKEN_KEY = "counseling_access_token";
@@ -86,6 +113,11 @@ const goalOptions: SelectOption[] = [
 
 const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
 const knowledgePromptChips = ["焦虑发作时怎么办", "睡前脑子停不下来", "什么是边界感", "我是不是太敏感了"];
+const quizModeOptions: Array<{ id: KnowledgeQuizMode; label: string; description: string }> = [
+  { id: "10", label: "10 题", description: "快测" },
+  { id: "50", label: "50 题", description: "进阶" },
+  { id: "100", label: "100 题", description: "授予头衔" },
+];
 
 const demoThreads: ThreadListItem[] = [
   {
@@ -249,6 +281,20 @@ const demoAnimeResult: CompleteAttemptResponse = {
   profile: { traits: [], strengths: [], blind_spots: [], companion_style: "" },
 };
 
+const dayMs = 24 * 60 * 60 * 1000;
+const demoMoodLogSeed: LocalMoodLog[] = [
+  { created_at: new Date(Date.now() - 6 * dayMs).toISOString(), mood_score: 3, mood_tags: ["睡眠"] },
+  { created_at: new Date(Date.now() - 4 * dayMs).toISOString(), mood_score: 2, mood_tags: ["焦虑", "疲惫"] },
+  { created_at: new Date(Date.now() - 2 * dayMs).toISOString(), mood_score: 4, mood_tags: ["平静"] },
+  { created_at: new Date(Date.now() - 1 * dayMs).toISOString(), mood_score: 3, mood_tags: ["关系", "焦虑"] },
+];
+const moodTagOptions = ["焦虑", "疲惫", "难过", "委屈", "平静", "睡眠", "关系", "学习"];
+const moodRangeOptions: Array<{ id: MoodRange; label: string }> = [
+  { id: "7d", label: "7天" },
+  { id: "30d", label: "30天" },
+];
+
+
 function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
@@ -268,6 +314,8 @@ const isCaptchaLoading = ref(false);
 const isLoadingApp = ref(false);
 const isKnowledgeLoading = ref(false);
 const isSending = ref(false);
+const isMoodSubmitting = ref(false);
+const isMoodTrendLoading = ref(false);
 const isSafetyOpen = ref(false);
 
 const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
@@ -284,6 +332,7 @@ const captchaImageDataUrl = ref("");
 const captchaCode = ref("");
 const authError = ref("");
 const apiError = ref("");
+const apiNotice = ref("");
 
 const selectedAge = ref<AgeOptionId | null>(null);
 const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
@@ -293,8 +342,18 @@ const threads = ref<ThreadListItem[]>([]);
 const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
 const moodTrend = ref<MoodTrendResponse | null>(null);
+const moodRange = ref<MoodRange>("7d");
+const moodDraft = ref<MoodLogRequest>({
+  mood_score: 3,
+  anxiety_score: 3,
+  energy_score: 3,
+  sleep_quality: 3,
+  mood_tags: [],
+  note: "",
+});
 const knowledgeItems = ref<KnowledgeSearchItem[]>([]);
 const selectedKnowledgeArticle = ref<KnowledgeArticleResponse | null>(null);
+const knowledgePanel = ref<KnowledgePanel>("qa");
 const knowledgeMessages = ref<KnowledgeChatMessage[]>([
   {
     id: 1,
@@ -305,12 +364,21 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
 const quickActions = ref([...defaultQuickActions]);
 const composerText = ref("");
 const knowledgeDraft = ref("");
+const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
+const quizMode = ref<KnowledgeQuizMode>("10");
+const quizSession = ref<KnowledgeQuizSessionResponse | null>(null);
+const quizResult = ref<KnowledgeQuizResultResponse | null>(null);
+const quizAnswers = ref<Record<string, string>>({});
+const activeQuizIndex = ref(0);
+const activeReviewIndex = ref(0);
+const isQuizLoading = ref(false);
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
 const knowledgeMessageSeed = ref(2);
 const messageListRef = ref<HTMLElement | null>(null);
 const knowledgeListRef = ref<HTMLElement | null>(null);
 const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
+const demoMoodLogs = ref<LocalMoodLog[]>([]);
 
 const apiClient = new ApiClient({
   baseUrl: apiBaseUrl,
@@ -334,7 +402,23 @@ const canSubmitAuth = computed(
     Boolean(captchaId.value) &&
     Boolean(captchaCode.value.trim()),
 );
+const canSubmitMood = computed(
+  () =>
+    [moodDraft.value.mood_score, moodDraft.value.anxiety_score, moodDraft.value.energy_score, moodDraft.value.sleep_quality]
+      .every((score) => typeof score === "number" && score >= 1 && score <= 5) && !isMoodSubmitting.value,
+);
 const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
+const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
+  () => quizSession.value?.questions[activeQuizIndex.value] ?? null,
+);
+const quizAnsweredCount = computed(() => Object.keys(quizAnswers.value).length);
+const quizProgressPercent = computed(() =>
+  quizSession.value ? Math.round((quizAnsweredCount.value / quizSession.value.total) * 100) : 0,
+);
+const canSubmitQuiz = computed(() => Boolean(quizSession.value && quizAnsweredCount.value === quizSession.value.total));
+const quizWrongCount = computed(() => quizResult.value?.review.filter((item) => !item.is_correct).length ?? 0);
+const activeReviewItem = computed(() => quizResult.value?.review[activeReviewIndex.value] ?? null);
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const testHeaderTitle = computed(() => {
@@ -342,6 +426,9 @@ const testHeaderTitle = computed(() => {
   return testResult.value.result_title;
 });
 const moodSummary = computed(() => moodTrend.value?.summary || "还没有足够的状态数据，先从今天开始记录。");
+const moodTrendPoints = computed(() => moodTrend.value?.daily ?? []);
+const moodTrendTags = computed(() => moodTrend.value?.top_tags ?? []);
+const hasTodayMoodLog = computed(() => moodTrendPoints.value.some((point) => point.date === toMoodDateKey(new Date())));
 const contextText = computed(() =>
   [
     activeThread.value?.title,
@@ -391,6 +478,9 @@ watch(activeTab, (tab) => {
   if (tab === "knowledge" && knowledgeItems.value.length === 0) {
     void searchKnowledge();
   }
+  if (tab === "knowledge" && !quizStats.value) {
+    void loadKnowledgeQuizStats();
+  }
 });
 
 watch(authMode, () => {
@@ -412,6 +502,115 @@ function applyAgeRange(ageRange: AgeRange) {
 
 function selectedUserMode(): UserMode {
   return isTeenMode.value ? "teen" : "adult";
+}
+
+function clearApiFeedback() {
+  apiError.value = "";
+  apiNotice.value = "";
+}
+
+function moodValueText(value?: number | null) {
+  const labels = ["很低", "偏低", "一般", "还好", "很好"];
+  return labels[Math.max(1, Math.min(5, value ?? 3)) - 1];
+}
+
+function formatMoodDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(value));
+}
+
+function toMoodDateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function moodPointHeight(score: number) {
+  return `${Math.max(10, Math.min(58, (score / 5) * 58))}px`;
+}
+
+function toggleMoodTag(tag: string) {
+  const currentTags = moodDraft.value.mood_tags ?? [];
+  moodDraft.value = {
+    ...moodDraft.value,
+    mood_tags: currentTags.includes(tag) ? currentTags.filter((item) => item !== tag) : [...currentTags, tag],
+  };
+}
+
+function createMoodPayload(): MoodLogRequest {
+  const note = moodDraft.value.note?.trim();
+  return {
+    mood_score: moodDraft.value.mood_score,
+    anxiety_score: moodDraft.value.anxiety_score,
+    energy_score: moodDraft.value.energy_score,
+    sleep_quality: moodDraft.value.sleep_quality,
+    mood_tags: [...(moodDraft.value.mood_tags ?? [])],
+    note: note || null,
+  };
+}
+
+function resetMoodDraft() {
+  moodDraft.value = {
+    mood_score: 3,
+    anxiety_score: 3,
+    energy_score: 3,
+    sleep_quality: 3,
+    mood_tags: [],
+    note: "",
+  };
+}
+
+function buildLocalMoodTrend(range: MoodRange, logs: LocalMoodLog[]): MoodTrendResponse {
+  const days = range === "30d" ? 30 : 7;
+  const since = Date.now() - days * dayMs;
+  const scopedLogs = logs
+    .filter((log) => new Date(log.created_at).getTime() >= since)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  if (scopedLogs.length === 0) {
+    return {
+      range,
+      avg_mood_score: 0,
+      top_tags: [],
+      daily: [],
+      summary: "当前时间范围内还没有情绪记录。",
+    };
+  }
+
+  const dailyScores = new Map<string, number[]>();
+  const dailyTags = new Map<string, Map<string, number>>();
+  const tagCounter = new Map<string, number>();
+
+  scopedLogs.forEach((log) => {
+    const day = new Date(log.created_at).toISOString().slice(0, 10);
+    dailyScores.set(day, [...(dailyScores.get(day) ?? []), log.mood_score]);
+    if (!dailyTags.has(day)) dailyTags.set(day, new Map());
+    const dayTags = dailyTags.get(day);
+    log.mood_tags.forEach((tag) => {
+      const normalizedTag = tag.trim();
+      if (!normalizedTag || !dayTags) return;
+      tagCounter.set(normalizedTag, (tagCounter.get(normalizedTag) ?? 0) + 1);
+      dayTags.set(normalizedTag, (dayTags.get(normalizedTag) ?? 0) + 1);
+    });
+  });
+
+  const daily = [...dailyScores.entries()].map(([date, scores]) => ({
+    date,
+    mood_score: Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2)),
+    tags: [...(dailyTags.get(date)?.entries() ?? [])]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([tag]) => tag),
+  }));
+  const top_tags = [...tagCounter.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([tag]) => tag);
+  const avg_mood_score = Number(
+    (scopedLogs.reduce((sum, log) => sum + log.mood_score, 0) / scopedLogs.length).toFixed(2),
+  );
+  const summary = `最近 ${days} 天共记录 ${scopedLogs.length} 次情绪，平均情绪分为 ${avg_mood_score}。${
+    top_tags.length ? ` 高频标签主要是：${top_tags.slice(0, 3).join("、")}。` : ""
+  }`;
+
+  return { range, avg_mood_score, top_tags, daily, summary };
 }
 
 function formatTime(value?: string | null) {
@@ -437,6 +636,39 @@ function riskClass(level?: RiskLevel | null) {
   if (level === "L2") return "risk--warning";
   if (level === "L1") return "risk--watch";
   return "risk--steady";
+}
+
+function normalizeRiskLevel(value: unknown): RiskLevel | null {
+  return value === "L0" || value === "L1" || value === "L2" || value === "L3" ? value : null;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function graphStatusLabel(node?: string | null) {
+  if (node === "risk_classifier") return "正在识别风险";
+  if (node === "intent_classifier") return "正在理解意图";
+  if (node === "memory_retrieval") return "正在整理上下文";
+  if (node === "summary_memory_node") return "正在整理摘要";
+  if (node) return "正在推进对话";
+  return "";
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
+}
+
+function isTokenEventData(data: unknown): data is ChatStreamTokenEvent {
+  return isObjectRecord(data) && typeof data.text === "string";
+}
+
+function isGraphUpdateEventData(data: unknown): data is ChatStreamGraphUpdateEvent {
+  return isObjectRecord(data) && typeof data.node === "string";
+}
+
+function isFinalEventData(data: unknown): data is ChatStreamFinalEvent {
+  return isObjectRecord(data) && typeof data.assistant_text === "string" && normalizeRiskLevel(data.risk_level) !== null;
 }
 
 function sortThreads(items: ThreadListItem[]) {
@@ -503,6 +735,7 @@ function mapMessage(item: MessageItem): ChatMessage | null {
     text: item.content,
     createdAt: item.created_at,
     riskLevel: item.risk_level,
+    suggestedActions: normalizeStringList(item.metadata.suggested_actions),
   };
 }
 
@@ -530,7 +763,7 @@ async function loadApp() {
       api.getCurrentUser(),
       api.listThreads(),
       api.listMemories(),
-      api.getMoodTrend("7d"),
+      api.getMoodTrend(moodRange.value),
     ]);
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
@@ -551,6 +784,61 @@ async function loadApp() {
     await refreshCaptcha();
   } finally {
     isLoadingApp.value = false;
+  }
+}
+
+async function loadMoodTrend(range: MoodRange = moodRange.value) {
+  moodRange.value = range;
+  if (isDemoMode.value || !accessToken.value) {
+    moodTrend.value = demoMoodLogs.value.length > 0 ? buildLocalMoodTrend(range, demoMoodLogs.value) : { ...demoMoodTrend, range };
+    return;
+  }
+
+  try {
+    isMoodTrendLoading.value = true;
+    moodTrend.value = await api.getMoodTrend(range);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "情绪趋势加载失败。";
+  } finally {
+    isMoodTrendLoading.value = false;
+  }
+}
+
+async function switchMoodRange(range: MoodRange) {
+  if (range === moodRange.value && moodTrend.value?.range === range) return;
+  await loadMoodTrend(range);
+}
+
+async function submitMoodCheckIn() {
+  if (!canSubmitMood.value) return;
+  try {
+    isMoodSubmitting.value = true;
+    clearApiFeedback();
+    const payload = createMoodPayload();
+
+    if (isDemoMode.value || !accessToken.value) {
+      demoMoodLogs.value = [
+        ...demoMoodLogs.value,
+        {
+          created_at: new Date().toISOString(),
+          mood_score: payload.mood_score,
+          mood_tags: payload.mood_tags ?? [],
+        },
+      ];
+      apiNotice.value = "今日状态已记录。";
+      resetMoodDraft();
+      await loadMoodTrend(moodRange.value);
+      return;
+    }
+
+    await api.createMoodLog(payload);
+    apiNotice.value = "今日状态已记录。";
+    resetMoodDraft();
+    await loadMoodTrend(moodRange.value);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "情绪记录提交失败。";
+  } finally {
+    isMoodSubmitting.value = false;
   }
 }
 
@@ -594,7 +882,8 @@ function enterDemoMode() {
   threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
   demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
   memories.value = demoMemories.map((item) => ({ ...item }));
-  moodTrend.value = { ...demoMoodTrend };
+  demoMoodLogs.value = demoMoodLogSeed.map((item) => ({ ...item }));
+  moodTrend.value = buildLocalMoodTrend(moodRange.value, demoMoodLogs.value);
   activeThreadId.value = threads.value[0]?.thread_id ?? "";
   setMessages(demoMessagesByThread.value[activeThreadId.value] ?? []);
   stage.value = "onboarding";
@@ -657,7 +946,7 @@ function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = 
   return id;
 }
 
-function updateMessage(id: number, patch: Partial<Pick<ChatMessage, "text" | "riskLevel" | "streaming">>) {
+function updateMessage(id: number, patch: Partial<Omit<ChatMessage, "id">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
 }
 
@@ -739,10 +1028,29 @@ function syncLocalThread(summary: string, risk: RiskLevel | null) {
   demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
 }
 
+function applySendMessageResponse(assistantId: number, userContent: string, response: SendMessageResponse) {
+  const assistant = response.assistant_message;
+  const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
+  const reply = assistant.assistant_text || assistant.content;
+  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : inferContextualActions(userContent, risk);
+  updateMessage(assistantId, {
+    text: reply,
+    riskLevel: risk,
+    graphNode: null,
+    suggestedActions: actions,
+    streaming: false,
+    streamError: false,
+  });
+  quickActions.value = actions.slice(0, 4);
+  syncLocalThread(reply, risk);
+  if (risk === "L2" || risk === "L3") openSafety();
+}
+
 async function submitMessage(text = composerText.value) {
   const content = text.trim();
   if (!content || isSending.value) return;
   composerText.value = "";
+  clearApiFeedback();
   activeTab.value = "chat";
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
@@ -757,47 +1065,104 @@ async function submitMessage(text = composerText.value) {
     return;
   }
 
-  let assistantId: number | null = null;
+  const payload = { user_id: currentUserId.value, content, input_type: "text" as const, user_mode: selectedUserMode() };
+  const assistantId = addMessage("assistant", "", null, true);
   let streamed = "";
   let risk: RiskLevel | null = null;
+  let receivedStreamEvent = false;
+  let receivedFinalEvent = false;
   try {
     isSending.value = true;
-    assistantId = addMessage("assistant", "", null, true);
     await api.streamMessage(
       activeThreadId.value,
-      { user_id: currentUserId.value, content, input_type: "text", user_mode: selectedUserMode() },
+      payload,
       (event, data) => {
-        if (event === "token" && typeof data.text === "string") {
+        if (event === "graph_update" && isGraphUpdateEventData(data)) {
+          receivedStreamEvent = true;
+          const graphRisk = normalizeRiskLevel(data.risk_level);
+          risk = graphRisk ?? risk;
+          updateMessage(assistantId, {
+            graphNode: data.node,
+            riskLevel: graphRisk ?? risk,
+            streamError: false,
+          });
+        }
+
+        if (event === "token" && isTokenEventData(data)) {
+          receivedStreamEvent = true;
           streamed += data.text;
-          appendMessageText(assistantId as number, data.text);
+          appendMessageText(assistantId, data.text);
         }
         if (event === "final") {
-          risk = data.risk_level === "L1" || data.risk_level === "L2" || data.risk_level === "L3" ? data.risk_level : "L0";
-          const actions = Array.isArray(data.suggested_actions) ? data.suggested_actions.filter((item): item is string => typeof item === "string") : [];
-          quickActions.value = actions.length ? actions.slice(0, 4) : inferContextualActions(content, risk);
-          if (!streamed && typeof data.assistant_text === "string") {
-            streamed = data.assistant_text;
-            updateMessage(assistantId as number, { text: streamed, riskLevel: risk });
-          }
+          receivedStreamEvent = true;
+          receivedFinalEvent = true;
+          risk = normalizeRiskLevel(data.risk_level) ?? "L0";
+          const actions = normalizeStringList(data.suggested_actions);
+          const finalActions = actions.length ? actions : inferContextualActions(content, risk);
+          quickActions.value = finalActions.slice(0, 4);
+          if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
+          updateMessage(assistantId, {
+            text: streamed,
+            riskLevel: risk,
+            graphNode: null,
+            suggestedActions: finalActions,
+            streamError: false,
+          });
         }
       },
     );
-    if (!streamed && assistantId) {
+
+    if (receivedStreamEvent && !receivedFinalEvent) {
+      apiNotice.value = "流式连接提前结束，已刷新服务端记录。";
+      updateMessage(assistantId, { streaming: false, streamError: true });
+      await loadThreadMessages(activeThreadId.value);
+      return;
+    }
+
+    if (!receivedStreamEvent) {
+      apiNotice.value = "流式连接无返回，已切换到稳定发送。";
+      const response = await api.sendMessage(activeThreadId.value, payload);
+      applySendMessageResponse(assistantId, content, response);
+      return;
+    }
+
+    if (!streamed) {
       streamed = buildReply(content);
       updateMessage(assistantId, { text: streamed, riskLevel: risk });
     }
     syncLocalThread(streamed, risk);
     if (risk === "L2" || risk === "L3") openSafety();
   } catch (error) {
-    apiError.value = error instanceof Error ? error.message : "发送失败，已使用本地回复。";
-    const reply = buildReply(content);
-    quickActions.value = inferContextualActions(content, localRisk);
-    if (assistantId) updateMessage(assistantId, { text: reply, riskLevel: localRisk });
-    else addMessage("assistant", reply, localRisk);
-    syncLocalThread(reply, localRisk);
-    if (localRisk === "L2" || localRisk === "L3") openSafety();
+    if (receivedStreamEvent) {
+      apiNotice.value = error instanceof Error ? `流式连接中断，已刷新服务端记录：${error.message}` : "流式连接中断，已刷新服务端记录。";
+      updateMessage(assistantId, { streaming: false, streamError: true });
+      await loadThreadMessages(activeThreadId.value);
+      return;
+    }
+
+    try {
+      apiNotice.value = "流式连接失败，已切换到稳定发送。";
+      const response = await api.sendMessage(activeThreadId.value, payload);
+      applySendMessageResponse(assistantId, content, response);
+    } catch (fallbackError) {
+      apiError.value =
+        fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
+      const reply = buildReply(content);
+      const actions = inferContextualActions(content, localRisk);
+      quickActions.value = actions;
+      updateMessage(assistantId, {
+        text: reply,
+        riskLevel: localRisk,
+        graphNode: null,
+        suggestedActions: actions,
+        streaming: false,
+        streamError: true,
+      });
+      syncLocalThread(reply, localRisk);
+      if (localRisk === "L2" || localRisk === "L3") openSafety();
+    }
   } finally {
-    if (assistantId) updateMessage(assistantId, { streaming: false });
+    updateMessage(assistantId, { streaming: false });
     isSending.value = false;
   }
 }
@@ -821,7 +1186,7 @@ function updateKnowledgeMessage(id: number, patch: Partial<KnowledgeChatMessage>
 async function searchKnowledge(query = "焦虑") {
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     const response = await api.searchKnowledge(query.trim());
     knowledgeItems.value = response.items;
     if (!response.items[0]) {
@@ -837,13 +1202,98 @@ async function searchKnowledge(query = "焦虑") {
 async function openKnowledgeArticle(articleId: string) {
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     selectedKnowledgeArticle.value = await api.getKnowledgeArticle(articleId);
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "知识详情加载失败。";
   } finally {
     isKnowledgeLoading.value = false;
   }
+}
+
+function quizTypeLabel(type: KnowledgeQuizQuestion["type"]) {
+  if (type === "single_choice") return "ABCD";
+  if (type === "true_false") return "判断";
+  return "图片题";
+}
+
+function quizAnswerLabel(question: KnowledgeQuizQuestion, answerKey: string | null | undefined) {
+  if (!answerKey) return "未作答";
+  return question.options.find((option) => option.key === answerKey)?.text ?? answerKey;
+}
+
+function reviewAnswerLabel(answerKey: string | null | undefined) {
+  const item = activeReviewItem.value;
+  return item ? quizAnswerLabel(item.question, answerKey) : "未作答";
+}
+
+function selectQuizMode(mode: KnowledgeQuizMode) {
+  quizMode.value = mode;
+}
+
+function switchKnowledgePanel(panel: KnowledgePanel) {
+  if (panel === "quiz" && knowledgePanel.value !== "quiz" && (quizSession.value || quizResult.value)) {
+    resetKnowledgeQuiz();
+  }
+  knowledgePanel.value = panel;
+}
+
+async function loadKnowledgeQuizStats() {
+  try {
+    quizStats.value = await api.getKnowledgeQuizStats();
+  } catch {
+    quizStats.value = null;
+  }
+}
+
+async function startKnowledgeQuiz(mode = quizMode.value) {
+  try {
+    isQuizLoading.value = true;
+    clearApiFeedback();
+    quizMode.value = mode;
+    quizResult.value = null;
+    quizAnswers.value = {};
+    activeQuizIndex.value = 0;
+    quizSession.value = await api.startKnowledgeQuiz({ mode });
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "趣味问答加载失败。";
+  } finally {
+    isQuizLoading.value = false;
+  }
+}
+
+function chooseQuizAnswer(questionId: string, answer: string) {
+  quizAnswers.value = { ...quizAnswers.value, [questionId]: answer };
+}
+
+function goQuizQuestion(offset: number) {
+  if (!quizSession.value) return;
+  activeQuizIndex.value = Math.min(Math.max(activeQuizIndex.value + offset, 0), quizSession.value.total - 1);
+}
+
+async function submitKnowledgeQuiz() {
+  if (!quizSession.value || !canSubmitQuiz.value) return;
+  try {
+    isQuizLoading.value = true;
+    clearApiFeedback();
+    quizResult.value = await api.submitKnowledgeQuiz({
+      session_id: quizSession.value.session_id,
+      answers: Object.entries(quizAnswers.value).map(([question_id, answer]) => ({ question_id, answer })),
+    });
+    activeReviewIndex.value = 0;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "趣味问答提交失败。";
+  } finally {
+    isQuizLoading.value = false;
+  }
+}
+
+function resetKnowledgeQuiz() {
+  quizSession.value = null;
+  quizResult.value = null;
+  quizAnswers.value = {};
+  activeQuizIndex.value = 0;
+  activeReviewIndex.value = 0;
 }
 
 async function askKnowledge(questionText = knowledgeDraft.value) {
@@ -854,7 +1304,7 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
   const assistantId = addKnowledgeMessage({ role: "assistant", text: "我先查一下知识库。", streaming: true });
   try {
     isKnowledgeLoading.value = true;
-    apiError.value = "";
+    clearApiFeedback();
     const response = await api.askKnowledge({
       question,
       use_my_context: Boolean(accessToken.value),
@@ -865,6 +1315,12 @@ async function askKnowledge(questionText = knowledgeDraft.value) {
       text: response.answer.summary_30s,
       answer: response.answer,
       relatedArticles: response.related_articles,
+      sourceRefs: response.source_refs,
+      questionSuggestion: response.question_suggestion,
+      coverageStatus: response.coverage_status,
+      scopeStatus: response.scope_status,
+      confidence: response.confidence,
+      gapId: response.gap_id,
       riskLevel: response.risk_level,
       streaming: false,
     });
@@ -1136,6 +1592,9 @@ async function logout() {
   threads.value = [];
   memories.value = [];
   moodTrend.value = null;
+  demoMoodLogs.value = [];
+  moodRange.value = "7d";
+  resetMoodDraft();
   setMessages([]);
   stage.value = "auth";
   await refreshCaptcha();
@@ -1273,21 +1732,90 @@ onMounted(async () => {
           <button class="sos-button" type="button" @click="openSafety">SOS</button>
         </header>
 
+        <p v-if="apiNotice" class="notice notice--info">{{ apiNotice }}</p>
         <p v-if="apiError" class="notice notice--error">{{ apiError }}</p>
 
         <section v-if="activeTab === 'home'" class="tab-page">
+          <form v-if="!hasTodayMoodLog" class="mood-checkin-card" @submit.prevent="submitMoodCheckIn">
+            <div class="card-title">
+              <div>
+                <span>今日状态</span>
+                <h2>你现在感觉怎么样？</h2>
+              </div>
+              <strong>{{ moodDraft.mood_score }}分</strong>
+            </div>
+
+            <div class="mood-scale-list">
+              <label class="mood-scale">
+                <span>心情 <strong>{{ moodValueText(moodDraft.mood_score) }}</strong></span>
+                <input v-model.number="moodDraft.mood_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>焦虑 <strong>{{ moodValueText(moodDraft.anxiety_score) }}</strong></span>
+                <input v-model.number="moodDraft.anxiety_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>精力 <strong>{{ moodValueText(moodDraft.energy_score) }}</strong></span>
+                <input v-model.number="moodDraft.energy_score" type="range" min="1" max="5" step="1" />
+              </label>
+              <label class="mood-scale">
+                <span>睡眠 <strong>{{ moodValueText(moodDraft.sleep_quality) }}</strong></span>
+                <input v-model.number="moodDraft.sleep_quality" type="range" min="1" max="5" step="1" />
+              </label>
+            </div>
+
+            <div class="mood-tags" aria-label="情绪标签">
+              <button
+                v-for="tag in moodTagOptions"
+                :key="tag"
+                :class="{ active: moodDraft.mood_tags?.includes(tag) }"
+                type="button"
+                @click="toggleMoodTag(tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
+
+            <textarea v-model="moodDraft.note" class="mood-note" rows="3" maxlength="180" placeholder="一句话记录今天的触发点或感受"></textarea>
+
+            <button class="primary-action" type="submit" :disabled="!canSubmitMood">
+              {{ isMoodSubmitting ? "记录中..." : "记录今日状态" }}
+            </button>
+          </form>
+
           <button class="mood-card" type="button" @click="startQuickCheckIn">
             <span>现在开始</span>
             <strong>我有点难受，想倾诉</strong>
             <small>点一下进入对话，我会先听你说。</small>
           </button>
 
-          <section class="summary-card">
+          <section class="summary-card trend-card">
             <div class="card-title">
-              <h2>最近状态</h2>
-              <span>{{ moodTrend?.top_tags?.join(" / ") || "暂无标签" }}</span>
+              <h2>状态趋势</h2>
+              <div class="range-switch" role="group" aria-label="趋势范围">
+                <button
+                  v-for="option in moodRangeOptions"
+                  :key="option.id"
+                  :class="{ active: moodRange === option.id }"
+                  type="button"
+                  :disabled="isMoodTrendLoading"
+                  @click="switchMoodRange(option.id)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
             <p>{{ moodSummary }}</p>
+            <div v-if="moodTrendPoints.length > 0" class="trend-bars" aria-label="情绪趋势点">
+              <div v-for="point in moodTrendPoints" :key="point.date" class="trend-bar">
+                <i :style="{ height: moodPointHeight(point.mood_score) }"></i>
+                <span>{{ formatMoodDate(point.date) }}</span>
+              </div>
+            </div>
+            <div v-if="moodTrendTags.length > 0" class="trend-tags">
+              <span v-for="tag in moodTrendTags" :key="tag">{{ tag }}</span>
+            </div>
+            <small v-if="moodTrendPoints.length === 0" class="empty-copy">暂无趋势数据。</small>
           </section>
 
           <section class="section-block">
@@ -1336,12 +1864,38 @@ onMounted(async () => {
               :class="['message', message.role === 'user' ? 'message--user' : 'message--assistant']"
             >
               <p>{{ message.text || "..." }}</p>
+              <div
+                v-if="message.role === 'assistant' && (message.riskLevel || message.graphNode || message.streamError)"
+                class="message-meta"
+              >
+                <span v-if="message.riskLevel" :class="['risk-pill', riskClass(message.riskLevel)]">
+                  {{ riskLabel(message.riskLevel) }}
+                </span>
+                <span v-if="message.graphNode && message.streaming" class="graph-status">
+                  {{ graphStatusLabel(message.graphNode) }}
+                </span>
+                <span v-if="message.streamError" class="stream-status">已切换到稳定回复</span>
+              </div>
+              <div
+                v-if="message.role === 'assistant' && message.suggestedActions?.length"
+                class="message-actions"
+              >
+                <button
+                  v-for="action in message.suggestedActions"
+                  :key="`${message.id}-${action}`"
+                  type="button"
+                  :disabled="isSending"
+                  @click="submitMessage(action)"
+                >
+                  {{ action }}
+                </button>
+              </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
           </div>
 
           <div class="quick-actions">
-            <button v-for="action in quickActions" :key="action" type="button" @click="submitMessage(action)">
+            <button v-for="action in quickActions" :key="action" type="button" :disabled="isSending" @click="submitMessage(action)">
               {{ action }}
             </button>
           </div>
@@ -1585,6 +2139,12 @@ onMounted(async () => {
             </div>
           </section>
 
+          <div class="segmented knowledge-mode-switch">
+            <button :class="{ active: knowledgePanel === 'qa' }" type="button" @click="switchKnowledgePanel('qa')">直接问答</button>
+            <button :class="{ active: knowledgePanel === 'quiz' }" type="button" @click="switchKnowledgePanel('quiz')">趣味闯关</button>
+          </div>
+
+          <template v-if="knowledgePanel === 'qa'">
           <div ref="knowledgeListRef" class="knowledge-chat" aria-label="知识问答消息">
             <article
               v-for="message in knowledgeMessages"
@@ -1593,7 +2153,23 @@ onMounted(async () => {
             >
               <p>{{ message.text }}</p>
               <template v-if="message.answer">
+                <div v-if="message.questionSuggestion" class="knowledge-guess">
+                  <span>猜你想问</span>
+                  <strong>{{ message.questionSuggestion.guessed_question }}</strong>
+                  <small>已按这个问题回答</small>
+                </div>
+                <div v-if="message.scopeStatus === 'out_of_scope'" class="knowledge-coverage knowledge-coverage--out-of-scope">
+                  <span>范围外</span>
+                  <small>心理知识限定</small>
+                </div>
+                <div v-else-if="message.coverageStatus" :class="['knowledge-coverage', `knowledge-coverage--${message.coverageStatus}`]">
+                  <span>{{ message.coverageStatus === "sufficient" ? "资料充分" : message.coverageStatus === "partial" ? "资料有限" : "资料不足" }}</span>
+                  <small>{{ message.confidence === "high" ? "高置信度" : message.confidence === "medium" ? "中置信度" : "低置信度" }}</small>
+                </div>
                 <p class="knowledge-explanation">{{ message.answer.explanation_3min }}</p>
+                <p v-if="message.coverageStatus === 'insufficient' && message.gapId" class="knowledge-gap-note">
+                  已记录为待补充主题：{{ message.gapId.slice(0, 8) }}
+                </p>
                 <section v-if="message.answer.actions.length" class="knowledge-section">
                   <strong>可以先做</strong>
                   <ul>
@@ -1606,8 +2182,19 @@ onMounted(async () => {
                     <li v-for="item in message.answer.seek_help_when" :key="item">{{ item }}</li>
                   </ul>
                 </section>
-                <section v-if="message.relatedArticles?.length" class="knowledge-sources" aria-label="回答来源">
+                <section v-if="message.sourceRefs?.length" class="knowledge-sources" aria-label="回答来源">
                   <span>来源</span>
+                  <button
+                    v-for="item in message.sourceRefs"
+                    :key="item.chunk_id || item.article_id"
+                    type="button"
+                    @click="openKnowledgeArticle(item.article_id)"
+                  >
+                    {{ item.article_title }} · {{ item.license || "未标注许可" }}
+                  </button>
+                </section>
+                <section v-else-if="message.relatedArticles?.length" class="knowledge-sources" aria-label="相关条目">
+                  <span>相关</span>
                   <button
                     v-for="item in message.relatedArticles"
                     :key="item.article_id"
@@ -1625,7 +2212,7 @@ onMounted(async () => {
             </article>
           </div>
 
-          <div class="knowledge-prompts">
+          <div v-if="shouldShowKnowledgePrompts" class="knowledge-prompts">
             <button
               v-for="prompt in knowledgePromptChips"
               :key="prompt"
@@ -1652,6 +2239,150 @@ onMounted(async () => {
               {{ isKnowledgeLoading ? "..." : "发送" }}
             </button>
           </form>
+          </template>
+
+          <template v-else>
+            <section v-if="!quizSession && !quizResult" class="quiz-home">
+              <div class="quiz-bank">
+                <span>题库</span>
+                <strong>{{ quizStats?.total ?? 2000 }} 题</strong>
+                <small>ABCD · 判断 · 图片题</small>
+              </div>
+              <div class="quiz-modes">
+                <button
+                  v-for="option in quizModeOptions"
+                  :key="option.id"
+                  :class="['quiz-mode-card', { active: quizMode === option.id }]"
+                  type="button"
+                  @click="selectQuizMode(option.id)"
+                >
+                  <strong>{{ option.label }}</strong>
+                  <span>{{ option.description }}</span>
+                </button>
+              </div>
+              <button class="primary-action" type="button" :disabled="isQuizLoading" @click="startKnowledgeQuiz()">
+                {{ isQuizLoading ? "出题中..." : "开始闯关" }}
+              </button>
+            </section>
+
+            <section v-else-if="quizSession && !quizResult && currentQuizQuestion" class="quiz-play">
+              <div class="quiz-progress">
+                <div class="quiz-progress__head">
+                  <div>
+                    <span>{{ activeQuizIndex + 1 }} / {{ quizSession.total }}</span>
+                    <strong>{{ currentQuizQuestion.topic }}</strong>
+                    <small>{{ quizTypeLabel(currentQuizQuestion.type) }} · 难度 {{ currentQuizQuestion.difficulty }}</small>
+                  </div>
+                  <button class="quiz-reset-action" type="button" @click="resetKnowledgeQuiz">重新开始</button>
+                </div>
+                <div class="quiz-progress__bar"><i :style="{ width: `${quizProgressPercent}%` }"></i></div>
+              </div>
+
+              <article class="quiz-question">
+                <div v-if="currentQuizQuestion.visual" class="quiz-visual" :class="`quiz-visual--${currentQuizQuestion.visual.kind}`">
+                  <strong>{{ currentQuizQuestion.visual.title }}</strong>
+                  <span v-for="line in currentQuizQuestion.visual.lines" :key="line">{{ line }}</span>
+                </div>
+                <h2>{{ currentQuizQuestion.stem }}</h2>
+                <div class="quiz-options">
+                  <button
+                    v-for="option in currentQuizQuestion.options"
+                    :key="option.key"
+                    :class="{ active: quizAnswers[currentQuizQuestion.question_id] === option.key }"
+                    type="button"
+                    @click="chooseQuizAnswer(currentQuizQuestion.question_id, option.key)"
+                  >
+                    <span>{{ option.key }}</span>
+                    <strong>{{ option.text }}</strong>
+                  </button>
+                </div>
+              </article>
+
+              <div class="quiz-actions">
+                <button class="secondary-action" type="button" :disabled="activeQuizIndex === 0" @click="goQuizQuestion(-1)">上一题</button>
+                <button
+                  v-if="activeQuizIndex < quizSession.total - 1"
+                  class="primary-action"
+                  type="button"
+                  :disabled="!quizAnswers[currentQuizQuestion.question_id]"
+                  @click="goQuizQuestion(1)"
+                >
+                  下一题
+                </button>
+                <button
+                  v-else
+                  class="primary-action"
+                  type="button"
+                  :disabled="!canSubmitQuiz || isQuizLoading"
+                  @click="submitKnowledgeQuiz"
+                >
+                  {{ isQuizLoading ? "判分中..." : "交卷" }}
+                </button>
+              </div>
+            </section>
+
+            <section v-else-if="quizResult" class="quiz-result">
+              <div class="quiz-title-card">
+                <span>{{ quizResult.correct }} / {{ quizResult.total }}</span>
+                <h2>{{ quizResult.title }}</h2>
+                <p>{{ quizResult.title_description }}</p>
+              </div>
+              <div class="quiz-result-meta">
+                <span>正确率 {{ Math.round(quizResult.accuracy * 100) }}%</span>
+                <span>错题 {{ quizWrongCount }} 道</span>
+              </div>
+              <div class="quiz-review-grid" aria-label="题号总览">
+                <button
+                  v-for="(item, index) in quizResult.review"
+                  :key="item.question_id"
+                  :class="['quiz-review-number', { active: activeReviewIndex === index, correct: item.is_correct, wrong: !item.is_correct }]"
+                  type="button"
+                  @click="activeReviewIndex = index"
+                >
+                  {{ index + 1 }}
+                </button>
+              </div>
+              <article v-if="activeReviewItem" class="quiz-review-detail">
+                <div class="quiz-review-detail__head">
+                  <span :class="activeReviewItem.is_correct ? 'correct' : 'wrong'">
+                    第 {{ activeReviewIndex + 1 }} 题 · {{ activeReviewItem.is_correct ? "答对" : "答错" }}
+                  </span>
+                  <small>{{ activeReviewItem.question.topic }} · {{ quizTypeLabel(activeReviewItem.question.type) }}</small>
+                </div>
+                <div v-if="activeReviewItem.question.visual" class="quiz-visual" :class="`quiz-visual--${activeReviewItem.question.visual.kind}`">
+                  <strong>{{ activeReviewItem.question.visual.title }}</strong>
+                  <span v-for="line in activeReviewItem.question.visual.lines" :key="line">{{ line }}</span>
+                </div>
+                <h3>{{ activeReviewItem.question.stem }}</h3>
+                <div class="quiz-review-options">
+                  <div
+                    v-for="option in activeReviewItem.question.options"
+                    :key="option.key"
+                    :class="{
+                      correct: option.key === activeReviewItem.correct_answer,
+                      wrong: option.key === activeReviewItem.user_answer && !activeReviewItem.is_correct,
+                    }"
+                  >
+                    <span>{{ option.key }}</span>
+                    <strong>{{ option.text }}</strong>
+                  </div>
+                </div>
+                <div class="quiz-answer-compare">
+                  <p>你的答案：{{ reviewAnswerLabel(activeReviewItem.user_answer) }}</p>
+                  <p>正确答案：{{ reviewAnswerLabel(activeReviewItem.correct_answer) }}</p>
+                </div>
+                <section class="quiz-explanation">
+                  <strong>本题讲解</strong>
+                  <p>{{ activeReviewItem.explanation }}</p>
+                  <small>{{ activeReviewItem.source_title }}</small>
+                </section>
+              </article>
+              <div class="quiz-actions">
+                <button class="secondary-action" type="button" @click="resetKnowledgeQuiz">返回模式选择</button>
+                <button class="primary-action" type="button" @click="startKnowledgeQuiz(quizResult.mode)">再来一轮</button>
+              </div>
+            </section>
+          </template>
         </section>
 
         <section v-else class="tab-page profile-page">
@@ -1989,6 +2720,11 @@ onMounted(async () => {
   color: #9a4a25;
 }
 
+.notice--info {
+  background: #edf7ef;
+  color: var(--teal-dark);
+}
+
 .screen-header {
   display: grid;
   gap: 12px;
@@ -2034,6 +2770,108 @@ onMounted(async () => {
   font-weight: 900;
 }
 
+.mood-checkin-card {
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.mood-checkin-card .card-title {
+  align-items: flex-start;
+}
+
+.mood-checkin-card .card-title > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.mood-checkin-card .card-title h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.mood-checkin-card .card-title strong {
+  min-width: 50px;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: #fff6e4;
+  color: #8a5517;
+  text-align: center;
+  font-size: 14px;
+}
+
+.mood-scale-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mood-scale {
+  display: grid;
+  gap: 7px;
+}
+
+.mood-scale span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mood-scale strong {
+  color: var(--teal-dark);
+}
+
+.mood-scale input {
+  width: 100%;
+  accent-color: var(--teal);
+}
+
+.mood-tags,
+.trend-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mood-tags button,
+.trend-tags span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: var(--text-muted);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mood-tags button.active,
+.trend-tags span {
+  border-color: rgba(15, 118, 110, 0.2);
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.mood-note {
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 12px 14px;
+  color: var(--text-main);
+  outline: none;
+}
+
 .mood-card {
   min-height: 164px;
   border-radius: 28px;
@@ -2056,6 +2894,72 @@ onMounted(async () => {
 .mood-card strong {
   font-size: 24px;
   line-height: 1.2;
+}
+
+.trend-card {
+  display: grid;
+  gap: 12px;
+}
+
+.range-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(44px, 1fr));
+  gap: 4px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  padding: 4px;
+}
+
+.range-switch button {
+  min-height: 30px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.range-switch button.active {
+  background: #ffffff;
+  color: var(--teal-dark);
+  box-shadow: 0 5px 14px rgba(38, 57, 52, 0.1);
+}
+
+.range-switch button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.trend-bars {
+  min-height: 88px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(34px, 1fr);
+  gap: 8px;
+  align-items: end;
+  overflow-x: auto;
+  padding-top: 4px;
+}
+
+.trend-bar {
+  min-width: 34px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.trend-bar i {
+  width: 16px;
+  border-radius: 999px 999px 6px 6px;
+  background: linear-gradient(180deg, var(--teal), #f0c66f);
+}
+
+.trend-bar span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .summary-card,
@@ -2164,6 +3068,11 @@ onMounted(async () => {
   font-size: 12px;
 }
 
+.quick-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .thread-tabs button.active {
   color: var(--teal-dark);
   background: var(--mint-soft);
@@ -2183,11 +3092,57 @@ onMounted(async () => {
   max-width: 84%;
   border-radius: 22px;
   padding: 13px 15px;
+  display: grid;
+  gap: 9px;
 }
 
 .message p {
   margin: 0;
   line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.graph-status,
+.stream-status {
+  border-radius: 999px;
+  padding: 6px 8px;
+  background: #f4f7f5;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.stream-status {
+  background: #fff6ed;
+  color: #9a4a25;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.message-actions button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: var(--teal-dark);
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.message-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .message--assistant {
@@ -2235,7 +3190,7 @@ onMounted(async () => {
 .knowledge-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: 10px;
 }
 
@@ -2272,6 +3227,15 @@ onMounted(async () => {
   margin: 2px 0 0;
   font-size: 18px;
   line-height: 1.25;
+}
+
+.knowledge-mode-switch {
+  align-self: start;
+  margin-bottom: 0;
+}
+
+.knowledge-mode-switch button {
+  min-height: 40px;
 }
 
 .knowledge-chat {
@@ -2311,6 +3275,80 @@ onMounted(async () => {
 .knowledge-explanation {
   margin-top: 8px !important;
   color: var(--text-muted);
+}
+
+.knowledge-guess {
+  margin-top: 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(30, 118, 103, 0.16);
+  border-radius: 14px;
+  padding: 9px 10px;
+  background: #f4faf6;
+}
+
+.knowledge-guess span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-guess strong {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.knowledge-guess small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.knowledge-coverage {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.knowledge-coverage small {
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.74;
+}
+
+.knowledge-coverage--sufficient {
+  background: #e5f4ed;
+  color: #247057;
+}
+
+.knowledge-coverage--partial {
+  background: #fff2d7;
+  color: #8a5517;
+}
+
+.knowledge-coverage--insufficient {
+  background: #ffece2;
+  color: #9a4a25;
+}
+
+.knowledge-coverage--out-of-scope {
+  background: #edf0f3;
+  color: #46515c;
+}
+
+.knowledge-gap-note {
+  margin-top: 8px !important;
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: #fff6ed;
+  color: #9a4a25;
+  font-size: 13px;
 }
 
 .knowledge-section {
@@ -2418,6 +3456,414 @@ onMounted(async () => {
 
 .knowledge-composer button:disabled {
   background: #c7d5cf;
+}
+
+.quiz-home,
+.quiz-play,
+.quiz-result {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.quiz-play {
+  grid-template-rows: auto auto auto;
+  align-content: start;
+}
+
+.quiz-bank,
+.quiz-progress,
+.quiz-question,
+.quiz-title-card,
+.quiz-review article {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-bank {
+  display: grid;
+  gap: 4px;
+}
+
+.quiz-bank span,
+.quiz-progress span,
+.quiz-title-card span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-bank strong,
+.quiz-title-card h2 {
+  color: var(--text-main);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.quiz-bank small,
+.quiz-progress small,
+.quiz-review small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quiz-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.quiz-mode-card {
+  min-height: 78px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  background: #ffffff;
+  color: var(--text-main);
+}
+
+.quiz-mode-card.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.quiz-mode-card strong {
+  font-size: 16px;
+}
+
+.quiz-mode-card span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quiz-progress {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.quiz-progress__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.quiz-progress__head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quiz-progress strong {
+  font-size: 17px;
+}
+
+.quiz-reset-action {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.quiz-progress__bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f3;
+}
+
+.quiz-progress__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.quiz-question {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.quiz-question h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.quiz-visual {
+  min-height: 82px;
+  border-radius: 16px;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: center;
+  background: linear-gradient(135deg, #eaf6f1, #fff7e8);
+}
+
+.quiz-visual strong {
+  flex: 0 0 100%;
+  color: var(--teal-dark);
+  font-size: 15px;
+}
+
+.quiz-visual span {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quiz-options {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-options button {
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 8px;
+  align-items: center;
+  background: #fbfdfb;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.quiz-options button.active {
+  border-color: var(--teal);
+  background: #e8f4ee;
+}
+
+.quiz-options button span {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: var(--teal-dark);
+  font-weight: 900;
+}
+
+.quiz-options button strong {
+  color: var(--text-main);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.quiz-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quiz-actions .primary-action,
+.quiz-actions .secondary-action {
+  min-height: 46px;
+  border-radius: 15px;
+}
+
+.quiz-result {
+  overflow-y: auto;
+}
+
+.quiz-title-card {
+  display: grid;
+  gap: 7px;
+  background: linear-gradient(135deg, #ffffff, #edf7ef);
+}
+
+.quiz-title-card h2,
+.quiz-title-card p {
+  margin: 0;
+}
+
+.quiz-title-card p {
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.quiz-result-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quiz-result-meta span {
+  border-radius: 14px;
+  padding: 10px;
+  background: #ffffff;
+  color: var(--text-main);
+  text-align: center;
+  font-weight: 900;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-review {
+  display: grid;
+  gap: 8px;
+}
+
+.quiz-review-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+}
+
+.quiz-review-number {
+  min-width: 0;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-review-number.correct {
+  background: #e8f4ee;
+  color: #247057;
+}
+
+.quiz-review-number.wrong {
+  background: #fff0e8;
+  color: #9a4a25;
+}
+
+.quiz-review-number.active {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(30, 118, 103, 0.12);
+}
+
+.quiz-review-detail {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.quiz-review-detail__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.quiz-review-detail__head span {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-review-detail__head span.correct {
+  color: #247057;
+}
+
+.quiz-review-detail__head span.wrong {
+  color: #9a4a25;
+}
+
+.quiz-review-detail__head small,
+.quiz-explanation small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quiz-review-detail h3 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.quiz-review-options {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-review-options div {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  background: #fbfdfb;
+}
+
+.quiz-review-options div.correct {
+  border-color: rgba(36, 112, 87, 0.38);
+  background: #e8f4ee;
+}
+
+.quiz-review-options div.wrong {
+  border-color: rgba(154, 74, 37, 0.34);
+  background: #fff0e8;
+}
+
+.quiz-review-options span {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: var(--teal-dark);
+  font-weight: 900;
+}
+
+.quiz-review-options strong,
+.quiz-explanation strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.quiz-answer-compare {
+  display: grid;
+  gap: 5px;
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: #f7faf8;
+}
+
+.quiz-answer-compare p,
+.quiz-explanation p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.quiz-explanation {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 
 .empty-chat {

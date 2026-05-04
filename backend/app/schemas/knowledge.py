@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -56,8 +57,138 @@ class ContinueChatPayload(BaseModel):
     thread_id: str | None = None
 
 
+class KnowledgeSourceRefResponse(BaseModel):
+    source_name: str
+    source_url: str | None = None
+    license: str | None = None
+    article_id: str
+    article_title: str
+    chunk_id: str | None = None
+    chunk_index: int | None = None
+    score: int | None = None
+
+
+class KnowledgeQuestionSuggestion(BaseModel):
+    original_question: str
+    guessed_question: str
+    confidence: Literal["high", "medium"]
+    matched_term: str
+
+
 class AskKnowledgeResponse(BaseModel):
     answer: KnowledgeAnswer
     related_articles: list[KnowledgeSearchItemResponse]
+    coverage_status: Literal["sufficient", "partial", "insufficient", "not_applicable"] = "sufficient"
+    scope_status: Literal["in_scope", "out_of_scope"] = "in_scope"
+    confidence: Literal["high", "medium", "low"] = "high"
+    source_refs: list[KnowledgeSourceRefResponse] = Field(default_factory=list)
+    question_suggestion: KnowledgeQuestionSuggestion | None = None
+    gap_id: str | None = None
     continue_chat_payload: ContinueChatPayload
     risk_level: str = "L0"
+
+
+class KnowledgeGapItemResponse(BaseModel):
+    gap_id: str
+    question: str
+    category: str | None
+    audience: str | None
+    coverage_status: str
+    confidence: str
+    top_score: int
+    status: str
+    hit_count: int
+    source_refs: list[dict]
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None = None
+
+
+class KnowledgeGapListResponse(BaseModel):
+    items: list[KnowledgeGapItemResponse]
+
+
+class ResolveKnowledgeGapRequest(BaseModel):
+    article_id: str | None = None
+    reviewer_note: str | None = None
+
+
+class KnowledgeGapMutationResponse(BaseModel):
+    gap_id: str
+    status: str
+
+
+QuizMode = Literal["10", "50", "100"]
+QuizQuestionType = Literal["single_choice", "true_false", "image"]
+
+
+class KnowledgeQuizOptionResponse(BaseModel):
+    key: str
+    text: str
+
+
+class KnowledgeQuizVisualResponse(BaseModel):
+    kind: str
+    title: str
+    lines: list[str]
+
+
+class KnowledgeQuizQuestionResponse(BaseModel):
+    question_id: str
+    type: QuizQuestionType
+    topic: str
+    difficulty: int = Field(ge=1, le=5)
+    stem: str
+    options: list[KnowledgeQuizOptionResponse]
+    visual: KnowledgeQuizVisualResponse | None = None
+    source_title: str
+    source_url: str
+
+
+class StartKnowledgeQuizRequest(BaseModel):
+    mode: QuizMode
+
+
+class KnowledgeQuizSessionResponse(BaseModel):
+    session_id: str
+    mode: QuizMode
+    total: int
+    questions: list[KnowledgeQuizQuestionResponse]
+
+
+class SubmitKnowledgeQuizAnswer(BaseModel):
+    question_id: str
+    answer: str
+
+
+class SubmitKnowledgeQuizRequest(BaseModel):
+    session_id: str
+    answers: list[SubmitKnowledgeQuizAnswer]
+
+
+class KnowledgeQuizReviewItem(BaseModel):
+    question_id: str
+    question: KnowledgeQuizQuestionResponse
+    is_correct: bool
+    user_answer: str | None
+    correct_answer: str
+    explanation: str
+    source_title: str
+    source_url: str
+
+
+class KnowledgeQuizResultResponse(BaseModel):
+    session_id: str
+    mode: QuizMode
+    total: int
+    correct: int
+    accuracy: float
+    title: str
+    title_description: str
+    review: list[KnowledgeQuizReviewItem]
+
+
+class KnowledgeQuizBankStatsResponse(BaseModel):
+    total: int
+    by_type: dict[str, int]
+    by_topic: dict[str, int]

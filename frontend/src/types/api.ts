@@ -1,6 +1,8 @@
 ﻿export type UserMode = "teen" | "adult";
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
+export type RiskLevel = "L0" | "L1" | "L2" | "L3";
+export type ChatStreamEventName = "token" | "graph_update" | "final";
 
 export interface CaptchaResponse {
   captcha_id: string;
@@ -114,7 +116,7 @@ export interface AssistantMessage {
   role: string;
   content: string;
   assistant_text: string;
-  risk_level: "L0" | "L1" | "L2" | "L3";
+  risk_level: RiskLevel;
   intent: string;
   suggested_actions: string[];
   session_summary: string;
@@ -134,7 +136,7 @@ export interface MessageItem {
   role: "user" | "assistant" | "system";
   content: string;
   input_type: string;
-  risk_level: "L0" | "L1" | "L2" | "L3" | null;
+  risk_level: RiskLevel | null;
   metadata: Record<string, unknown>;
   created_at: string;
 }
@@ -142,6 +144,31 @@ export interface MessageItem {
 export interface MessageListResponse {
   items: MessageItem[];
 }
+
+export interface ChatStreamTokenEvent {
+  text: string;
+}
+
+export interface ChatStreamGraphUpdateEvent {
+  node: string;
+  risk_level?: RiskLevel;
+}
+
+export interface ChatStreamFinalEvent {
+  thread_id: string;
+  message_id: string;
+  assistant_message_id: string;
+  assistant_text: string;
+  risk_level: RiskLevel;
+  intent: string;
+  suggested_actions: string[];
+  session_summary: string;
+  should_write_memory: boolean;
+  risk_reasons?: string[];
+  memory_candidates?: unknown[];
+}
+
+export type ChatStreamEventData = ChatStreamTokenEvent | ChatStreamGraphUpdateEvent | ChatStreamFinalEvent;
 
 export interface MemoryItem {
   memory_id: string;
@@ -155,11 +182,32 @@ export interface ListMemoriesResponse {
   items: MemoryItem[];
 }
 
+export interface MoodLogRequest {
+  mood_score: number;
+  anxiety_score?: number | null;
+  energy_score?: number | null;
+  sleep_quality?: number | null;
+  mood_tags?: string[];
+  note?: string | null;
+}
+
+export interface MoodLogResponse {
+  log_id: string;
+  created_at: string;
+  mood_score: number;
+}
+
+export interface DailyMoodPoint {
+  date: string;
+  mood_score: number;
+  tags: string[];
+}
+
 export interface MoodTrendResponse {
-  range: string;
+  range: "7d" | "30d";
   avg_mood_score: number;
   top_tags: string[];
-  daily: Array<Record<string, unknown>>;
+  daily: DailyMoodPoint[];
   summary: string;
 }
 
@@ -207,9 +255,33 @@ export interface KnowledgeAnswer {
   seek_help_when: string[];
 }
 
+export interface KnowledgeSourceRef {
+  source_name: string;
+  source_url: string | null;
+  license: string | null;
+  article_id: string;
+  article_title: string;
+  chunk_id?: string | null;
+  chunk_index?: number | null;
+  score?: number | null;
+}
+
+export interface KnowledgeQuestionSuggestion {
+  original_question: string;
+  guessed_question: string;
+  confidence: "high" | "medium";
+  matched_term: string;
+}
+
 export interface AskKnowledgeResponse {
   answer: KnowledgeAnswer;
   related_articles: KnowledgeSearchItem[];
+  coverage_status: "sufficient" | "partial" | "insufficient" | "not_applicable";
+  scope_status: "in_scope" | "out_of_scope";
+  confidence: "high" | "medium" | "low";
+  source_refs: KnowledgeSourceRef[];
+  question_suggestion: KnowledgeQuestionSuggestion | null;
+  gap_id: string | null;
   continue_chat_payload: {
     mode: string;
     context_type: string;
@@ -302,4 +374,109 @@ export interface TestHistoryItem {
 
 export interface TestHistoryResponse {
   items: TestHistoryItem[];
+}
+
+export interface KnowledgeGapItem {
+  gap_id: string;
+  question: string;
+  category: string | null;
+  audience: string | null;
+  coverage_status: string;
+  confidence: string;
+  top_score: number;
+  status: string;
+  hit_count: number;
+  source_refs: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+}
+
+export interface KnowledgeGapListResponse {
+  items: KnowledgeGapItem[];
+}
+
+export interface ResolveKnowledgeGapRequest {
+  article_id?: string | null;
+  reviewer_note?: string | null;
+}
+
+export interface KnowledgeGapMutationResponse {
+  gap_id: string;
+  status: string;
+}
+
+export type KnowledgeQuizMode = "10" | "50" | "100";
+export type KnowledgeQuizQuestionType = "single_choice" | "true_false" | "image";
+
+export interface KnowledgeQuizOption {
+  key: string;
+  text: string;
+}
+
+export interface KnowledgeQuizVisual {
+  kind: string;
+  title: string;
+  lines: string[];
+}
+
+export interface KnowledgeQuizQuestion {
+  question_id: string;
+  type: KnowledgeQuizQuestionType;
+  topic: string;
+  difficulty: number;
+  stem: string;
+  options: KnowledgeQuizOption[];
+  visual: KnowledgeQuizVisual | null;
+  source_title: string;
+  source_url: string;
+}
+
+export interface StartKnowledgeQuizRequest {
+  mode: KnowledgeQuizMode;
+}
+
+export interface KnowledgeQuizSessionResponse {
+  session_id: string;
+  mode: KnowledgeQuizMode;
+  total: number;
+  questions: KnowledgeQuizQuestion[];
+}
+
+export interface SubmitKnowledgeQuizAnswer {
+  question_id: string;
+  answer: string;
+}
+
+export interface SubmitKnowledgeQuizRequest {
+  session_id: string;
+  answers: SubmitKnowledgeQuizAnswer[];
+}
+
+export interface KnowledgeQuizReviewItem {
+  question_id: string;
+  question: KnowledgeQuizQuestion;
+  is_correct: boolean;
+  user_answer: string | null;
+  correct_answer: string;
+  explanation: string;
+  source_title: string;
+  source_url: string;
+}
+
+export interface KnowledgeQuizResultResponse {
+  session_id: string;
+  mode: KnowledgeQuizMode;
+  total: number;
+  correct: number;
+  accuracy: number;
+  title: string;
+  title_description: string;
+  review: KnowledgeQuizReviewItem[];
+}
+
+export interface KnowledgeQuizBankStatsResponse {
+  total: number;
+  by_type: Record<string, number>;
+  by_topic: Record<string, number>;
 }

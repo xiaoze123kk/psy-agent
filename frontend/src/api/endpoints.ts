@@ -6,23 +6,33 @@ import type {
   CompleteAttemptResponse,
   CurrentUserResponse,
   KnowledgeArticleResponse,
+  KnowledgeGapListResponse,
+  KnowledgeGapMutationResponse,
+  KnowledgeQuizBankStatsResponse,
+  KnowledgeQuizResultResponse,
+  KnowledgeQuizSessionResponse,
   KnowledgeSearchResponse,
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
   MessageListResponse,
+  MoodLogRequest,
+  MoodLogResponse,
   MoodTrendResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
   RegisterRequest,
   RegisterResponse,
+  ResolveKnowledgeGapRequest,
   SendMessageRequest,
   SendMessageResponse,
   StartAttemptResponse,
+  StartKnowledgeQuizRequest,
   StartThreadRequest,
   StartThreadResponse,
   SubmitAnswerRequest,
+  SubmitKnowledgeQuizRequest,
   TestDetailResponse,
   TestHistoryResponse,
   TestListItem,
@@ -97,6 +107,34 @@ export class CounselingApi {
 
   askKnowledge(payload: AskKnowledgeRequest): Promise<AskKnowledgeResponse> {
     return this.client.post<AskKnowledgeResponse, AskKnowledgeRequest>("/api/v1/knowledge/ask", payload);
+  }
+
+  listKnowledgeGaps(status = "open", limit = 50): Promise<KnowledgeGapListResponse> {
+    const params = new URLSearchParams({ status, limit: String(limit) });
+    return this.client.get<KnowledgeGapListResponse>(`/api/v1/knowledge/gaps?${params.toString()}`);
+  }
+
+  resolveKnowledgeGap(gapId: string, payload: ResolveKnowledgeGapRequest): Promise<KnowledgeGapMutationResponse> {
+    return this.client.post<KnowledgeGapMutationResponse, ResolveKnowledgeGapRequest>(
+      `/api/v1/knowledge/gaps/${gapId}/resolve`,
+      payload,
+    );
+  }
+
+  getKnowledgeQuizStats(): Promise<KnowledgeQuizBankStatsResponse> {
+    return this.client.get<KnowledgeQuizBankStatsResponse>("/api/v1/knowledge/quiz/stats");
+  }
+
+  startKnowledgeQuiz(payload: StartKnowledgeQuizRequest): Promise<KnowledgeQuizSessionResponse> {
+    return this.client.post<KnowledgeQuizSessionResponse, StartKnowledgeQuizRequest>("/api/v1/knowledge/quiz/start", payload);
+  }
+
+  submitKnowledgeQuiz(payload: SubmitKnowledgeQuizRequest): Promise<KnowledgeQuizResultResponse> {
+    return this.client.post<KnowledgeQuizResultResponse, SubmitKnowledgeQuizRequest>("/api/v1/knowledge/quiz/submit", payload);
+  }
+
+  createMoodLog(payload: MoodLogRequest): Promise<MoodLogResponse> {
+    return this.client.post<MoodLogResponse, MoodLogRequest>("/api/v1/moods", payload);
   }
 
   getMoodTrend(range: "7d" | "30d"): Promise<MoodTrendResponse> {
