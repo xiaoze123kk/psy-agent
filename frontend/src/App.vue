@@ -1,5 +1,6 @@
 ﻿﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import html2canvas from "html2canvas";
 
 import { ApiClient } from "./api/client";
 import { CounselingApi } from "./api/endpoints";
@@ -417,6 +418,7 @@ let xfSourceNode: MediaStreamAudioSourceNode | null = null;
 const shareCardVisible = ref(false);
 const shareCardData = ref<ShareCardData | null>(null);
 const shareCardCopied = ref(false);
+const shareCardSaving = ref(false);
 
 // --- Sprint 3: Feedback ---
 const feedbackVisible = ref(false);
@@ -2004,17 +2006,22 @@ function stopBrowserSpeech(): void {
 
 function generateShareCard() {
   if (!testResult.value) return;
-  const result = testResult.value;
-  const testType = result.test_type === "state" ? "mood_check" : "sixteen_type";
+  const r = testResult.value;
+  const testType = r.test_type === "state" ? "mood_check" as const : "sixteen_type" as const;
+  const title = testType === "mood_check" ? "我的今日状态观察" : "我的16型人格镜像";
+  const highlights = [
+    ...r.strengths.slice(0, 2),
+    ...r.blind_spots.slice(0, 1),
+  ];
   shareCardData.value = {
-    title: result.result_title,
-    subtitle: "这是一面镜子，不是诊断",
-    summary: result.summary,
-    highlights: [...result.strengths.slice(0, 2), ...result.blind_spots.slice(0, 1)],
-    disclaimer: "结果仅供自我观察，不代表临床诊断或心理治疗结论。",
     testType,
-    resultCode: result.result_code,
-    resultLabel: result.result_title,
+    title,
+    subtitle: "这是一面镜子，不是诊断",
+    resultLabel: r.result_title,
+    summary: r.summary,
+    highlights,
+    disclaimer: "结果仅供自我观察，不代表临床诊断或心理治疗结论。",
+    sixteenTypeCode: r.profile.sixteen_type_code ?? null,
   };
   shareCardVisible.value = true;
   shareCardCopied.value = false;
@@ -2027,14 +2034,15 @@ function closeShareCard() {
 
 async function copyShareCard() {
   if (!shareCardData.value) return;
+  const d = shareCardData.value;
   const lines = [
-    shareCardData.value.title,
-    `—— ${shareCardData.value.subtitle}`,
+    `${d.title} · ${d.resultLabel}`,
+    `—— ${d.subtitle}`,
     "",
-    shareCardData.value.summary,
-    shareCardData.value.highlights.length > 0 ? `要点：${shareCardData.value.highlights.join("、")}` : "",
+    d.summary,
+    d.highlights.length > 0 ? `要点：${d.highlights.join(" / ")}` : "",
     "",
-    `⚠ ${shareCardData.value.disclaimer}`,
+    d.disclaimer,
   ].filter(Boolean);
   const text = lines.join("\n");
   try {
@@ -2043,6 +2051,33 @@ async function copyShareCard() {
     setTimeout(() => { shareCardCopied.value = false; }, 2000);
   } catch {
     // Clipboard API not available
+  }
+}
+
+async function downloadShareImage() {
+  if (!shareCardData.value) return;
+  shareCardSaving.value = true;
+  const el = document.querySelector(".share-card") as HTMLElement | null;
+  if (!el) {
+    shareCardSaving.value = false;
+    return;
+  }
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      backgroundColor: null,
+      useCORS: true,
+      logging: false,
+    });
+    const dataUrl = canvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.download = `share-${shareCardData.value.testType}-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
+  } catch {
+    // html2canvas failed silently
+  } finally {
+    shareCardSaving.value = false;
   }
 }
 
@@ -2085,10 +2120,11 @@ function closeFeedback() {
 async function loadWeeklySummary() {
   isWeeklySummaryLoading.value = true;
   isWeeklySummaryOpen.value = true;
+  const rangeLabel = moodRange.value === "30d" ? "30天" : "近7天";
   try {
     if (isDemoMode.value || !accessToken.value) {
       weeklySummary.value = {
-        range: "7d",
+        range: rangeLabel,
         summary: moodTrend.value?.summary || "这周你记录了情绪变化，继续关照自己。",
         top_tags: moodTrend.value?.top_tags || [],
         suggested_actions: ["试试记下今天的情绪", "给自己一个轻松的时段"],
@@ -2096,10 +2132,14 @@ async function loadWeeklySummary() {
       };
       return;
     }
-    weeklySummary.value = await api.getWeeklySummary();
+    const result = await api.getWeeklySummary();
+    weeklySummary.value = {
+      ...result,
+      range: rangeLabel,
+    };
   } catch {
     weeklySummary.value = {
-      range: "7d",
+      range: rangeLabel,
       summary: "暂时无法生成周小结，请稍后再试。",
       top_tags: [],
       suggested_actions: [],
@@ -2420,7 +2460,7 @@ onMounted(async () => {
             </div>
             <small v-if="moodTrendPoints.length === 0" class="empty-copy">暂无趋势数据。</small>
             <button class="text-action weekly-summary-btn" type="button" :disabled="isWeeklySummaryLoading" @click="loadWeeklySummary">
-              {{ isWeeklySummaryLoading ? '加载中...' : '查看本周情绪小结' }}
+              {{ isWeeklySummaryLoading ? '加载中...' : moodRange === '30d' ? '查看近30天小结' : '查看本周情绪小结' }}
             </button>
           </section>
 
@@ -3138,16 +3178,23 @@ onMounted(async () => {
 
       <!-- 分享卡弹层 -->
       <section v-if="shareCardVisible && shareCardData" class="share-card-overlay" role="dialog" aria-modal="true" @click.self="closeShareCard">
-        <div class="share-card">
-          <h2 class="share-card__title">{{ shareCardData.title }}</h2>
-          <p class="share-card__subtitle">—— {{ shareCardData.subtitle }}</p>
+        <div class="share-card" :class="'share-card--' + shareCardData.testType">
+          <header class="share-card__header">
+            <h2 class="share-card__title">{{ shareCardData.resultLabel }}</h2>
+            <p class="share-card__subtitle">{{ shareCardData.title }}</p>
+          </header>
+          <p class="share-card__tagline">—— {{ shareCardData.subtitle }}</p>
+          <p class="share-card__type-badge" v-if="shareCardData.sixteenTypeCode">{{ shareCardData.sixteenTypeCode }}</p>
           <p class="share-card__summary">{{ shareCardData.summary }}</p>
           <div v-if="shareCardData.highlights.length" class="share-card__highlights">
             <span v-for="h in shareCardData.highlights" :key="h">{{ h }}</span>
           </div>
-          <p class="share-card__disclaimer">⚠ {{ shareCardData.disclaimer }}</p>
+          <p class="share-card__disclaimer">{{ shareCardData.disclaimer }}</p>
           <div class="share-card__actions">
-            <button class="primary-action" type="button" @click="copyShareCard">
+            <button class="primary-action" type="button" :disabled="shareCardSaving" @click="downloadShareImage">
+              {{ shareCardSaving ? '生成中...' : '保存图片' }}
+            </button>
+            <button class="secondary-action" type="button" @click="copyShareCard">
               {{ shareCardCopied ? '已复制' : '复制文案' }}
             </button>
             <button class="text-action" type="button" @click="closeShareCard">关闭</button>
@@ -3189,7 +3236,7 @@ onMounted(async () => {
       <!-- 每周情绪小结弹层 -->
       <section v-if="isWeeklySummaryOpen && weeklySummary" class="weekly-summary-overlay" role="dialog" aria-modal="true" @click.self="closeWeeklySummary">
         <div class="weekly-summary-panel">
-          <h2>本周情绪小结</h2>
+          <h2>{{ moodRange === '30d' ? '近30天情绪小结' : '本周情绪小结' }}</h2>
           <p class="weekly-summary__range">{{ weeklySummary.range }} 回顾</p>
           <p class="weekly-summary__text">{{ weeklySummary.summary }}</p>
           <div v-if="weeklySummary.top_tags.length" class="weekly-summary__tags">
@@ -3204,7 +3251,6 @@ onMounted(async () => {
               <li v-for="action in weeklySummary.suggested_actions" :key="action">{{ action }}</li>
             </ul>
           </div>
-          <small class="weekly-summary__generated">{{ weeklySummary.generated_by === 'llm' ? '由 AI 生成' : '基于趋势分析生成' }}</small>
           <button class="text-action" type="button" @click="closeWeeklySummary">关闭</button>
         </div>
       </section>
@@ -5332,7 +5378,7 @@ input:focus-visible {
 .share-card-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.45);
   display: grid;
   place-items: center;
   z-index: 200;
@@ -5340,79 +5386,125 @@ input:focus-visible {
 }
 
 .share-card {
-  max-width: 360px;
+  max-width: 380px;
   width: 100%;
-  padding: 28px 24px;
+  padding: 32px 26px 26px;
   border-radius: 20px;
-  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
   color: #fff;
   display: grid;
   gap: 14px;
-  box-shadow: 0 18px 50px rgba(102, 126, 234, 0.35);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.share-card--mood_check {
+  background: linear-gradient(145deg, #0d9488 0%, #0f766e 55%, #115e59 100%);
+}
+
+.share-card--sixteen_type {
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
+}
+
+.share-card__header {
+  display: grid;
+  gap: 6px;
 }
 
 .share-card__title {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 800;
   line-height: 1.25;
+  letter-spacing: 0.02em;
 }
 
 .share-card__subtitle {
   margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+}
+
+.share-card__tagline {
+  margin: 0;
   font-size: 13px;
-  opacity: 0.85;
-  border-left: 3px solid rgba(255,255,255,0.5);
+  font-style: italic;
+  opacity: 0.8;
+  border-left: 3px solid rgba(255, 255, 255, 0.45);
   padding-left: 10px;
+}
+
+.share-card__type-badge {
+  margin: 0;
+  display: inline-block;
+  font-size: 36px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  opacity: 0.3;
+  justify-self: end;
+  line-height: 1;
 }
 
 .share-card__summary {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 14.5px;
+  line-height: 1.7;
   opacity: 0.95;
 }
 
 .share-card__highlights {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .share-card__highlights span {
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.2);
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .share-card__disclaimer {
-  margin: 8px 0 0;
-  font-size: 12px;
-  opacity: 0.7;
-  line-height: 1.5;
-  border-top: 1px solid rgba(255,255,255,0.25);
-  padding-top: 12px;
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  opacity: 0.65;
+  line-height: 1.55;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 14px;
 }
 
 .share-card__actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .share-card__actions .primary-action {
   flex: 1;
+  min-width: 90px;
   padding: 10px 18px;
   border-radius: 14px;
   font-weight: 700;
   font-size: 14px;
-  background: rgba(255,255,255,0.95);
-  color: var(--teal-dark);
+  background: rgba(255, 255, 255, 0.95);
+  color: #1e293b;
+}
+
+.share-card__actions .secondary-action {
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 
 .share-card__actions .text-action {
   background: transparent;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255, 255, 255, 0.85);
   font-weight: 600;
 }
 
@@ -5617,10 +5709,4 @@ input:focus-visible {
   line-height: 1.5;
 }
 
-.weekly-summary__generated {
-  display: block;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 12px;
-}
 </style>

@@ -623,12 +623,12 @@ export interface WeeklySummaryResponse {
 // --- Sprint 3: Share Card ---
 
 export interface ShareCardData {
+  testType: "mood_check" | "sixteen_type";
   title: string;
   subtitle: string;
+  resultLabel: string;
   summary: string;
   highlights: string[];
   disclaimer: string;
-  testType: "mood_check" | "sixteen_type";
-  resultCode?: string;
-  resultLabel?: string;
+  sixteenTypeCode: string | null;
 }
