@@ -40,8 +40,11 @@ export class ApiClient {
     });
   }
 
-  async delete<T>(path: string): Promise<T> {
-    return this.request<T>(path, { method: "DELETE" });
+  async delete<T, B = unknown>(path: string, body?: B): Promise<T> {
+    return this.request<T>(path, {
+      method: "DELETE",
+      body: body ? JSON.stringify(body) : undefined,
+    });
   }
 
   async streamPost<B = unknown>(path: string, body: B, onEvent: SseEventHandler): Promise<void> {

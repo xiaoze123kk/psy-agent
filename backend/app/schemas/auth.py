@@ -88,3 +88,4 @@ class CurrentUserResponse(BaseModel):
     companion_style: str
     voice_enabled: bool
     save_voice_audio: bool
+    save_transcript: bool

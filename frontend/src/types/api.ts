@@ -78,6 +78,7 @@ export interface CurrentUserResponse {
   companion_style: string;
   voice_enabled: boolean;
   save_voice_audio: boolean;
+  save_transcript: boolean;
 }
 
 export interface StartThreadRequest {
@@ -206,11 +207,54 @@ export interface StatusResponse {
   status: string;
 }
 
+export type PrivacyDataScope = "memories" | "chat" | "moods" | "feedback" | "voice" | "all_non_account";
+
+export interface PrivacyDataCounts {
+  memories: number;
+  chat_threads: number;
+  chat_messages: number;
+  mood_logs: number;
+  test_history: number;
+  feedback: number;
+  voice_sessions: number;
+  risk_events: number;
+}
+
+export interface PrivacySummaryResponse {
+  user_id: string;
+  user_mode: UserMode;
+  settings: {
+    memory_mode: MemoryMode;
+    voice_enabled: boolean;
+    save_voice_audio: boolean;
+    save_transcript: boolean;
+  };
+  data_counts: PrivacyDataCounts;
+  latest_activity_at: string | null;
+}
+
+export interface DataDeleteRequest {
+  scope: PrivacyDataScope;
+}
+
+export interface AccountDeleteRequest {
+  confirmation: "DELETE";
+}
+
+export interface PrivacyMutationResponse {
+  status: string;
+  scope: string;
+  affected_counts: Record<string, number>;
+}
+
+export type PersonalDataExport = Record<string, unknown>;
+
 export interface UserSettingsUpdateRequest {
   memory_mode?: MemoryMode;
   companion_style?: string;
   voice_enabled?: boolean;
   save_voice_audio?: boolean;
+  save_transcript?: boolean;
 }
 
 export interface UserSettingsResponse {
@@ -218,6 +262,7 @@ export interface UserSettingsResponse {
   companion_style: string;
   voice_enabled: boolean;
   save_voice_audio: boolean;
+  save_transcript: boolean;
 }
 
 export interface MoodLogRequest {

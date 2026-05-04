@@ -26,6 +26,9 @@ import type {
   MessageItem,
   MoodLogRequest,
   MoodTrendResponse,
+  PersonalDataExport,
+  PrivacyDataScope,
+  PrivacySummaryResponse,
   SendMessageResponse,
   ShareCardData,
   StartAttemptResponse,
@@ -312,6 +315,14 @@ const memoryModeOptions: Array<{ id: MemoryMode; label: string; description: str
   { id: "summary_only", label: "只记摘要", description: "只保存对话摘要" },
   { id: "long_term", label: "长期记忆", description: "保存偏好、触发点和支持方式" },
 ];
+const privacyDeleteOptions: Array<{ id: PrivacyDataScope; label: string; description: string }> = [
+  { id: "memories", label: "清除记忆", description: "删除可见和内部记忆，不影响账号。" },
+  { id: "chat", label: "清除聊天", description: "归档会话并删除消息内容。" },
+  { id: "moods", label: "清除情绪", description: "删除情绪记录和趋势来源。" },
+  { id: "feedback", label: "清除反馈", description: "删除评分、标签和备注。" },
+  { id: "voice", label: "清除语音", description: "删除语音会话元数据。" },
+  { id: "all_non_account", label: "清除全部数据", description: "保留账号，清空主要个人数据。" },
+];
 
 
 function storageText(key: string) {
@@ -362,12 +373,22 @@ const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
 const currentMemoryMode = ref<MemoryMode>("summary_only");
 const saveVoiceAudio = ref(false);
+const saveTranscript = ref(true);
 const isMemoryDocOpen = ref(false);
 const isMemoryDocLoading = ref(false);
 const memoryDocContent = ref("");
 const memoryDocError = ref("");
 const memoryError = ref("");
 const isSettingsSaving = ref(false);
+const privacySummary = ref<PrivacySummaryResponse | null>(null);
+const privacyExportPreview = ref("");
+const privacyExportData = ref<PersonalDataExport | null>(null);
+const isPrivacyExportOpen = ref(false);
+const isPrivacyLoading = ref(false);
+const privacyError = ref("");
+const privacyNotice = ref("");
+const pendingPrivacyScope = ref<PrivacyDataScope | null>(null);
+const deleteAccountConfirm = ref("");
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const moodRange = ref<MoodRange>("7d");
 const moodDraft = ref<MoodLogRequest>({
@@ -454,6 +475,19 @@ const selectedStyleLabel = computed(
 );
 const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
 const memoryModeLabel = computed(() => memoryModeOptions.find((option) => option.id === currentMemoryMode.value)?.label ?? "只记摘要");
+const privacyCounts = computed(() => privacySummary.value?.data_counts ?? {
+  memories: memories.value.length,
+  chat_threads: threads.value.length,
+  chat_messages: messages.value.length,
+  mood_logs: moodTrendPoints.value.length,
+  test_history: testHistory.value.length,
+  feedback: 0,
+  voice_sessions: 0,
+  risk_events: 0,
+});
+const privacyLatestActivity = computed(() =>
+  privacySummary.value?.latest_activity_at ? formatMemoryDocumentTimestamp(privacySummary.value.latest_activity_at) : "暂无记录",
+);
 const canSubmitAuth = computed(
   () =>
     Boolean(authUsername.value.trim()) &&
@@ -780,11 +814,20 @@ function clearSession() {
   activeThreadId.value = "";
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
+  saveTranscript.value = true;
   isMemoryDocOpen.value = false;
   isMemoryDocLoading.value = false;
   memoryDocContent.value = "";
   memoryDocError.value = "";
   memoryError.value = "";
+  privacySummary.value = null;
+  privacyExportPreview.value = "";
+  privacyExportData.value = null;
+  isPrivacyExportOpen.value = false;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  pendingPrivacyScope.value = null;
+  deleteAccountConfirm.value = "";
   [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_ID_KEY, USERNAME_KEY, THREAD_ID_KEY].forEach((key) => localStorage.removeItem(key));
 }
 
@@ -850,23 +893,27 @@ async function loadApp() {
   }
   try {
     isLoadingApp.value = true;
-    const [user, threadList, memoryList, mood] = await Promise.all([
+    const [user, threadList, memoryList, mood, privacy] = await Promise.all([
       api.getCurrentUser(),
       api.listThreads(),
       api.listMemories(),
       api.getMoodTrend(moodRange.value),
+      api.getPrivacySummary(),
     ]);
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
     applyAgeRange(user.age_range);
     currentMemoryMode.value = user.memory_mode;
     saveVoiceAudio.value = user.save_voice_audio;
+    saveTranscript.value = user.save_transcript;
+    privacySummary.value = privacy;
     if (styleOptions.some((option) => option.id === user.companion_style)) {
       selectedStyle.value = user.companion_style;
     }
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
     memoryError.value = "";
+    privacyError.value = "";
     moodTrend.value = mood;
     activeThreadId.value = activeThreadId.value || threads.value[0]?.thread_id || "";
     if (activeThreadId.value) {
@@ -890,6 +937,43 @@ async function refreshMemories() {
   memories.value = memoryList.items;
 }
 
+function buildLocalPrivacySummary(): PrivacySummaryResponse {
+  return {
+    user_id: currentUserId.value || "demo-user",
+    user_mode: isTeenMode.value ? "teen" : "adult",
+    settings: {
+      memory_mode: currentMemoryMode.value,
+      voice_enabled: true,
+      save_voice_audio: saveVoiceAudio.value,
+      save_transcript: saveTranscript.value,
+    },
+    data_counts: {
+      memories: memories.value.length,
+      chat_threads: threads.value.length,
+      chat_messages: Object.values(demoMessagesByThread.value).reduce((count, items) => count + items.length, 0),
+      mood_logs: demoMoodLogs.value.length,
+      test_history: testHistory.value.length,
+      feedback: 0,
+      voice_sessions: 0,
+      risk_events: 0,
+    },
+    latest_activity_at: new Date().toISOString(),
+  };
+}
+
+async function refreshPrivacySummary() {
+  if (isDemoMode.value || !accessToken.value) {
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+  try {
+    privacySummary.value = await api.getPrivacySummary();
+    privacyError.value = "";
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "隐私数据加载失败。";
+  }
+}
+
 async function changeMemoryMode(mode: MemoryMode) {
   if (mode === currentMemoryMode.value || isSettingsSaving.value) return;
   const previousMode = currentMemoryMode.value;
@@ -905,6 +989,8 @@ async function changeMemoryMode(mode: MemoryMode) {
     const response = await api.updateSettings({ memory_mode: mode });
     currentMemoryMode.value = response.memory_mode;
     saveVoiceAudio.value = response.save_voice_audio;
+    saveTranscript.value = response.save_transcript;
+    await refreshPrivacySummary();
     apiNotice.value = `记忆模式已切换为${memoryModeLabel.value}。`;
   } catch (error) {
     currentMemoryMode.value = previousMode;
@@ -1014,6 +1100,210 @@ async function downloadMemoryDocument() {
   URL.revokeObjectURL(url);
 }
 
+function buildPrivacyExportMarkdown(data: PersonalDataExport | null) {
+  const summary = privacySummary.value ?? buildLocalPrivacySummary();
+  const counts = summary.data_counts;
+  const lines = [
+    "# 个人数据摘要",
+    "",
+    `生成时间：${formatMemoryDocumentTimestamp(new Date())}`,
+    `用户模式：${summary.user_mode === "teen" ? "青少年模式" : "标准模式"}`,
+    "",
+    "## 保存设置",
+    `- 记忆模式：${memoryModeLabel.value}`,
+    `- 保存语音转写：${saveTranscript.value ? "开启" : "关闭"}`,
+    `- 保存原始音频：${saveVoiceAudio.value ? "开启" : "关闭"}`,
+    "",
+    "## 数据数量",
+    `- 可见记忆：${counts.memories}`,
+    `- 会话：${counts.chat_threads}`,
+    `- 消息：${counts.chat_messages}`,
+    `- 情绪记录：${counts.mood_logs}`,
+    `- 测试历史：${counts.test_history}`,
+    `- 反馈记录：${counts.feedback}`,
+    `- 语音会话：${counts.voice_sessions}`,
+    `- 安全事件：${counts.risk_events}`,
+  ];
+  if (data) {
+    lines.push("", "JSON 导出已准备好，下载文件中包含更完整的个人数据。");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function buildDemoPersonalDataExport(): PersonalDataExport {
+  return {
+    exported_at: new Date().toISOString(),
+    account: { user_id: currentUserId.value || "demo-user", username: username.value, status: "demo" },
+    profile: { nickname: username.value, user_mode: isTeenMode.value ? "teen" : "adult" },
+    settings: {
+      memory_mode: currentMemoryMode.value,
+      save_voice_audio: saveVoiceAudio.value,
+      save_transcript: saveTranscript.value,
+    },
+    memories: memories.value,
+    chat_threads: threads.value,
+    mood_logs: demoMoodLogs.value,
+    test_history: testHistory.value,
+    feedback: [],
+    voice_sessions: [],
+  };
+}
+
+async function openPrivacyExport() {
+  if (isPrivacyLoading.value) return;
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  try {
+    const data = isDemoMode.value || !accessToken.value ? buildDemoPersonalDataExport() : await api.exportPersonalData();
+    privacyExportData.value = data;
+    privacyExportPreview.value = buildPrivacyExportMarkdown(data);
+    isPrivacyExportOpen.value = true;
+    await refreshPrivacySummary();
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "个人数据导出失败。";
+  } finally {
+    isPrivacyLoading.value = false;
+  }
+}
+
+function closePrivacyExport() {
+  isPrivacyExportOpen.value = false;
+}
+
+function downloadPrivacyJson() {
+  const data = privacyExportData.value ?? buildDemoPersonalDataExport();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function reloadPrivacyAffectedData() {
+  if (isDemoMode.value || !accessToken.value) {
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+  const [threadList, memoryList, mood] = await Promise.all([
+    api.listThreads(),
+    api.listMemories(),
+    api.getMoodTrend(moodRange.value),
+  ]);
+  threads.value = sortThreads(threadList.items);
+  memories.value = memoryList.items;
+  moodTrend.value = mood;
+  if (!threads.value.some((thread) => thread.thread_id === activeThreadId.value)) {
+    activeThreadId.value = threads.value[0]?.thread_id ?? "";
+    if (activeThreadId.value) localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
+    else localStorage.removeItem(THREAD_ID_KEY);
+  }
+  if (activeThreadId.value) await loadThreadMessages(activeThreadId.value);
+  else setMessages([]);
+  await refreshPrivacySummary();
+}
+
+async function deletePrivacyScope(scope: PrivacyDataScope) {
+  if (pendingPrivacyScope.value !== scope) {
+    pendingPrivacyScope.value = scope;
+    privacyNotice.value = "再次点击同一按钮确认清除。";
+    privacyError.value = "";
+    return;
+  }
+
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  try {
+    if (isDemoMode.value || !accessToken.value) {
+      if (scope === "memories" || scope === "all_non_account") memories.value = [];
+      if (scope === "chat" || scope === "all_non_account") {
+        threads.value = [];
+        demoMessagesByThread.value = {};
+        activeThreadId.value = "";
+        setMessages([]);
+      }
+      if (scope === "moods" || scope === "all_non_account") {
+        demoMoodLogs.value = [];
+        moodTrend.value = buildLocalMoodTrend(moodRange.value, []);
+      }
+      privacyNotice.value = "演示数据已清除。";
+    } else {
+      const response = await api.deletePersonalData({ scope });
+      const total = Object.values(response.affected_counts).reduce((sum, count) => sum + count, 0);
+      privacyNotice.value = `已清除 ${total} 项数据。`;
+      await reloadPrivacyAffectedData();
+    }
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "数据清除失败。";
+  } finally {
+    pendingPrivacyScope.value = null;
+    isPrivacyLoading.value = false;
+    await refreshPrivacySummary();
+  }
+}
+
+async function updatePrivacySetting(payload: { save_voice_audio?: boolean; save_transcript?: boolean }) {
+  if (isSettingsSaving.value) return;
+  const previousSaveAudio = saveVoiceAudio.value;
+  const previousSaveTranscript = saveTranscript.value;
+  if (typeof payload.save_voice_audio === "boolean") saveVoiceAudio.value = payload.save_voice_audio;
+  if (typeof payload.save_transcript === "boolean") saveTranscript.value = payload.save_transcript;
+  privacyError.value = "";
+
+  if (isDemoMode.value || !accessToken.value) {
+    if (isTeenMode.value) saveVoiceAudio.value = false;
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings(payload);
+    saveVoiceAudio.value = response.save_voice_audio;
+    saveTranscript.value = response.save_transcript;
+    currentMemoryMode.value = response.memory_mode;
+    await refreshPrivacySummary();
+  } catch (error) {
+    saveVoiceAudio.value = previousSaveAudio;
+    saveTranscript.value = previousSaveTranscript;
+    privacyError.value = error instanceof Error ? error.message : "隐私设置更新失败。";
+  } finally {
+    isSettingsSaving.value = false;
+  }
+}
+
+async function deleteCurrentAccount() {
+  if (deleteAccountConfirm.value !== "DELETE" || isPrivacyLoading.value) return;
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  try {
+    if (!isDemoMode.value && accessToken.value) {
+      await api.deleteAccount({ confirmation: "DELETE" });
+    }
+    clearSession();
+    isDemoMode.value = false;
+    selectedAge.value = null;
+    selectedStyle.value = null;
+    selectedGoal.value = null;
+    threads.value = [];
+    memories.value = [];
+    moodTrend.value = null;
+    demoMoodLogs.value = [];
+    setMessages([]);
+    stage.value = "auth";
+    await refreshCaptcha();
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "账号注销失败。";
+  } finally {
+    isPrivacyLoading.value = false;
+  }
+}
+
 function toggleMemoryReferences(messageId: number) {
   messages.value = messages.value.map((message) =>
     message.id === messageId ? { ...message, memoryRefsExpanded: !message.memoryRefsExpanded } : message,
@@ -1061,6 +1351,7 @@ async function submitMoodCheckIn() {
       apiNotice.value = "今日状态已记录。";
       resetMoodDraft();
       await loadMoodTrend(moodRange.value);
+      await refreshPrivacySummary();
       return;
     }
 
@@ -1068,6 +1359,7 @@ async function submitMoodCheckIn() {
     apiNotice.value = "今日状态已记录。";
     resetMoodDraft();
     await loadMoodTrend(moodRange.value);
+    await refreshPrivacySummary();
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "情绪记录提交失败。";
   } finally {
@@ -1114,7 +1406,10 @@ function enterDemoMode() {
   selectedGoal.value ||= "anxiety";
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
+  saveTranscript.value = true;
   memoryError.value = "";
+  privacyError.value = "";
+  privacyNotice.value = "";
   isMemoryDocOpen.value = false;
   isMemoryDocLoading.value = false;
   memoryDocContent.value = "";
@@ -1126,6 +1421,7 @@ function enterDemoMode() {
   moodTrend.value = buildLocalMoodTrend(moodRange.value, demoMoodLogs.value);
   activeThreadId.value = threads.value[0]?.thread_id ?? "";
   setMessages(demoMessagesByThread.value[activeThreadId.value] ?? []);
+  privacySummary.value = buildLocalPrivacySummary();
   stage.value = "onboarding";
 }
 
@@ -1409,6 +1705,7 @@ async function submitMessage(text = composerText.value) {
   } finally {
     updateMessage(assistantId, { streaming: false });
     isSending.value = false;
+    await refreshPrivacySummary();
   }
 }
 
@@ -2104,6 +2401,7 @@ async function submitFeedback() {
     };
     await api.submitFeedback(payload);
     feedbackDone.value = true;
+    await refreshPrivacySummary();
   } catch {
     // silently fail
   } finally {
@@ -3141,6 +3439,94 @@ onMounted(async () => {
             </article>
           </section>
 
+          <section class="section-block privacy-center">
+            <div class="section-title">
+              <h2>隐私与数据</h2>
+              <span>{{ privacyLatestActivity }}</span>
+            </div>
+
+            <div class="privacy-settings-grid">
+              <article class="privacy-setting-card">
+                <strong>语音转写</strong>
+                <span>{{ saveTranscript ? "保存" : "不保存" }}</span>
+                <button
+                  class="text-action"
+                  type="button"
+                  :disabled="isSettingsSaving"
+                  @click="updatePrivacySetting({ save_transcript: !saveTranscript })"
+                >
+                  {{ saveTranscript ? "关闭" : "开启" }}
+                </button>
+              </article>
+              <article class="privacy-setting-card">
+                <strong>原始音频</strong>
+                <span>{{ isTeenMode ? "青少年默认关闭" : saveVoiceAudio ? "保存" : "不保存" }}</span>
+                <button
+                  class="text-action"
+                  type="button"
+                  :disabled="isSettingsSaving || isTeenMode"
+                  @click="updatePrivacySetting({ save_voice_audio: !saveVoiceAudio })"
+                >
+                  {{ saveVoiceAudio ? "关闭" : "开启" }}
+                </button>
+              </article>
+            </div>
+
+            <div class="privacy-count-grid">
+              <span>记忆 {{ privacyCounts.memories }}</span>
+              <span>会话 {{ privacyCounts.chat_threads }}</span>
+              <span>消息 {{ privacyCounts.chat_messages }}</span>
+              <span>情绪 {{ privacyCounts.mood_logs }}</span>
+              <span>测试 {{ privacyCounts.test_history }}</span>
+              <span>反馈 {{ privacyCounts.feedback }}</span>
+              <span>语音 {{ privacyCounts.voice_sessions }}</span>
+              <span>安全 {{ privacyCounts.risk_events }}</span>
+            </div>
+
+            <article class="privacy-export-card">
+              <div>
+                <h3>个人数据导出</h3>
+                <p>JSON 文件包含账号资料、记忆、聊天、情绪、测试历史、反馈和语音会话元数据。</p>
+              </div>
+              <button class="secondary-action" type="button" :disabled="isPrivacyLoading" @click="openPrivacyExport">
+                导出
+              </button>
+            </article>
+
+            <div class="privacy-delete-grid">
+              <button
+                v-for="option in privacyDeleteOptions"
+                :key="option.id"
+                type="button"
+                :class="['privacy-delete-btn', { confirm: pendingPrivacyScope === option.id }]"
+                :disabled="isPrivacyLoading"
+                @click="deletePrivacyScope(option.id)"
+              >
+                <strong>{{ pendingPrivacyScope === option.id ? '确认清除' : option.label }}</strong>
+                <span>{{ option.description }}</span>
+              </button>
+            </div>
+
+            <div class="account-delete-card">
+              <div>
+                <h3>注销账号</h3>
+                <p>输入 DELETE 后注销账号并退出登录。</p>
+              </div>
+              <input v-model="deleteAccountConfirm" type="text" autocomplete="off" placeholder="DELETE" />
+              <button
+                class="danger-action"
+                type="button"
+                :disabled="deleteAccountConfirm !== 'DELETE' || isPrivacyLoading"
+                @click="deleteCurrentAccount"
+              >
+                注销
+              </button>
+            </div>
+
+            <p v-if="privacyNotice" class="notice">{{ privacyNotice }}</p>
+            <p v-if="privacyError" class="notice notice--error">{{ privacyError }}</p>
+          </section>
+
           <button class="secondary-action logout-action" type="button" @click="logout">
             {{ isDemoMode ? "退出演示" : "退出登录" }}
           </button>
@@ -3172,6 +3558,26 @@ onMounted(async () => {
           <footer class="memory-document-footer">
             <button class="secondary-action" type="button" :disabled="isMemoryDocLoading" @click="downloadMemoryDocument">
               下载 .md
+            </button>
+          </footer>
+        </div>
+      </section>
+
+      <section v-if="isPrivacyExportOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
+        <div class="memory-document-panel">
+          <header class="memory-document-header">
+            <div>
+              <h3>个人数据摘要</h3>
+              <small>JSON 导出</small>
+            </div>
+            <button class="text-action" type="button" @click="closePrivacyExport">关闭</button>
+          </header>
+          <div class="memory-document-body">
+            <pre class="memory-document-content">{{ privacyExportPreview }}</pre>
+          </div>
+          <footer class="memory-document-footer">
+            <button class="secondary-action" type="button" @click="downloadPrivacyJson">
+              下载 .json
             </button>
           </footer>
         </div>
@@ -4899,6 +5305,138 @@ onMounted(async () => {
   padding-top: 6px;
   border-top: 1px solid var(--line);
   background: #ffffff;
+}
+
+.privacy-center {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 6px;
+}
+
+.privacy-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.privacy-setting-card,
+.privacy-export-card,
+.account-delete-card {
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.privacy-setting-card {
+  display: grid;
+  gap: 6px;
+}
+
+.privacy-setting-card strong,
+.privacy-export-card h3,
+.account-delete-card h3 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.privacy-setting-card span,
+.privacy-export-card p,
+.account-delete-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.privacy-count-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.privacy-count-grid span {
+  min-height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.privacy-export-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.privacy-delete-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.privacy-delete-btn {
+  min-width: 0;
+  min-height: 72px;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 10px;
+  text-align: left;
+}
+
+.privacy-delete-btn strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.privacy-delete-btn span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.privacy-delete-btn.confirm {
+  border-color: rgba(154, 74, 37, 0.36);
+  background: #fff0e8;
+}
+
+.account-delete-card {
+  display: grid;
+  gap: 10px;
+}
+
+.account-delete-card input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: var(--text-main);
+  font: inherit;
+}
+
+.danger-action {
+  min-height: 44px;
+  border-radius: 14px;
+  background: #9a4a25;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.danger-action:disabled,
+.privacy-delete-btn:disabled,
+.privacy-setting-card button:disabled,
+.privacy-export-card button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .logout-action {

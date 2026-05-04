@@ -22,6 +22,8 @@ tags:
     description: 注册、登录、获取当前用户
   - name: user
     description: 当前用户设置
+  - name: privacy
+    description: 隐私与个人数据管理
   - name: chat
     description: 创建会话、发送文本消息
   - name: memory
@@ -156,6 +158,7 @@ paths:
                 companion_style: gentle
                 voice_enabled: false
                 save_voice_audio: false
+                save_transcript: true
 
   /api/v1/me/settings:
     patch:
@@ -175,6 +178,7 @@ paths:
               companion_style: gentle
               voice_enabled: false
               save_voice_audio: false
+              save_transcript: true
       responses:
         "200":
           description: 设置更新结果
@@ -182,6 +186,98 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserSettingsResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/me/privacy-summary:
+    get:
+      tags: [privacy]
+      summary: Get current user's privacy and data summary
+      operationId: getPrivacySummary
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Privacy summary with settings, counts, and latest activity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacySummaryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/data-export:
+    get:
+      tags: [privacy]
+      summary: Export current user's personal data
+      operationId: exportPersonalData
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: format
+          required: false
+          schema:
+            type: string
+            enum: [json]
+            default: json
+      responses:
+        "200":
+          description: Personal data export. Excludes password hashes, refresh tokens, system secrets, and internal safety rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalDataExport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/data:
+    delete:
+      tags: [privacy]
+      summary: Delete a scoped set of current user's data
+      operationId: deletePersonalData
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataDeleteRequest"
+      responses:
+        "200":
+          description: Deletion result with affected counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyMutationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/me/account:
+    delete:
+      tags: [privacy]
+      summary: Delete current account
+      operationId: deleteCurrentAccount
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDeleteRequest"
+      responses:
+        "200":
+          description: Account deletion result. The user is soft-deleted and refresh tokens are revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyMutationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1218,6 +1314,8 @@ components:
           type: boolean
         save_voice_audio:
           type: boolean
+        save_transcript:
+          type: boolean
       required:
         - user_id
         - username
@@ -1230,6 +1328,7 @@ components:
         - companion_style
         - voice_enabled
         - save_voice_audio
+        - save_transcript
 
     UserSettingsUpdateRequest:
       type: object
@@ -1241,6 +1340,8 @@ components:
         voice_enabled:
           type: boolean
         save_voice_audio:
+          type: boolean
+        save_transcript:
           type: boolean
       additionalProperties: false
 
@@ -1255,11 +1356,131 @@ components:
           type: boolean
         save_voice_audio:
           type: boolean
+        save_transcript:
+          type: boolean
       required:
         - memory_mode
         - companion_style
         - voice_enabled
         - save_voice_audio
+        - save_transcript
+
+    PrivacyDataScope:
+      type: string
+      enum:
+        - memories
+        - chat
+        - moods
+        - feedback
+        - voice
+        - all_non_account
+
+    PrivacySettingsSnapshot:
+      type: object
+      properties:
+        memory_mode:
+          $ref: "#/components/schemas/MemoryMode"
+        companion_style:
+          type: string
+        voice_enabled:
+          type: boolean
+        save_voice_audio:
+          type: boolean
+        save_transcript:
+          type: boolean
+      required:
+        - memory_mode
+        - companion_style
+        - voice_enabled
+        - save_voice_audio
+        - save_transcript
+
+    PrivacyDataCounts:
+      type: object
+      properties:
+        memories:
+          type: integer
+        chat_threads:
+          type: integer
+        chat_messages:
+          type: integer
+        mood_logs:
+          type: integer
+        test_history:
+          type: integer
+        feedback:
+          type: integer
+        voice_sessions:
+          type: integer
+        risk_events:
+          type: integer
+      required:
+        - memories
+        - chat_threads
+        - chat_messages
+        - mood_logs
+        - test_history
+        - feedback
+        - voice_sessions
+        - risk_events
+
+    PrivacySummaryResponse:
+      type: object
+      properties:
+        user_mode:
+          $ref: "#/components/schemas/UserMode"
+        settings:
+          $ref: "#/components/schemas/PrivacySettingsSnapshot"
+        counts:
+          $ref: "#/components/schemas/PrivacyDataCounts"
+        latest_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - user_mode
+        - settings
+        - counts
+        - latest_updated_at
+
+    DataDeleteRequest:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/PrivacyDataScope"
+      required:
+        - scope
+      additionalProperties: false
+
+    AccountDeleteRequest:
+      type: object
+      properties:
+        confirmation:
+          type: string
+          enum:
+            - DELETE
+      required:
+        - confirmation
+      additionalProperties: false
+
+    PrivacyMutationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        scope:
+          type: string
+        affected_counts:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - status
+        - affected_counts
+
+    PersonalDataExport:
+      type: object
+      additionalProperties: true
 
     StartThreadRequest:
       type: object
