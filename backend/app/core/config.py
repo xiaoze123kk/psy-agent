@@ -53,6 +53,22 @@ class Settings:
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
     knowledge_llm_answers_enabled: bool
+    milvus_enabled: bool
+    milvus_uri: str
+    milvus_token: str | None
+    milvus_db_name: str
+    milvus_collection_prefix: str
+    embedding_provider: str
+    embedding_model: str
+    embedding_dim: int
+    local_embedding_device: str
+    local_embedding_batch_size: int
+    local_embedding_max_length: int
+    local_embedding_use_fp16: str
+    local_embedding_cache_dir: str | None
+    dashscope_api_key: str | None
+    dashscope_base_url: str
+    embedding_timeout_seconds: float
 
 
 def _default_database_url() -> str:
@@ -77,6 +93,22 @@ def load_settings() -> Settings:
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
+        milvus_enabled=os.getenv("MILVUS_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
+        milvus_uri=os.getenv("MILVUS_URI", "http://localhost:19530"),
+        milvus_token=os.getenv("MILVUS_TOKEN") or None,
+        milvus_db_name=os.getenv("MILVUS_DB_NAME", "default"),
+        milvus_collection_prefix=os.getenv("MILVUS_COLLECTION_PREFIX", "psych_agent"),
+        embedding_provider=os.getenv("EMBEDDING_PROVIDER", "local"),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
+        embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
+        local_embedding_device=os.getenv("LOCAL_EMBEDDING_DEVICE", "auto"),
+        local_embedding_batch_size=int(os.getenv("LOCAL_EMBEDDING_BATCH_SIZE", "8")),
+        local_embedding_max_length=int(os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "1024")),
+        local_embedding_use_fp16=os.getenv("LOCAL_EMBEDDING_USE_FP16", "auto"),
+        local_embedding_cache_dir=os.getenv("LOCAL_EMBEDDING_CACHE_DIR") or None,
+        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY") or None,
+        dashscope_base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        embedding_timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30")),
     )
 
 

@@ -1,4 +1,6 @@
 from app.graphs.state import AgentState
+from app.services.counseling_examples import COUNSELING_EXAMPLES
+from app.services.counseling_vector_service import CounselingExampleHit, retrieve_counseling_examples
 from app.services.deepseek_client import deepseek_client
 
 
@@ -73,6 +75,25 @@ async def _model_reply(state: AgentState, *, mode: str, fallback: str) -> str:
     return reply or fallback
 
 
+def _build_examples_text(mode: str, retrieved_examples: list[CounselingExampleHit] | None = None) -> str:
+    """构建当前模式的 few-shot 示例文本，用于注入到 prompt 中作为语气参考"""
+    retrieved_examples = retrieved_examples or []
+    examples = COUNSELING_EXAMPLES.get(mode, [])
+    if not examples and not retrieved_examples:
+        return ""
+    lines = [
+        "\n--- 以下心理咨询对话片段仅供参考语气、共情方式和追问方式，不是事实依据，也不是回复模板 ---",
+    ]
+    for i, hit in enumerate(retrieved_examples[:3], 1):
+        lines.append(f"相似片段{i}：")
+        lines.append(hit.content)
+    for i, ex in enumerate(examples[:5], 1):
+        lines.append(f"示例{i}：")
+        lines.append(f"用户说：{ex['user']}")
+        lines.append(f"咨询师回应：{ex['assistant']}")
+    return "\n".join(lines) + "\n"
+
+
 async def _model_reply_with_actions(
     state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
 ) -> tuple[str, list[str]]:
@@ -130,11 +151,14 @@ async def _model_reply_with_actions(
         "怎么才能睡着\n"
     )
 
+    retrieved_examples = await retrieve_counseling_examples(state, mode=mode)
+    examples_text = _build_examples_text(mode, retrieved_examples)
     user_prompt = (
         f"用户模式：{user_mode}\n"
         f"陪伴风格：{style}\n"
         f"当前回复模式：{mode}\n"
         f"回复要求：{mode_guidance}\n"
+        + examples_text +
         f"上次摘要：{last_summary}\n"
         f"可参考记忆：\n{memory_context}\n"
         f"最近对话：\n{recent_context}\n"
