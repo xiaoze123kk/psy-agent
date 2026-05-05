@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -219,6 +220,21 @@ def _pairs_from_messages(messages: list[dict[str, str]], external_id: str, topic
     return parsed
 
 
+def _parse_smilechat_flat_array(items: list[dict[str, Any]], external_id: str, topic: str | None) -> list[ParsedExample]:
+    """Handle SMILECHAT format: flat array of {role: client/counselor, content: ...} objects."""
+    messages: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").lower()
+        content = _clean_text(item.get("content") or "")
+        if role == "client":
+            messages.append({"role": "user", "content": content})
+        elif role == "counselor":
+            messages.append({"role": "assistant", "content": content})
+    return _pairs_from_messages(messages, external_id, topic)
+
+
 def _parse_history_item(item: dict[str, Any], external_id: str, topic: str | None) -> list[ParsedExample]:
     history = item.get("history")
     input_text = _clean_text(item.get("input") or item.get("question") or item.get("instruction") or item.get("prompt"))
@@ -243,10 +259,12 @@ def _parse_history_item(item: dict[str, Any], external_id: str, topic: str | Non
     return _pairs_from_messages(messages, external_id, topic)
 
 
-def _parse_item(item: dict[str, Any], index: int) -> list[ParsedExample]:
+def _parse_item(item: dict[str, Any], index: int, source_key: str = "") -> list[ParsedExample]:
     topic = _topic_from_item(item)
-    external_id = str(item.get("id") or item.get("conversation_id") or item.get("uuid") or "").strip()
-    if not external_id:
+    raw_id = str(item.get("id") or item.get("conversation_id") or item.get("uuid") or "").strip()
+    if raw_id:
+        external_id = f"{source_key}_{raw_id}" if source_key else raw_id
+    else:
         external_id = _hash_external_id(json.dumps(item, ensure_ascii=False, sort_keys=True), str(index))
 
     messages = _messages_from_item(item)
@@ -295,19 +313,112 @@ def _iter_nested_items(value: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _load_items(path: Path) -> list[dict[str, Any]]:
-    if path.suffix.lower() == ".jsonl":
-        items = []
-        for line in path.read_text(encoding="utf-8-sig").splitlines():
-            if not line.strip():
-                continue
-            parsed = json.loads(line)
-            if isinstance(parsed, dict):
-                items.append(parsed)
-        return items
+# ─── Large JSON streaming parse (for 800MB+ files) ───
 
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
-    return _iter_nested_items(data)
+def _stream_json_array(file_path: Path) -> list[dict[str, Any]]:
+    """Stream items from a top-level JSON array using ijson for memory efficiency."""
+    try:
+        import ijson
+    except ImportError:
+        raise ImportError("ijson is required for streaming large JSON files. Install with: pip install ijson")
+
+    items: list[dict[str, Any]] = []
+    with open(file_path, "rb") as fh:
+        for item in ijson.items(fh, "item"):
+            if isinstance(item, dict):
+                items.append(item)
+    return items
+
+
+# ─── SMILECHAT multi-file directory support ───
+
+def _load_smilechat_items(smilechat_data_dir: Path) -> list[dict[str, Any]]:
+    """Load SMILECHAT data from a directory of individual JSON files.
+
+    Each file contains a flat JSON array of turn objects with {role, content, annotation}.
+    We wrap each file as a single conversation for the importer.
+    """
+    items: list[dict[str, Any]] = []
+    json_files = sorted(smilechat_data_dir.glob("*.json"), key=lambda p: int(p.stem) if p.stem.isdigit() else 0)
+    for idx, json_file in enumerate(json_files):
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8-sig"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data, list):
+            continue
+        # Wrap the flat turn array as a conversation item
+        items.append({
+            "external_id": f"smilechat_{json_file.stem}",
+            "file_index": idx,
+            "_smilechat_turns": data,
+        })
+    return items
+
+
+def _parse_smilechat_item(item: dict[str, Any]) -> list[ParsedExample]:
+    """Parse a SMILECHAT conversation (flat turn array stored in _smilechat_turns)."""
+    turns = item.get("_smilechat_turns")
+    if not isinstance(turns, list):
+        return []
+    external_id = str(item.get("external_id") or "")
+    return _parse_smilechat_flat_array(turns, external_id, topic=None)
+
+
+# ─── Database batch insert ───
+
+INSERT_BATCH_SIZE = 500
+
+
+def _upsert_examples_batch(
+    db: SessionLocal,
+    source: CounselingCorpusSource,
+    parsed_examples: list[ParsedExample],
+    status: str,
+    counts: dict[str, int],
+) -> None:
+    """Write a batch of parsed examples to DB. Deduplicates within the batch."""
+    # Deduplicate within batch by (external_id, chunk_index)
+    seen: set[tuple[str, int]] = set()
+    unique_examples: list[ParsedExample] = []
+    for ex in parsed_examples:
+        key = (ex.external_id, ex.chunk_index)
+        if key not in seen:
+            seen.add(key)
+            unique_examples.append(ex)
+
+    for example in unique_examples:
+        existing = db.scalar(
+            select(CounselingExampleChunk).where(
+                CounselingExampleChunk.source_id == source.id,
+                CounselingExampleChunk.external_id == example.external_id,
+                CounselingExampleChunk.chunk_index == example.chunk_index,
+            )
+        )
+        row_payload = {
+            "source_id": source.id,
+            "external_id": example.external_id,
+            "chunk_index": example.chunk_index,
+            "mode": example.mode,
+            "topic": example.topic,
+            "user_text": example.user_text,
+            "assistant_text": example.assistant_text,
+            "context_text": example.context_text,
+            "content": example.content,
+            "tags": example.tags,
+            "meta": example.metadata,
+            "source_url": source.base_url,
+            "license": source.license,
+            "status": status,
+        }
+        if existing is None:
+            db.add(CounselingExampleChunk(**row_payload))
+            counts["created"] += 1
+        else:
+            for key, value in row_payload.items():
+                setattr(existing, key, value)
+            counts["updated"] += 1
+    db.commit()
 
 
 def _source_payload(source_key: str) -> dict[str, Any]:
@@ -317,26 +428,33 @@ def _source_payload(source_key: str) -> dict[str, Any]:
         raise ValueError(f"Unsupported counseling source: {source_key}") from exc
 
 
-def import_examples(
+def import_examples_batched(
     *,
     source_key: str,
     items: list[dict[str, Any]],
+    is_smilechat: bool,
     publish_reviewed: bool,
     dry_run: bool,
     limit: int | None,
 ) -> dict[str, int]:
     payload = _source_payload(source_key)
-    parsed_examples: list[ParsedExample] = []
-    for index, item in enumerate(items):
-        parsed_examples.extend(_parse_item(item, index))
-        if limit and len(parsed_examples) >= limit:
-            parsed_examples = parsed_examples[:limit]
-            break
-
     status = "published" if publish_reviewed else "draft"
-    counts = {"parsed": len(parsed_examples), "created": 0, "updated": 0, "skipped": 0}
+    total_parsed = 0
+    counts = {"parsed": 0, "created": 0, "updated": 0, "skipped": 0}
+
     if dry_run:
-        counts["created"] = len(parsed_examples)
+        # Preview first N items only
+        preview_total = 0
+        for index, item in enumerate(items):
+            if is_smilechat:
+                parsed = _parse_smilechat_item(item)
+            else:
+                parsed = _parse_item(item, index, source_key)
+            preview_total += len(parsed)
+            if limit and preview_total >= limit:
+                break
+        counts["parsed"] = min(preview_total, limit) if limit else preview_total
+        counts["created"] = counts["parsed"]
         return counts
 
     with SessionLocal() as db:
@@ -350,57 +468,95 @@ def import_examples(
                 if getattr(source, key) != value:
                     setattr(source, key, value)
         source.retrieved_at = utcnow()
-
-        for example in parsed_examples:
-            existing = db.scalar(
-                select(CounselingExampleChunk).where(
-                    CounselingExampleChunk.source_id == source.id,
-                    CounselingExampleChunk.external_id == example.external_id,
-                    CounselingExampleChunk.chunk_index == example.chunk_index,
-                )
-            )
-            row_payload = {
-                "source_id": source.id,
-                "external_id": example.external_id,
-                "chunk_index": example.chunk_index,
-                "mode": example.mode,
-                "topic": example.topic,
-                "user_text": example.user_text,
-                "assistant_text": example.assistant_text,
-                "context_text": example.context_text,
-                "content": example.content,
-                "tags": example.tags,
-                "meta": example.metadata,
-                "source_url": source.base_url,
-                "license": source.license,
-                "status": status,
-            }
-            if existing is None:
-                db.add(CounselingExampleChunk(**row_payload))
-                counts["created"] += 1
-                continue
-            for key, value in row_payload.items():
-                setattr(existing, key, value)
-            counts["updated"] += 1
         db.commit()
+
+        batch: list[ParsedExample] = []
+        for index, item in enumerate(items):
+            if is_smilechat:
+                parsed = _parse_smilechat_item(item)
+            else:
+                parsed = _parse_item(item, index, source_key)
+            batch.extend(parsed)
+            total_parsed += len(parsed)
+
+            # Flush batch when enough accumulated
+            while len(batch) >= INSERT_BATCH_SIZE:
+                chunk = batch[:INSERT_BATCH_SIZE]
+                batch = batch[INSERT_BATCH_SIZE:]
+                _upsert_examples_batch(db, source, chunk, status, counts)
+
+            if limit and total_parsed >= limit:
+                # Trim excess and flush remainder
+                excess = total_parsed - limit
+                if excess > 0:
+                    batch = batch[: len(batch) - excess]
+                    total_parsed = limit
+                if batch:
+                    _upsert_examples_batch(db, source, batch, status, counts)
+                batch = []
+
+            if (index + 1) % 5000 == 0:
+                print(f"  处理进度: {index + 1}/{len(items)} 条对话, 已解析 {total_parsed} 个片段...")
+
+        # Final flush
+        if batch:
+            _upsert_examples_batch(db, source, batch, status, counts)
+
+    counts["parsed"] = total_parsed
     return counts
+
+
+def _load_items(path: Path) -> list[dict[str, Any]]:
+    if path.suffix.lower() == ".jsonl":
+        items = []
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            if not line.strip():
+                continue
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                items.append(parsed)
+        return items
+
+    file_size = path.stat().st_size
+    if file_size > 100_000_000:  # > 100MB
+        print(f"  检测到大文件 ({file_size / 1_000_000:.0f}MB)，使用流式解析...")
+        return _stream_json_array(path)
+
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    return _iter_nested_items(data)
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Import Chinese counseling dialogue corpora into PostgreSQL and optional Milvus.")
     parser.add_argument("--source", required=True, choices=sorted(COUNSELING_CORPUS_SOURCES.keys()))
-    parser.add_argument("--input-json", type=Path, required=True, help="Local JSON/JSONL file downloaded from the source.")
+    parser.add_argument("--input-json", type=Path, help="Local JSON/JSONL file downloaded from the source.")
+    parser.add_argument("--input-dir", type=Path, help="Directory containing SMILECHAT JSON files (data/ directory).")
     parser.add_argument("--limit", type=int, help="Limit parsed examples for trial imports.")
     parser.add_argument("--publish-reviewed", action="store_true", help="Mark imported safe examples as published and indexable.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-index", action="store_true", help="Skip Milvus indexing after import.")
     args = parser.parse_args()
 
+    if not args.input_json and not args.input_dir:
+        parser.error("必须指定 --input-json 或 --input-dir")
+    if args.input_dir and args.source != "smilechat":
+        parser.error("--input-dir 目前仅支持 SMILECHAT (--source smilechat)")
+
     init_db()
-    items = _load_items(args.input_json)
-    counts = import_examples(
+
+    is_smilechat = args.source == "smilechat" and args.input_dir is not None
+    if is_smilechat:
+        print(f"从目录加载 SMILECHAT 数据: {args.input_dir}")
+        items = _load_smilechat_items(args.input_dir)
+        print(f"  发现 {len(items)} 个对话文件")
+    else:
+        items = _load_items(args.input_json)
+        print(f"  解析到 {len(items)} 条原始记录")
+
+    counts = import_examples_batched(
         source_key=args.source,
         items=items,
+        is_smilechat=is_smilechat,
         publish_reviewed=args.publish_reviewed,
         dry_run=args.dry_run,
         limit=args.limit,
@@ -408,6 +564,7 @@ async def main() -> None:
 
     index_counts = {"indexed": 0, "skipped": 0}
     if args.publish_reviewed and not args.dry_run and not args.no_index:
+        print("  开始向量化索引到 Milvus...")
         with SessionLocal() as db:
             result = await index_counseling_chunks(db, source_key=args.source, limit=args.limit)
             index_counts = {"indexed": result.indexed, "skipped": result.skipped}
