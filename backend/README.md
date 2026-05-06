@@ -11,6 +11,12 @@ FastAPI + LangGraph backend scaffold for the counseling agent.
 pip install -r requirements.txt
 ```
 
+For local test runs, install the dev dependency set:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 1. Configure local PostgreSQL in `backend/.env.local`.
 
 ```bash
@@ -32,7 +38,9 @@ psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0003_username_auth.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0004_knowledge.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0005_knowledge_beta.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0006_privacy.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0007_counseling_corpus_milvus.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0008_app_runtime_schema_alignment.sql
 ```
 
 Milvus vector search is optional. For local standalone Milvus:
@@ -149,3 +157,12 @@ python scripts/import_counseling_corpus.py --source smilechat --input-json data/
 ```
 
 Supported counseling source keys are `soulchat_corpus`, `smilechat`, `cpsycound`, and `psydt_corpus`. PsyQA official full data and `efaqa-corpus-zh` are intentionally not default imports because they require separate authorization or usage checks.
+
+If PostgreSQL is unavailable and you only need the local counseling corpora in Milvus for retrieval-augmented counselor style examples, index directly from `backend/data/counseling_corpus`:
+
+```bash
+python scripts/index_counseling_corpus_direct.py --source smilechat --limit 20
+python scripts/index_counseling_corpus_direct.py --recreate
+```
+
+This direct path streams large JSON arrays instead of loading the full corpus into memory, cleans common PII patterns, filters high-risk or unsafe examples, and writes rows to the same `counseling_examples_v1` Milvus collection used by runtime retrieval.
