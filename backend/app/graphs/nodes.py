@@ -704,6 +704,8 @@ async def _model_reply_with_actions(
         "你是心理陪伴产品里的支持型对话 agent。你不是医生，也不是替代线下心理咨询的治疗者。"
         "不要诊断，不承诺治疗，不替代专业帮助。高风险安全分流由系统规则处理；"
         "当前只写非危机陪伴回复。用简体中文，语气稳定、克制、温和。回复控制在 120 字以内。"
+        "历史摘要和记忆只作为内部上下文，不要机械复述，不要每轮以“我记得你上次”开头；"
+        "只有用户主动要求回顾，或上下文确实断裂时，才自然地承接一句。"
     )
 
     retrieved_examples = await retrieve_counseling_examples(state, mode=mode)
@@ -720,7 +722,7 @@ async def _model_reply_with_actions(
         f"当前回复模式：{mode}\n"
         f"回复要求：{mode_guidance}\n"
         f"{examples_text}"
-        f"上次摘要：{last_summary}\n"
+        f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
         f"可参考记忆：\n{memory_context}\n"
         f"最近对话：\n{recent_context}\n"
         f"用户刚刚说：{text}\n"
@@ -847,13 +849,9 @@ async def intent_classifier(state: AgentState) -> AgentState:
 async def companion_response(state: AgentState) -> AgentState:
     text = state.get("normalized_text", "")
     intent = state.get("intent", "other")
-    last_summary = state.get("last_summary", "")
     excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
 
-    if last_summary:
-        opener = f"我记得你上次聊到「{_excerpt(last_summary, 28)}」，这次我继续接住你。"
-    else:
-        opener = "我在，先不用急着把事情讲完整。"
+    opener = "我在，先不用急着把事情讲完整。"
 
     if intent == "vent":
         body = "听起来你已经憋了很久，也很想被真正理解。"
@@ -925,7 +923,7 @@ async def summarize_turn(state: AgentState) -> AgentState:
     topic = _excerpt(text or _last_user_message(state.get("messages", [])) or "当前困扰", 30)
 
     if risk_level in {"L2", "L3"}:
-        summary = f"上次聊到明显安全风险：{topic}；下次进入时优先确认是否联系到可信任的人以及当前环境是否安全。"
+        summary = f"本轮出现明显安全风险：{topic}；后续优先确认是否联系到可信任的人以及当前环境是否安全。"
     else:
         focus_map = {
             "vent": "近期压力和情绪困扰",
@@ -934,7 +932,7 @@ async def summarize_turn(state: AgentState) -> AgentState:
             "daily_checkin": "当天的情绪状态",
             "other": "最近在意的困扰",
         }
-        summary = f"上次主要在聊{focus_map.get(intent, '最近在意的困扰')}：{topic}；下次可以从最卡住的那一刻继续说。"
+        summary = f"本轮主题：{focus_map.get(intent, '最近在意的困扰')}；用户提到：{topic}；可延续点：最卡住的那一刻。"
     return {"session_summary": summary}
 
 
