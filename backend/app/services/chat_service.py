@@ -277,6 +277,7 @@ async def process_message_turn(
             "session_summary": assistant_result.get("session_summary", ""),
             "should_write_memory": assistant_result.get("should_write_memory", False),
             "referenced_memories": assistant_result.get("referenced_memories", []),
+            "referenced_counseling_examples": assistant_result.get("referenced_counseling_examples", []),
         }
         assistant_message = Message(
             thread_id=thread.id,

@@ -253,6 +253,57 @@ class KnowledgeGap(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class CounselingCorpusSource(Base):
+    __tablename__ = "counseling_corpus_sources"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    source_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    base_url: Mapped[str] = mapped_column(Text)
+    terms_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str] = mapped_column(String(120))
+    language: Mapped[str] = mapped_column(String(16), default="zh-CN")
+    is_commercial_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    chunks: Mapped[list["CounselingExampleChunk"]] = relationship(back_populates="source")
+
+
+class CounselingExampleChunk(Base):
+    __tablename__ = "counseling_example_chunks"
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_id", "chunk_index", name="uq_counseling_examples_source_external_chunk"),
+        Index("idx_counseling_examples_mode_status", "mode", "status"),
+        Index("idx_counseling_examples_topic_status", "topic", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    source_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("counseling_corpus_sources.id", ondelete="CASCADE"),
+        index=True,
+    )
+    external_id: Mapped[str] = mapped_column(String(160), default="")
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    mode: Mapped[str] = mapped_column(String(24), default="counseling", index=True)
+    topic: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    user_text: Mapped[str] = mapped_column(Text)
+    assistant_text: Mapped[str] = mapped_column(Text)
+    context_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="published", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    source: Mapped[CounselingCorpusSource] = relationship(back_populates="chunks")
+
+
 class RiskEvent(Base):
     __tablename__ = "risk_events"
 

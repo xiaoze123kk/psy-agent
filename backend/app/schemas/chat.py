@@ -52,6 +52,7 @@ class AssistantMessageResponse(BaseModel):
     session_summary: str
     should_write_memory: bool
     referenced_memories: list[MemoryReferenceResponse] = Field(default_factory=list)
+    referenced_counseling_examples: list[dict] = Field(default_factory=list)
     created_at: datetime
 
 
