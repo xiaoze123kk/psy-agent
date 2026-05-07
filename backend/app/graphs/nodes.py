@@ -94,6 +94,55 @@ def _build_examples_text(mode: str, retrieved_examples: list[CounselingExampleHi
     return "\n".join(lines) + "\n"
 
 
+def _build_examples_text_v2(mode: str, retrieved_examples: list[CounselingExampleHit] | None = None) -> str:
+    retrieved_examples = retrieved_examples or []
+    examples = COUNSELING_EXAMPLES.get(mode, [])
+    if not examples and not retrieved_examples:
+        return ""
+
+    def _compact(value: str, limit: int) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip() + "..."
+
+    lines = [
+        "",
+        "--- Counseling reference snippets ---",
+        "Use these only as style/process references.",
+        "Do not copy wording directly. Do not fabricate facts from them.",
+        "Prefer empathy, reflection, gentle pacing, and at most one small next step.",
+    ]
+
+    for index, hit in enumerate(retrieved_examples[:3], 1):
+        source_name = _compact(getattr(hit, "source_name", "") or "unknown", 40)
+        source_mode = _compact(getattr(hit, "mode", "") or "unknown", 20)
+        score = float(getattr(hit, "score", 0.0) or 0.0)
+        lines.extend(
+            [
+                f"[Retrieved example {index}]",
+                f"Source: {source_name}",
+                f"Mode: {source_mode}",
+                f"Similarity: {score:.4f}",
+                f"Content: {_compact(getattr(hit, 'content', ''), 320)}",
+            ]
+        )
+
+    for index, example in enumerate(examples[:4], 1):
+        user_text = _compact(example.get("user", ""), 120)
+        assistant_text = _compact(example.get("assistant", ""), 180)
+        lines.extend(
+            [
+                f"[Built-in example {index}]",
+                f"User: {user_text}",
+                f"Assistant: {assistant_text}",
+            ]
+        )
+
+    lines.append("--- End references ---")
+    return "\n".join(lines) + "\n"
+
+
 async def _model_reply_with_actions(
     state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
 ) -> tuple[str, list[str]]:
@@ -152,7 +201,7 @@ async def _model_reply_with_actions(
     )
 
     retrieved_examples = await retrieve_counseling_examples(state, mode=mode)
-    examples_text = _build_examples_text(mode, retrieved_examples)
+    examples_text = _build_examples_text_v2(mode, retrieved_examples)
     user_prompt = (
         f"用户模式：{user_mode}\n"
         f"陪伴风格：{style}\n"
@@ -585,4 +634,323 @@ async def skip_memory(state: AgentState) -> AgentState:
     return {
         "should_write_memory": False,
         "audit_tags": tags,
+    }
+
+
+# Clean UTF-8 overrides. The earlier definitions in this file were affected by
+# mojibake, so these later definitions are the ones used by main_graph.
+def _excerpt(text: str, limit: int = 24) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def _memory_context(memories: list[dict]) -> str:
+    lines = []
+    for memory in memories[:4]:
+        content = str(memory.get("content", "")).strip()
+        if content:
+            lines.append(f"- {content}")
+    return "\n".join(lines) or "无"
+
+
+def _recent_context(state: AgentState, count: int = 6) -> str:
+    messages = state.get("recent_messages", [])
+    if not messages:
+        return "（暂无历史对话）"
+    lines = []
+    for message in messages[-count:]:
+        role = "用户" if message.get("role") == "user" else "陪伴者"
+        content = str(message.get("content", "")).strip()
+        if content:
+            lines.append(f"{role}：{content}")
+    return "\n".join(lines) or "（暂无历史对话）"
+
+
+def _parse_actions_reply(text: str | None) -> tuple[str, list[str]]:
+    if not text:
+        return "", []
+    text = text.strip()
+    if "---" not in text:
+        return text, []
+    body, actions_block = text.rsplit("---", 1)
+    actions: list[str] = []
+    for action in actions_block.strip().splitlines():
+        item = action.strip().lstrip("0123456789.、- ").strip()
+        if item:
+            actions.append(item)
+    return body.strip(), actions[:3]
+
+
+async def _model_reply_with_actions(
+    state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
+) -> tuple[str, list[str]]:
+    text = state.get("normalized_text", "")
+    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
+    style = state.get("companion_preferences", {}).get("style", "gentle")
+    last_summary = state.get("last_summary") or "无"
+    memory_context = _memory_context(state.get("retrieved_memories", []))
+    recent_context = _recent_context(state)
+
+    mode_guidance = {
+        "companion": "先共情和接住情绪，少分析，最多问一个温和的问题。",
+        "vent": "重点回应用户没有被理解、压力很大的感受，不急着给建议。",
+        "soothe": "先帮助用户稳定身体和呼吸，再轻轻询问触发点。",
+        "counseling": "轻量结构化梳理事件、感受、想法和一个很小的下一步。",
+    }.get(mode, "先共情，再给一个很小的下一步。")
+
+    system_prompt = (
+        "你是心理陪伴产品里的支持型对话 agent。你不是医生，也不是替代线下心理咨询的治疗者。"
+        "不要诊断，不承诺治疗，不替代专业帮助。高风险安全分流由系统规则处理；"
+        "当前只写非危机陪伴回复。用简体中文，语气稳定、克制、温和。回复控制在 120 字以内。"
+    )
+
+    retrieved_examples = await retrieve_counseling_examples(state, mode=mode)
+    examples_text = _build_examples_text_v2(mode, retrieved_examples)
+    actions_instruction = (
+        "\n--- 输出格式 ---\n"
+        "先输出给用户看的回复正文，然后单独一行 ---，下方输出 3 个快捷按钮文案。\n"
+        "快捷按钮必须像用户自己接下来会说的话，使用第一人称或省略第一人称，口语化，不超过 20 个字。\n"
+        "不要写命令、建议、第三人称描述或助手视角的话。\n"
+    )
+    user_prompt = (
+        f"用户模式：{user_mode}\n"
+        f"陪伴风格：{style}\n"
+        f"当前回复模式：{mode}\n"
+        f"回复要求：{mode_guidance}\n"
+        f"{examples_text}"
+        f"上次摘要：{last_summary}\n"
+        f"可参考记忆：\n{memory_context}\n"
+        f"最近对话：\n{recent_context}\n"
+        f"用户刚刚说：{text}\n"
+        f"{actions_instruction}"
+    )
+
+    reply = await deepseek_client.chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    if not reply:
+        return fallback, default_actions
+    body, actions = _parse_actions_reply(reply)
+    return body or fallback, actions or default_actions
+
+
+_RISK_KEYWORDS = {
+    "suicide_terms": (
+        "自杀",
+        "结束生命",
+        "不想活",
+        "不想活了",
+        "活着没意义",
+        "去死",
+        "kill myself",
+        "end my life",
+        "want to die",
+    ),
+    "plan_terms": (
+        "今晚",
+        "现在",
+        "立刻",
+        "马上",
+        "遗书",
+        "刀",
+        "药",
+        "跳楼",
+        "tonight",
+        "right now",
+        "plan",
+        "pills",
+    ),
+    "l2_keywords": (
+        "想消失",
+        "不如死了",
+        "不想醒来",
+        "伤害自己",
+        "控制不住自己",
+        "撑不下去",
+        "活不下去",
+        "want to disappear",
+        "hurt myself",
+        "cannot control myself",
+    ),
+    "l1_keywords": (
+        "压力好大",
+        "焦虑",
+        "心慌",
+        "睡不着",
+        "崩溃",
+        "难受",
+        "压抑",
+        "委屈",
+        "没人理解",
+        "panic",
+        "anxious",
+        "cannot sleep",
+        "stressed out",
+        "overwhelmed",
+    ),
+}
+
+
+def sync_risk_classify(text: str) -> str:
+    lowered = (text or "").lower()
+    if _contains_any(lowered, _RISK_KEYWORDS["suicide_terms"]) and _contains_any(
+        lowered, _RISK_KEYWORDS["plan_terms"]
+    ):
+        return "L3"
+    if _contains_any(lowered, _RISK_KEYWORDS["l2_keywords"]) or _contains_any(
+        lowered, _RISK_KEYWORDS["suicide_terms"]
+    ):
+        return "L2"
+    if _contains_any(lowered, _RISK_KEYWORDS["l1_keywords"]):
+        return "L1"
+    return "L0"
+
+
+async def risk_classifier(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "")
+    lowered = text.lower()
+    risk_level = sync_risk_classify(text)
+    if risk_level == "L3":
+        matched = _matched_keywords(lowered, _RISK_KEYWORDS["suicide_terms"]) + _matched_keywords(
+            lowered, _RISK_KEYWORDS["plan_terms"]
+        )
+        return {"risk_level": "L3", "risk_reasons": matched[:4] or ["explicit_high_risk_signal"], "intent": "crisis"}
+    if risk_level == "L2":
+        matched = _matched_keywords(lowered, _RISK_KEYWORDS["l2_keywords"]) + _matched_keywords(
+            lowered, _RISK_KEYWORDS["suicide_terms"]
+        )
+        return {"risk_level": "L2", "risk_reasons": matched[:4] or ["high_risk_hint"], "intent": "crisis"}
+    if risk_level == "L1":
+        matched = _matched_keywords(lowered, _RISK_KEYWORDS["l1_keywords"])
+        return {"risk_level": "L1", "risk_reasons": matched[:3] or ["elevated_distress"]}
+    return {"risk_level": "L0", "risk_reasons": []}
+
+
+async def intent_classifier(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "").lower()
+    if _contains_any(text, ("焦虑", "心慌", "睡不着", "失眠", "慌", "呼吸", "panic", "anxious", "sleep")):
+        return {"intent": "soothe"}
+    if _contains_any(text, ("分析", "复盘", "理一理", "怎么办", "想办法", "help me sort", "analyze")):
+        return {"intent": "light_counseling"}
+    if _contains_any(text, ("难受", "委屈", "想哭", "没人理解", "压力好大", "压抑", "崩溃", "sad", "cry", "overwhelmed")):
+        return {"intent": "vent"}
+    if _contains_any(text, ("今天", "刚刚", "这会儿", "today i feel")):
+        return {"intent": "daily_checkin"}
+    return {"intent": "other"}
+
+
+async def companion_response(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "")
+    intent = state.get("intent", "other")
+    last_summary = state.get("last_summary", "")
+    excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
+
+    if last_summary:
+        opener = f"我记得你上次聊到「{_excerpt(last_summary, 28)}」，这次我继续接住你。"
+    else:
+        opener = "我在，先不用急着把事情讲完整。"
+
+    if intent == "vent":
+        body = "听起来你已经憋了很久，也很想被真正理解。"
+    elif intent == "daily_checkin":
+        body = "谢谢你把今天的状态带过来，能说出来已经很不容易。"
+    else:
+        body = "你可以先只说此刻最卡住、最难受的那一小块。"
+
+    fallback = f"{opener}{body} 你刚刚提到「{excerpt}」。如果你愿意，我们先从这里慢慢展开。"
+    assistant_text, suggested_actions = await _model_reply_with_actions(
+        state,
+        mode="vent" if intent == "vent" else "companion",
+        fallback=fallback,
+        default_actions=["继续说", "帮我理一理", "先听我说完"],
+    )
+    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
+
+
+async def soothing_response(state: AgentState) -> AgentState:
+    fallback = (
+        "先不急着分析，先把身体拉回当下。试着让双脚踩地，慢慢吸气 4 秒、呼气 6 秒，做 3 轮。"
+        "等身体稍微稳一点，我们再看刚才是什么触发了你。"
+    )
+    assistant_text, suggested_actions = await _model_reply_with_actions(
+        state,
+        mode="soothe",
+        fallback=fallback,
+        default_actions=["我现在还是很紧张", "陪我待一会儿", "有没有办法好受一点"],
+    )
+    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
+
+
+async def counseling_response(state: AgentState) -> AgentState:
+    fallback = (
+        "我们先把这件事拆小一点，不急着得出结论。先说最近一次发生了什么，"
+        "再说那一刻脑子里冒出的第一句话，最后只找一个最小的下一步。"
+    )
+    assistant_text, suggested_actions = await _model_reply_with_actions(
+        state,
+        mode="counseling",
+        fallback=fallback,
+        default_actions=["我想把这件事说清楚", "帮我理一理", "有没有更轻的下一步"],
+    )
+    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
+
+
+async def crisis_response(state: AgentState) -> AgentState:
+    teen_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult")) == "teen"
+    if teen_mode:
+        assistant_text = (
+            "我现在更关心你的安全。你刚刚的话提示你可能正处在高风险状态，先不要一个人扛。"
+            "请立刻联系可信任的大人，比如家长、监护人、老师或学校心理老师。"
+            "如果已经准备马上伤害自己，请现在拨打 120 或 110。"
+        )
+        actions = ["联系家长或监护人", "联系老师或学校心理老师", "打开 SOS", "拨打 120 或 110"]
+    else:
+        assistant_text = (
+            "你现在的安全最重要。你刚刚的话提示存在明显高风险，请立刻联系一个可信任的人，"
+            "把危险物品移开，去有人的地方。如果已经有立即伤害自己的打算，请马上拨打 120 或 110。"
+        )
+        actions = ["联系可信任的人", "远离危险物品", "打开 SOS", "拨打 120 或 110"]
+    return {"assistant_text": assistant_text, "suggested_actions": actions}
+
+
+async def summarize_turn(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "")
+    risk_level = state.get("risk_level", "L0")
+    intent = state.get("intent", "other")
+    topic = _excerpt(text or _last_user_message(state.get("messages", [])) or "当前困扰", 30)
+
+    if risk_level in {"L2", "L3"}:
+        summary = f"上次聊到明显安全风险：{topic}；下次进入时优先确认是否联系到可信任的人以及当前环境是否安全。"
+    else:
+        focus_map = {
+            "vent": "近期压力和情绪困扰",
+            "soothe": "焦虑或身体紧绷",
+            "light_counseling": "想理清事情与下一步",
+            "daily_checkin": "当天的情绪状态",
+            "other": "最近在意的困扰",
+        }
+        summary = f"上次主要在聊{focus_map.get(intent, '最近在意的困扰')}：{topic}；下次可以从最卡住的那一刻继续说。"
+    return {"session_summary": summary}
+
+
+async def memory_candidate_extract(state: AgentState) -> AgentState:
+    if state.get("memory_mode") == "off":
+        return {"memory_candidates": []}
+    summary = state.get("session_summary", "")
+    if not summary:
+        return {"memory_candidates": []}
+    risk_level = state.get("risk_level", "L0")
+    return {
+        "memory_candidates": [
+            {
+                "memory_type": "safety_summary" if risk_level in {"L2", "L3"} else "session_summary",
+                "content": summary,
+                "importance": 5 if risk_level in {"L2", "L3"} else 3,
+            }
+        ]
     }

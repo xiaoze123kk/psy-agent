@@ -1,4 +1,5 @@
 from app.graphs.main_graph import build_main_graph
+from app.services.counseling_vector_service import retrieve_counseling_examples
 
 
 def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
@@ -15,6 +16,36 @@ def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dic
             {
                 "memory_id": str(memory.get("id", "")),
                 "memory_type": str(memory.get("memory_type", "")),
+                "content": content,
+            }
+        )
+    return references
+
+
+def _response_mode_for_intent(intent: str) -> str:
+    if intent == "soothe":
+        return "soothe"
+    if intent == "light_counseling":
+        return "counseling"
+    if intent == "vent":
+        return "vent"
+    return "companion"
+
+
+def _counseling_references(examples: list[object] | None, risk_level: str) -> list[dict]:
+    if risk_level in {"L2", "L3"}:
+        return []
+    references: list[dict] = []
+    for example in examples or []:
+        content = str(getattr(example, "content", "") or "").strip()
+        if not content:
+            continue
+        references.append(
+            {
+                "source_key": str(getattr(example, "source_key", "") or ""),
+                "source_name": str(getattr(example, "source_name", "") or ""),
+                "mode": str(getattr(example, "mode", "") or ""),
+                "score": float(getattr(example, "score", 0.0) or 0.0),
                 "content": content,
             }
         )
@@ -73,6 +104,16 @@ class GraphRuntime:
         )
 
         risk_level = result.get("risk_level", "L0")
+        response_mode = _response_mode_for_intent(str(result.get("intent", "other")))
+        retrieved_examples = await retrieve_counseling_examples(
+            {
+                **input_state,
+                "normalized_text": content.strip(),
+                "risk_level": risk_level,
+            },
+            mode=response_mode,
+            limit=3,
+        )
         return {
             "assistant_text": result.get("assistant_text", ""),
             "risk_level": risk_level,
@@ -83,4 +124,5 @@ class GraphRuntime:
             "memory_candidates": result.get("memory_candidates", []),
             "should_write_memory": result.get("should_write_memory", False),
             "referenced_memories": _memory_references(retrieved_memories, str(risk_level)),
+            "referenced_counseling_examples": _counseling_references(retrieved_examples, str(risk_level)),
         }

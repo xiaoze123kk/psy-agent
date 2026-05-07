@@ -68,6 +68,11 @@ MODE_CLUES = {
     "vent": ("委屈", "没人理解", "想哭", "难受", "压力好大", "压抑", "崩溃", "好累"),
 }
 
+MAX_USER_TEXT_CHARS = 1200
+MAX_ASSISTANT_TEXT_CHARS = 2400
+MAX_CONTEXT_TEXT_CHARS = 1600
+MAX_CONTENT_TEXT_CHARS = 4096
+
 
 @dataclass(frozen=True)
 class ParsedExample:
@@ -101,6 +106,12 @@ def _clean_text(text: object) -> str:
     return cleaned
 
 
+def _clip_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
 def _contains_high_risk(text: str) -> bool:
     lowered = text.lower()
     return any(term.lower() in lowered for term in HIGH_RISK_TERMS)
@@ -132,7 +143,7 @@ def _content(context_text: str, user_text: str, assistant_text: str) -> str:
         parts.append(f"上下文：{context_text}")
     parts.append(f"用户：{user_text}")
     parts.append(f"咨询回应：{assistant_text}")
-    return "\n".join(parts)
+    return _clip_text("\n".join(parts), MAX_CONTENT_TEXT_CHARS)
 
 
 def _topic_from_item(item: dict[str, Any]) -> str:
@@ -238,10 +249,14 @@ def _pairs_from_messages(
         if role != "assistant" or not waiting_user:
             continue
 
-        assistant_text = content
-        context_text = "\n".join(prior[:-1][-4:])
-        if _is_safe_example(waiting_user, assistant_text, context_text):
-            mode = _classify_mode(waiting_user, assistant_text)
+        raw_user_text = waiting_user
+        raw_assistant_text = content
+        raw_context_text = "\n".join(prior[:-1][-4:])
+        if _is_safe_example(raw_user_text, raw_assistant_text, raw_context_text):
+            user_text = _clip_text(raw_user_text, MAX_USER_TEXT_CHARS)
+            assistant_text = _clip_text(raw_assistant_text, MAX_ASSISTANT_TEXT_CHARS)
+            context_text = _clip_text(raw_context_text, MAX_CONTEXT_TEXT_CHARS)
+            mode = _classify_mode(user_text, assistant_text)
             yield ParsedExample(
                 source_key=source_key,
                 source_name=str(source["name"]),
@@ -257,7 +272,7 @@ def _pairs_from_messages(
                 license=str(source["license"]),
             )
             pair_index += 1
-        prior.append(f"咨询师：{assistant_text}")
+        prior.append(f"咨询师：{raw_assistant_text}")
         waiting_user = None
 
 
@@ -371,6 +386,7 @@ def _iter_source_examples(source_key: str, corpus_root: Path) -> Iterator[Parsed
         data_dir = corpus_root / "smilechat" / "data"
         files = sorted(data_dir.glob("*.json"), key=lambda path: int(path.stem) if path.stem.isdigit() else path.stem)
         for file_index, file_path in enumerate(files):
+            print(f"[{source_key}] reading {file_path.name}", flush=True)
             try:
                 turns = json.loads(file_path.read_text(encoding="utf-8-sig"))
             except (json.JSONDecodeError, OSError):
@@ -384,6 +400,7 @@ def _iter_source_examples(source_key: str, corpus_root: Path) -> Iterator[Parsed
     source_dir = corpus_root / source_key
     json_files = sorted(path for path in source_dir.glob("*.json") if path.is_file())
     for file_path in json_files:
+        print(f"[{source_key}] reading {file_path.name}", flush=True)
         for index, item in enumerate(_iter_json_or_jsonl(file_path)):
             raw_id = item.get("external_id") or item.get("id") or item.get("conversation_id") or item.get("uuid") or index
             item = {**item, "external_id": f"{file_path.stem}_{index}_{raw_id}"}

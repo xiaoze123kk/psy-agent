@@ -157,6 +157,9 @@ async def send_message(
             session_summary=str(assistant_result.get("session_summary", "")),
             should_write_memory=bool(assistant_result.get("should_write_memory", False)),
             referenced_memories=list(assistant_result.get("referenced_memories", [])),
+            referenced_counseling_examples=list(
+                assistant_result.get("referenced_counseling_examples", [])
+            ),
             created_at=assistant_message.created_at,
         ),
     )

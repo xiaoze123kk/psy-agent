@@ -53,11 +53,13 @@ class Settings:
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
     knowledge_llm_answers_enabled: bool
+    knowledge_warm_index_on_startup: bool
     milvus_enabled: bool
     milvus_uri: str
     milvus_token: str | None
     milvus_db_name: str
     milvus_collection_prefix: str
+    milvus_connect_timeout_seconds: float
     embedding_provider: str
     embedding_model: str
     embedding_dim: int
@@ -93,11 +95,14 @@ def load_settings() -> Settings:
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
+        knowledge_warm_index_on_startup=os.getenv("KNOWLEDGE_WARM_INDEX_ON_STARTUP", "0").lower()
+        in {"1", "true", "yes", "on"},
         milvus_enabled=os.getenv("MILVUS_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
         milvus_uri=os.getenv("MILVUS_URI", "http://localhost:19530"),
         milvus_token=os.getenv("MILVUS_TOKEN") or None,
         milvus_db_name=os.getenv("MILVUS_DB_NAME", "default"),
         milvus_collection_prefix=os.getenv("MILVUS_COLLECTION_PREFIX", "psych_agent"),
+        milvus_connect_timeout_seconds=float(os.getenv("MILVUS_CONNECT_TIMEOUT_SECONDS", "1.5")),
         embedding_provider=os.getenv("EMBEDDING_PROVIDER", "local"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),

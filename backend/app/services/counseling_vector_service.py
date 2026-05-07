@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.db.models import CounselingExampleChunk, CounselingCorpusSource
 from app.graphs.state import AgentState
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
+
+if TYPE_CHECKING:
+    from app.db.models import CounselingExampleChunk, CounselingCorpusSource
 
 
 COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
@@ -52,7 +54,9 @@ COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
 @dataclass(frozen=True)
 class CounselingExampleHit:
     content: str
+    source_key: str
     source_name: str
+    mode: str | None
     source_url: str | None
     license: str | None
     score: float
@@ -89,7 +93,7 @@ async def retrieve_counseling_examples(
 ) -> list[CounselingExampleHit]:
     if state.get("risk_level") in {"L2", "L3"}:
         return []
-    if not milvus_store.is_enabled:
+    if not milvus_store.is_available:
         return []
 
     query = str(state.get("normalized_text") or "").strip()
@@ -100,19 +104,48 @@ async def retrieve_counseling_examples(
     if vector is None:
         return []
 
-    hits = milvus_store.search_counseling_examples(vector, mode=mode, limit=limit)
+    hits: list[Any] = []
+    seen_ids: set[str] = set()
+    search_modes = _search_modes_for(mode)
+    per_query_limit = max(limit * 2, 6)
+    for search_mode in search_modes:
+        for hit in milvus_store.search_counseling_examples(vector, mode=search_mode, limit=per_query_limit):
+            if hit.id in seen_ids:
+                continue
+            seen_ids.add(hit.id)
+            hits.append(hit)
+            if len(hits) >= limit:
+                break
+        if len(hits) >= limit:
+            break
+
     examples: list[CounselingExampleHit] = []
-    for hit in hits:
+    for hit in hits[:limit]:
         content = str(hit.entity.get("content") or "").strip()
         if not content:
             continue
         examples.append(
             CounselingExampleHit(
                 content=content,
+                source_key=str(hit.entity.get("source_key") or ""),
                 source_name=str(hit.entity.get("source_name") or "unknown"),
+                mode=str(hit.entity.get("mode") or "") or None,
                 source_url=str(hit.entity.get("source_url") or "") or None,
                 license=str(hit.entity.get("license") or "") or None,
                 score=hit.score,
             )
         )
     return examples
+
+
+def _search_modes_for(mode: str) -> list[str | None]:
+    normalized = (mode or "").strip().lower()
+    if normalized == "companion":
+        return ["vent", "soothe", "counseling", None]
+    if normalized == "vent":
+        return ["vent", "soothe", None]
+    if normalized == "soothe":
+        return ["soothe", "vent", None]
+    if normalized == "counseling":
+        return ["counseling", "vent", None]
+    return [normalized or None, None]
