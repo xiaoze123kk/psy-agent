@@ -64,6 +64,7 @@ class MilvusVectorStore:
         self.dim = settings.embedding_dim
         self._client: Any | None = None
         self._client_error: str | None = None
+        self._field_cache: dict[str, set[str]] = {}
 
     @property
     def knowledge_collection(self) -> str:
@@ -115,6 +116,7 @@ class MilvusVectorStore:
         if len(vector) != self.dim:
             return []
 
+        output_fields = self._filter_existing_output_fields(collection_name, output_fields)
         payload: dict[str, Any] = {
             "dbName": self.db_name or "default",
             "collectionName": collection_name,
@@ -167,6 +169,44 @@ class MilvusVectorStore:
             if item_id:
                 hits.append(VectorHit(id=item_id, score=score, entity=entity))
         return hits
+
+    def _filter_existing_output_fields(self, collection_name: str, output_fields: list[str]) -> list[str]:
+        field_names = self._collection_field_names(collection_name)
+        if not field_names:
+            return output_fields
+        return [field for field in output_fields if field in field_names]
+
+    def _collection_field_names(self, collection_name: str) -> set[str]:
+        cached = self._field_cache.get(collection_name)
+        if cached is not None:
+            return cached
+
+        endpoint = self._rest_base_url().rstrip("/") + "/v2/vectordb/collections/describe"
+        payload = {
+            "dbName": self.db_name or "default",
+            "collectionName": collection_name,
+        }
+        try:
+            with httpx.Client(timeout=self.request_timeout_seconds, trust_env=False) as client:
+                response = client.post(endpoint, headers=self._rest_headers(), json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.debug("Milvus collection describe failed for %s: %s", collection_name, exc)
+            return set()
+
+        if not isinstance(data, dict) or int(data.get("code", -1)) != 0:
+            logger.debug("Milvus collection describe returned error for %s: %s", collection_name, data)
+            return set()
+
+        raw_fields = ((data.get("data") or {}).get("fields") or [])
+        field_names = {
+            str(field.get("name"))
+            for field in raw_fields
+            if isinstance(field, dict) and field.get("name")
+        }
+        self._field_cache[collection_name] = field_names
+        return field_names
 
     def _endpoint_reachable(self) -> bool:
         parsed = urlparse(self.uri)
@@ -278,6 +318,16 @@ class MilvusVectorStore:
                 ("license", 160),
                 ("status", 24),
                 ("embedding_key", 256),
+                ("language", 24),
+                ("age_group", 24),
+                ("review_status", 32),
+                ("risk_allowed", 32),
+                ("scenario_tags", 512),
+                ("intervention_tags", 512),
+                ("style_tags", 512),
+                ("contraindications", 512),
+                ("quality_score", 32),
+                ("safety_score", 32),
             ],
         )
 

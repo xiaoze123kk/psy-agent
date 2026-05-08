@@ -143,6 +143,9 @@ async def retrieve_counseling_examples(
             if hit.id in seen_ids:
                 continue
             seen_ids.add(hit.id)
+            content = str(hit.entity.get("content") or "").strip()
+            if not content or not counseling_example_is_safe(hit.entity):
+                continue
             hits.append(hit)
             if len(hits) >= safe_limit:
                 break
