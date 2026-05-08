@@ -1,0 +1,80 @@
+{
+  "test_id": "state-check-v1",
+  "code": "daily_state",
+  "title": "今日状态测试",
+  "test_type": "state",
+  "estimated_minutes": 3,
+  "audience": "all",
+  "status": "published",
+  "questions": [
+    {
+      "index": 0,
+      "text": "过去一周你的情绪状态整体如何？",
+      "options": [
+        {
+          "id": "A",
+          "text": "大部分时间比较平稳"
+        },
+        {
+          "id": "B",
+          "text": "偶尔会低落，但还能应付"
+        },
+        {
+          "id": "C",
+          "text": "经常感到低落，影响做事"
+        },
+        {
+          "id": "D",
+          "text": "几乎每天都很难受"
+        }
+      ],
+      "id": "state-q-0"
+    },
+    {
+      "index": 1,
+      "text": "过去一周你感到焦虑或紧张的程度？",
+      "options": [
+        {
+          "id": "A",
+          "text": "几乎没有明显焦虑"
+        },
+        {
+          "id": "B",
+          "text": "偶尔焦虑，但不影响日常"
+        },
+        {
+          "id": "C",
+          "text": "经常焦虑，开始影响睡眠或做事"
+        },
+        {
+          "id": "D",
+          "text": "大部分时间都很焦虑，难以放松"
+        }
+      ],
+      "id": "state-q-1"
+    },
+    {
+      "index": 2,
+      "text": "过去一周你对生活的整体满意度？",
+      "options": [
+        {
+          "id": "A",
+          "text": "总体还算满意"
+        },
+        {
+          "id": "B",
+          "text": "有些方面不太满意"
+        },
+        {
+          "id": "C",
+          "text": "很多方面都不太满意"
+        },
+        {
+          "id": "D",
+          "text": "几乎没有什么让我满意的"
+        }
+      ],
+      "id": "state-q-2"
+    }
+  ]
+}
