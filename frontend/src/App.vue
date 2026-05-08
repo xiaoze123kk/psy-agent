@@ -7,8 +7,11 @@ import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  ChatStreamAcceptedEvent,
+  ChatStreamErrorEvent,
   ChatStreamFinalEvent,
   ChatStreamGraphUpdateEvent,
+  ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
   CompleteAttemptResponse,
   DeliveryStatus,
@@ -30,6 +33,7 @@ import type {
   PersonalDataExport,
   PrivacyDataScope,
   PrivacySummaryResponse,
+  SendMessageRequest,
   SendMessageResponse,
   ShareCardData,
   StartAttemptResponse,
@@ -800,10 +804,19 @@ function memoryTypeLabel(type: string) {
 }
 
 function graphStatusLabel(node?: string | null) {
+  if (node === "accepted") return "已接收";
   if (node === "risk_classifier") return "正在识别风险";
+  if (node === "load_user_profile") return "正在读取设置";
+  if (node === "control_plane") return "正在确认边界";
   if (node === "intent_classifier") return "正在理解意图";
   if (node === "memory_retrieval") return "正在整理上下文";
-  if (node === "summary_memory_node") return "正在整理摘要";
+  if (node === "example_retriever") return "正在检索参考";
+  if (node === "companion_response" || node === "soothing_response" || node === "counseling_response") return "正在生成回复";
+  if (node === "crisis_response" || node === "clinical_red_flag_response" || node === "boundary_response") return "正在生成安全回复";
+  if (node === "response_validator") return "正在校验安全";
+  if (node === "summarize_turn" || node === "memory_candidate_extract" || node === "write_memory" || node === "summary_memory_node") return "正在整理摘要";
+  if (node === "saving_record") return "正在保存记录";
+  if (node === "heartbeat") return "仍在处理中";
   if (node) return "正在推进对话";
   return "";
 }
@@ -816,8 +829,20 @@ function isTokenEventData(data: unknown): data is ChatStreamTokenEvent {
   return isObjectRecord(data) && typeof data.text === "string";
 }
 
+function isAcceptedEventData(data: unknown): data is ChatStreamAcceptedEvent {
+  return isObjectRecord(data) && data.status === "accepted" && typeof data.thread_id === "string";
+}
+
 function isGraphUpdateEventData(data: unknown): data is ChatStreamGraphUpdateEvent {
   return isObjectRecord(data) && typeof data.node === "string";
+}
+
+function isHeartbeatEventData(data: unknown): data is ChatStreamHeartbeatEvent {
+  return isObjectRecord(data) && data.status === "running" && typeof data.elapsed_ms === "number";
+}
+
+function isErrorEventData(data: unknown): data is ChatStreamErrorEvent {
+  return isObjectRecord(data) && typeof data.message === "string";
 }
 
 function isFinalEventData(data: unknown): data is ChatStreamFinalEvent {
@@ -1605,6 +1630,22 @@ function buildLocalSafetyFallback(): LocalSafetyFallback {
   };
 }
 
+function createClientMessageId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isTurnStateError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("turn_running") || message.includes("idempotency_key_conflict");
+}
+
+async function refreshAfterTurnStateError(assistantId: number, message: string) {
+  apiNotice.value = message;
+  updateMessage(assistantId, { streaming: false, streamError: true });
+  if (activeThreadId.value) await loadThreadMessages(activeThreadId.value);
+}
+
 function showFailedNoReply(assistantId: number | null, userText: string, failureReason?: string | null) {
   if (assistantId !== null) removeMessage(assistantId);
   failedReplyStatus.value = {
@@ -1706,7 +1747,13 @@ async function submitMessage(text = composerText.value) {
     return;
   }
 
-  const payload = { user_id: currentUserId.value, content, input_type: "text" as const, user_mode: selectedUserMode() };
+  const payload: SendMessageRequest = {
+    user_id: currentUserId.value,
+    client_message_id: createClientMessageId(),
+    content,
+    input_type: "text",
+    user_mode: selectedUserMode(),
+  };
   const assistantId = addMessage("assistant", "", null, true);
   let streamed = "";
   let risk: RiskLevel | null = null;
@@ -1719,6 +1766,22 @@ async function submitMessage(text = composerText.value) {
       activeThreadId.value,
       payload,
       (event, data) => {
+        if (event === "accepted" && isAcceptedEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "accepted",
+            streamError: false,
+          });
+        }
+
+        if (event === "heartbeat" && isHeartbeatEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "heartbeat",
+            streamError: false,
+          });
+        }
+
         if (event === "graph_update" && isGraphUpdateEventData(data)) {
           receivedStreamEvent = true;
           const graphRisk = normalizeRiskLevel(data.risk_level);
@@ -1727,6 +1790,17 @@ async function submitMessage(text = composerText.value) {
             graphNode: data.node,
             riskLevel: graphRisk ?? risk,
             streamError: false,
+          });
+        }
+
+        if (event === "error" && isErrorEventData(data)) {
+          receivedStreamEvent = true;
+          apiNotice.value = data.code === "turn_running"
+            ? "这轮消息仍在服务端处理中，正在刷新记录。"
+            : data.message || "流式连接异常，正在刷新服务端记录。";
+          updateMessage(assistantId, {
+            streaming: false,
+            streamError: true,
           });
         }
 
@@ -1775,8 +1849,21 @@ async function submitMessage(text = composerText.value) {
 
     if (!receivedStreamEvent) {
       apiNotice.value = "流式连接无返回，已切换到稳定发送。";
-      const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response, localRisk);
+      try {
+        const response = await api.sendMessage(activeThreadId.value, payload);
+        applySendMessageResponse(assistantId, content, response, localRisk);
+      } catch (fallbackError) {
+        if (isTurnStateError(fallbackError)) {
+          await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+          return;
+        }
+        showFailedNoReply(
+          assistantId,
+          content,
+          fallbackError instanceof Error ? fallbackError.message : "send_failed",
+        );
+        syncFailedNoReplyThread(localRisk);
+      }
       return;
     }
 
@@ -1799,11 +1886,20 @@ async function submitMessage(text = composerText.value) {
       return;
     }
 
+    if (isTurnStateError(error)) {
+      await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+      return;
+    }
+
     try {
       apiNotice.value = "流式连接失败，已切换到稳定发送。";
       const response = await api.sendMessage(activeThreadId.value, payload);
       applySendMessageResponse(assistantId, content, response, localRisk);
     } catch (fallbackError) {
+      if (isTurnStateError(fallbackError)) {
+        await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+        return;
+      }
       showFailedNoReply(
         assistantId,
         content,

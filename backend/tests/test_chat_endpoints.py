@@ -88,6 +88,45 @@ class ChatEndpointTests(unittest.TestCase):
             "should_write_memory": False,
         }
 
+    async def fake_success_stream(self, db: Session, **kwargs):
+        yield "accepted", {"thread_id": kwargs["thread"].id, "status": "accepted"}
+        yield "graph_update", {"node": "risk_classifier", "status": "completed", "risk_level": "L0"}
+        yield "token", {"text": "我在。"}
+        yield "final", {
+            "thread_id": kwargs["thread"].id,
+            "message_id": "user-message-1",
+            "assistant_message_id": "assistant-message-1",
+            "assistant_text": "我在。",
+            "risk_level": "L0",
+            "intent": "vent",
+            "suggested_actions": ["我想继续说"],
+            "session_summary": "用户表达压力。",
+            "should_write_memory": False,
+            "referenced_memories": [],
+            "delivery_status": "generated",
+            "failure_reason": None,
+            "retryable": False,
+        }
+
+    async def fake_failed_stream(self, db: Session, **kwargs):
+        yield "accepted", {"thread_id": kwargs["thread"].id, "status": "accepted"}
+        yield "graph_update", {"node": "risk_classifier", "status": "completed", "risk_level": "L1"}
+        yield "final", {
+            "thread_id": kwargs["thread"].id,
+            "message_id": "user-message-1",
+            "assistant_message_id": None,
+            "assistant_text": "",
+            "risk_level": "L1",
+            "intent": "vent",
+            "suggested_actions": [],
+            "session_summary": "",
+            "should_write_memory": False,
+            "referenced_memories": [],
+            "delivery_status": "failed_no_reply",
+            "failure_reason": "graph_timeout_fallback",
+            "retryable": True,
+        }
+
     def test_send_message_failed_no_reply_returns_null_assistant_message(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)
@@ -119,11 +158,34 @@ class ChatEndpointTests(unittest.TestCase):
         )
         self.assertEqual(assistant_count, 0)
 
+    def test_stream_emits_safe_realtime_sequence(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+
+        with patch("app.api.v1.endpoints.chat.process_message_turn_stream", new=self.fake_success_stream):
+            response = self.client.post(
+                f"/api/v1/chat/threads/{thread.id}/stream",
+                headers=self.auth_headers(user),
+                json={"content": "我今天有点累"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        accepted_pos = body.index("event: accepted")
+        graph_pos = body.index("event: graph_update")
+        token_pos = body.index("event: token")
+        final_pos = body.index("event: final")
+        self.assertLess(accepted_pos, graph_pos)
+        self.assertLess(graph_pos, token_pos)
+        self.assertLess(token_pos, final_pos)
+        self.assertIn('"node": "risk_classifier"', body)
+        self.assertIn('"assistant_text": "我在。"', body)
+
     def test_stream_failed_no_reply_emits_null_assistant_message_id(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)
 
-        with patch("app.api.v1.endpoints.chat.process_message_turn", new=AsyncMock(side_effect=self.fake_failed_turn)):
+        with patch("app.api.v1.endpoints.chat.process_message_turn_stream", new=self.fake_failed_stream):
             response = self.client.post(
                 f"/api/v1/chat/threads/{thread.id}/stream",
                 headers=self.auth_headers(user),
@@ -132,6 +194,8 @@ class ChatEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.text
+        self.assertIn("event: accepted", body)
+        self.assertIn("event: graph_update", body)
         self.assertIn("event: final", body)
         self.assertIn('"assistant_message_id": null', body)
         self.assertIn('"delivery_status": "failed_no_reply"', body)

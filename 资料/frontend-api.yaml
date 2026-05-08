@@ -240,14 +240,20 @@ methods:
       pathTemplate: /api/v1/chat/threads/{thread_id}/stream
       responseContentType: text/event-stream
     events:
+      - event: accepted
+        schema: ChatStreamAcceptedEvent
       - event: graph_update
         schema: ChatStreamGraphUpdateEvent
+      - event: heartbeat
+        schema: ChatStreamHeartbeatEvent
       - event: token
         schema: ChatStreamTokenEvent
       - event: final
         schema: ChatStreamFinalEvent
+      - event: error
+        schema: ChatStreamErrorEvent
     fallback:
-      beforeFirstEvent: call sendMessage with the same payload and fill the current assistant bubble
+      beforeFirstEvent: call sendMessage with the same payload, including client_message_id, and fill the current assistant bubble
       afterFirstEvent: do not resend; refresh thread messages from the server
 
   - methodName: listMemories
@@ -686,6 +692,21 @@ types:
       - L2
       - L3
 
+  TurnStatus:
+    type: enum
+    values:
+      - accepted
+      - running
+      - completed
+      - failed
+
+  DeliveryStatus:
+    type: enum
+    values:
+      - generated
+      - failed_no_reply
+      - safety_fallback
+
   MemoryMode:
     type: enum
     values:
@@ -952,6 +973,10 @@ types:
       - content
     fields:
       user_id: { type: string }
+      client_message_id:
+        type: string
+        required: false
+        note: 前端每次主动发送生成；streamMessage 自动 fallback 到 sendMessage 时必须复用同一个值。
       content: { type: string }
       input_type:
         type: InputType
@@ -970,6 +995,8 @@ types:
       - session_summary
       - should_write_memory
       - referenced_memories
+      - delivery_status
+      - retryable
     fields:
       assistant_text: { type: string }
       risk_level: { type: RiskLevel }
@@ -988,11 +1015,50 @@ types:
     type: object
     required:
       - thread_id
+      - message_id
+      - assistant_message_id
+      - client_message_id
+      - turn_id
+      - turn_status
       - assistant_message
+      - delivery_status
+      - retryable
     fields:
       thread_id: { type: string }
+      message_id: { type: string }
+      assistant_message_id:
+        type: string
+        nullable: true
+      client_message_id: { type: string }
+      turn_id: { type: string }
+      turn_status: { type: TurnStatus }
       assistant_message:
         type: AssistantMessage
+        nullable: true
+      delivery_status: { type: DeliveryStatus }
+      failure_reason:
+        type: string
+        nullable: true
+        required: false
+      retryable: { type: boolean }
+
+  ChatStreamAcceptedEvent:
+    type: object
+    required:
+      - thread_id
+      - status
+    fields:
+      thread_id: { type: string }
+      status: { type: literal, value: accepted }
+      client_message_id:
+        type: string
+        required: false
+      turn_id:
+        type: string
+        required: false
+      turn_status:
+        type: TurnStatus
+        required: false
 
   ChatStreamTokenEvent:
     type: object
@@ -1017,6 +1083,9 @@ types:
       - thread_id
       - message_id
       - assistant_message_id
+      - client_message_id
+      - turn_id
+      - turn_status
       - assistant_text
       - risk_level
       - intent
@@ -1027,7 +1096,12 @@ types:
     fields:
       thread_id: { type: string }
       message_id: { type: string }
-      assistant_message_id: { type: string }
+      assistant_message_id:
+        type: string
+        nullable: true
+      client_message_id: { type: string }
+      turn_id: { type: string }
+      turn_status: { type: TurnStatus }
       assistant_text: { type: string }
       risk_level: { type: RiskLevel }
       intent: { type: string }
@@ -1040,13 +1114,46 @@ types:
         type: array
         items:
           type: MemoryReference
+      delivery_status: { type: DeliveryStatus }
+      failure_reason:
+        type: string
+        nullable: true
+        required: false
+      retryable: { type: boolean }
+
+  ChatStreamHeartbeatEvent:
+    type: object
+    required:
+      - status
+      - elapsed_ms
+    fields:
+      status: { type: literal, value: running }
+      elapsed_ms: { type: number }
+
+  ChatStreamErrorEvent:
+    type: object
+    required:
+      - message
+      - retryable
+    fields:
+      message: { type: string }
+      retryable: { type: boolean }
+      code:
+        type: string
+        required: false
+      turn_status:
+        type: TurnStatus
+        required: false
 
   ChatStreamEvent:
     type: sse
     events:
+      accepted: ChatStreamAcceptedEvent
       token: ChatStreamTokenEvent
       graph_update: ChatStreamGraphUpdateEvent
+      heartbeat: ChatStreamHeartbeatEvent
       final: ChatStreamFinalEvent
+      error: ChatStreamErrorEvent
 
   MemoryItem:
     type: object

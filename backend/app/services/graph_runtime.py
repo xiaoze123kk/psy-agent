@@ -69,6 +69,46 @@ def _counseling_references(examples: list[object] | None, risk_level: str) -> li
     return references
 
 
+def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str, object]:
+    event: dict[str, object] = {
+        "node": node,
+        "status": "completed",
+    }
+    safe_keys = (
+        "risk_level",
+        "intent",
+        "route_priority",
+        "control_category",
+        "rag_used",
+        "rag_skipped_reason",
+        "validator_blocked",
+        "delivery_status",
+    )
+    for key in safe_keys:
+        value = state.get(key)
+        if value is None:
+            continue
+        if value == "" or value == [] or value == {}:
+            continue
+        event[key] = value
+
+    if node == "response_validator" and isinstance(node_update, dict):
+        event["validator_blocked"] = bool(node_update.get("validator_blocked", False))
+        if node_update.get("delivery_status"):
+            event["delivery_status"] = str(node_update["delivery_status"])
+    return event
+
+
+def _iter_node_updates(update: object):
+    if isinstance(update, tuple) and len(update) == 2:
+        update = update[1]
+    if not isinstance(update, dict):
+        return
+    for node, node_update in update.items():
+        if isinstance(node, str):
+            yield node, node_update
+
+
 class GraphRuntime:
     _compiled_graph = None
 
@@ -77,8 +117,9 @@ class GraphRuntime:
             GraphRuntime._compiled_graph = build_main_graph()
         self.graph = GraphRuntime._compiled_graph
 
-    async def invoke_turn(
+    def _build_input_state(
         self,
+        *,
         thread_id: str,
         user_id: str,
         content: str,
@@ -92,7 +133,7 @@ class GraphRuntime:
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
     ) -> dict[str, object]:
-        input_state = {
+        return {
             "thread_id": thread_id,
             "user_id": user_id,
             "user_text": content,
@@ -112,16 +153,16 @@ class GraphRuntime:
             "memory_index": memory_index or [],
             "retrieved_memories": retrieved_memories or [],
         }
-        result = await self.graph.ainvoke(
-            input_state,
-            config={
-                "configurable": {
-                    "thread_id": thread_id,
-                    "user_id": user_id,
-                }
-            },
-        )
 
+    def _graph_config(self, *, thread_id: str, user_id: str) -> dict[str, object]:
+        return {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id,
+            }
+        }
+
+    def _map_result(self, result: dict[str, object], *, retrieved_memories: list[dict] | None) -> dict[str, object]:
         risk_level = result.get("risk_level", "L0")
         delivery_status = str(result.get("delivery_status") or "")
         assistant_text = str(result.get("assistant_text", "") or "")
@@ -178,3 +219,83 @@ class GraphRuntime:
             "failure_reason": result.get("failure_reason"),
             "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
         }
+
+    async def invoke_turn(
+        self,
+        thread_id: str,
+        user_id: str,
+        content: str,
+        input_type: str = "text",
+        user_mode: str = "adult",
+        recent_messages: list[dict] | None = None,
+        last_summary: str | None = None,
+        memory_mode: str = "summary_only",
+        companion_style: str = "gentle",
+        nickname: str | None = None,
+        retrieved_memories: list[dict] | None = None,
+        memory_index: list[dict] | None = None,
+    ) -> dict[str, object]:
+        input_state = self._build_input_state(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=content,
+            input_type=input_type,
+            user_mode=user_mode,
+            recent_messages=recent_messages,
+            last_summary=last_summary,
+            memory_mode=memory_mode,
+            companion_style=companion_style,
+            nickname=nickname,
+            retrieved_memories=retrieved_memories,
+            memory_index=memory_index,
+        )
+        result = await self.graph.ainvoke(
+            input_state,
+            config=self._graph_config(thread_id=thread_id, user_id=user_id),
+        )
+        return self._map_result(result, retrieved_memories=retrieved_memories)
+
+    async def stream_turn(
+        self,
+        thread_id: str,
+        user_id: str,
+        content: str,
+        input_type: str = "text",
+        user_mode: str = "adult",
+        recent_messages: list[dict] | None = None,
+        last_summary: str | None = None,
+        memory_mode: str = "summary_only",
+        companion_style: str = "gentle",
+        nickname: str | None = None,
+        retrieved_memories: list[dict] | None = None,
+        memory_index: list[dict] | None = None,
+    ):
+        input_state = self._build_input_state(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=content,
+            input_type=input_type,
+            user_mode=user_mode,
+            recent_messages=recent_messages,
+            last_summary=last_summary,
+            memory_mode=memory_mode,
+            companion_style=companion_style,
+            nickname=nickname,
+            retrieved_memories=retrieved_memories,
+            memory_index=memory_index,
+        )
+        config = self._graph_config(thread_id=thread_id, user_id=user_id)
+        state = dict(input_state)
+
+        if not hasattr(self.graph, "astream"):
+            result = await self.graph.ainvoke(input_state, config=config)
+            yield "graph_result", self._map_result(result, retrieved_memories=retrieved_memories)
+            return
+
+        async for update in self.graph.astream(input_state, config=config, stream_mode="updates"):
+            for node, node_update in _iter_node_updates(update):
+                if isinstance(node_update, dict):
+                    state.update(node_update)
+                yield "graph_update", _safe_graph_update(node, state, node_update)
+
+        yield "graph_result", self._map_result(state, retrieved_memories=retrieved_memories)

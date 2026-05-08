@@ -105,6 +105,42 @@ class Message(Base):
     thread: Mapped[ConversationThread] = relationship(back_populates="messages")
 
 
+class ConversationTurn(Base):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        UniqueConstraint("user_id", "thread_id", "client_message_id", name="uq_conversation_turns_client_message"),
+        Index("idx_conversation_turns_thread_created", "thread_id", "created_at"),
+        Index("idx_conversation_turns_status_updated", "turn_status", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    client_message_id: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    turn_status: Mapped[str] = mapped_column(String(16), default="running")
+    delivery_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    response_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class UserMemory(Base):
     __tablename__ = "user_memories"
     __table_args__ = (
