@@ -142,6 +142,17 @@ async def send_message(
         thread=thread,
         payload=payload,
     )
+    if assistant_message is None:
+        return SendMessageResponse(
+            thread_id=thread.id,
+            message_id=user_message.id,
+            assistant_message_id=None,
+            assistant_message=None,
+            delivery_status=str(assistant_result.get("delivery_status", "failed_no_reply")),
+            failure_reason=assistant_result.get("failure_reason"),
+            retryable=bool(assistant_result.get("retryable", False)),
+        )
+
     return SendMessageResponse(
         thread_id=thread.id,
         message_id=user_message.id,
@@ -160,8 +171,14 @@ async def send_message(
             referenced_counseling_examples=list(
                 assistant_result.get("referenced_counseling_examples", [])
             ),
+            delivery_status=str(assistant_result.get("delivery_status", "generated")),
+            failure_reason=assistant_result.get("failure_reason"),
+            retryable=bool(assistant_result.get("retryable", False)),
             created_at=assistant_message.created_at,
         ),
+        delivery_status=str(assistant_result.get("delivery_status", "generated")),
+        failure_reason=assistant_result.get("failure_reason"),
+        retryable=bool(assistant_result.get("retryable", False)),
     )
 
 
@@ -194,14 +211,15 @@ async def stream_message(
                 "risk_level": assistant_result["risk_level"],
             },
         )
-        for chunk in iter_stream_chunks(assistant_message.content):
-            yield format_sse_event("token", {"text": chunk})
+        if assistant_message is not None:
+            for chunk in iter_stream_chunks(assistant_message.content):
+                yield format_sse_event("token", {"text": chunk})
         yield format_sse_event(
             "final",
             {
                 "thread_id": thread.id,
                 "message_id": user_message.id,
-                "assistant_message_id": assistant_message.id,
+                "assistant_message_id": assistant_message.id if assistant_message is not None else None,
                 **assistant_result,
             },
         )

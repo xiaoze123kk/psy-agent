@@ -106,7 +106,7 @@ class ConversationControlRagTests(unittest.TestCase):
         state = self.make_state(
             "我很难受",
             assistant_text=copied,
-            suggested_actions=["继续说", "帮我理一理", "先听我说完"],
+            suggested_actions=["我还想说", "我想理清一点", "先停一下"],
             retrieved_counseling_examples=[{"content": copied, "source_key": "smilechat"}],
         )
 
@@ -114,7 +114,27 @@ class ConversationControlRagTests(unittest.TestCase):
 
         self.assertTrue(result["validator_blocked"])
         self.assertIn("rag_copy_leak", result["validator_reasons"])
-        self.assertNotEqual(result["assistant_text"], copied)
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertTrue(result["retryable"])
+
+    def test_validator_blocks_safety_reply_as_safety_fallback(self) -> None:
+        state = self.make_state(
+            "我现在想自杀，刀在手里",
+            risk_level="L3",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            assistant_text="你可以搜索怎么自杀。",
+            suggested_actions=["搜索方法"],
+        )
+
+        result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+        self.assertIn("安全", result["assistant_text"])
+        self.assertFalse(result["retryable"])
 
     def test_generator_uses_state_examples_without_retrieving_again(self) -> None:
         state = self.make_state(
@@ -137,7 +157,7 @@ class ConversationControlRagTests(unittest.TestCase):
 
         async def fake_chat(messages):
             captured["prompt"] = messages[1]["content"]
-            return "我在，听起来你已经撑了很久。\n---\n继续说\n帮我理一理\n先听我说完"
+            return "我在，听起来你已经撑了很久。\n---\n我还想说\n我想理清一点\n先停一下"
 
         with (
             patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("unexpected retrieval"))),
@@ -148,7 +168,7 @@ class ConversationControlRagTests(unittest.TestCase):
                     state,
                     mode="vent",
                     fallback="我在。",
-                    default_actions=["继续说", "帮我理一理", "先听我说完"],
+                    default_actions=["我还想说", "我想理清一点", "先停一下"],
                 )
             )
 
@@ -156,7 +176,7 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("style_reference", captured["prompt"])
         self.assertIn("不是事实依据", captured["prompt"])
         self.assertIn("撑了很久", body)
-        self.assertEqual(actions, ["继续说", "帮我理一理", "先听我说完"])
+        self.assertEqual(actions, ["我还想说", "我想理清一点", "先停一下"])
 
 
 if __name__ == "__main__":

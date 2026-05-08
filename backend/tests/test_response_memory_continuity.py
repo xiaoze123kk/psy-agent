@@ -24,7 +24,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
             "risk_reasons": [],
             "messages": [],
             "recent_messages": [],
-            "last_summary": "上次主要在聊最近在意的困扰：烦死了；下次可以从最卡住的那一刻继续说。",
+            "last_summary": "上次主要在聊最近在意的困扰：烦死了；下次可以从最卡住的那一刻接着展开。",
             "profile": {"user_mode": "teen", "nickname": "test_user"},
             "companion_preferences": {"style": "gentle", "question_tolerance": "low"},
             "memory_mode": "summary_only",
@@ -39,7 +39,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         state.update(overrides)
         return state
 
-    def test_companion_fallback_does_not_recite_last_summary(self) -> None:
+    def test_companion_empty_model_returns_no_reply(self) -> None:
         state = self.make_state()
         with (
             patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
@@ -47,10 +47,26 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         ):
             result = _run(companion_response(state))
 
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+
+    def test_companion_empty_model_does_not_use_contextual_template(self) -> None:
+        state = self.make_state(
+            normalized_text="那条街有太多回忆了",
+            user_text="那条街有太多回忆了",
+            last_summary="",
+            intent="other",
+            recent_messages=[],
+        )
+        with (
+            patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch("app.graphs.nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
+        ):
+            result = _run(companion_response(state))
+
         assistant_text = result["assistant_text"]
-        self.assertNotIn("我记得你上次", assistant_text)
-        self.assertNotIn("上次主要在聊", assistant_text)
-        self.assertIn("一想到老师就烦", assistant_text)
+        self.assertEqual(assistant_text, "")
+        self.assertEqual(result["suggested_actions"], [])
 
     def test_summarize_turn_uses_neutral_internal_summary(self) -> None:
         result = _run(summarize_turn(self.make_state(normalized_text="烦死了", intent="other")))

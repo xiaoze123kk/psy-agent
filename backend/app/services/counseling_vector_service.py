@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import TYPE_CHECKING, Any
 
+from app.core.config import settings
 from app.graphs.state import AgentState
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
@@ -115,6 +116,8 @@ async def retrieve_counseling_examples(
     mode: str,
     limit: int = 3,
 ) -> list[CounselingExampleHit]:
+    if not settings.counseling_rag_enabled:
+        return []
     allowed, _reason = counseling_rag_allowed(state)
     if not allowed:
         return []

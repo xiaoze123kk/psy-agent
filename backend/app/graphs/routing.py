@@ -31,6 +31,8 @@ def route_by_intent(state: AgentState) -> str:
 
 
 def route_memory_write(state: AgentState) -> str:
+    if state.get("delivery_status") == "failed_no_reply":
+        return "skip_memory"
     if state.get("memory_mode") == "off":
         return "skip_memory"
     if not state.get("memory_candidates"):

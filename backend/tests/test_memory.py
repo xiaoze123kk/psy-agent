@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import os
 import unittest
+from dataclasses import replace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,7 +14,17 @@ from sqlalchemy import create_engine
 
 from app.api.v1.endpoints import auth, me, memory
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, MoodLog, RiskEvent, User, UserMemory, UserProfile, UserSettings
+from app.db.models import (
+    Base,
+    ConversationThread,
+    Message,
+    MoodLog,
+    RiskEvent,
+    User,
+    UserMemory,
+    UserProfile,
+    UserSettings,
+)
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
@@ -19,6 +32,8 @@ from app.services import chat_service
 
 class MemoryApiTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.original_vector_retrieval = os.environ.get("MEMORY_VECTOR_RETRIEVAL_ENABLED")
+        os.environ["MEMORY_VECTOR_RETRIEVAL_ENABLED"] = "0"
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -41,6 +56,10 @@ class MemoryApiTests(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def tearDown(self) -> None:
+        if self.original_vector_retrieval is None:
+            os.environ.pop("MEMORY_VECTOR_RETRIEVAL_ENABLED", None)
+        else:
+            os.environ["MEMORY_VECTOR_RETRIEVAL_ENABLED"] = self.original_vector_retrieval
         self.db.close()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
@@ -177,9 +196,43 @@ class MemoryApiTests(unittest.TestCase):
         )
 
         self.assertEqual(normal_response.status_code, 200)
-        self.assertIn(trigger.id, [item["memory_id"] for item in normal_response.json()["items"]])
+        normal_items = normal_response.json()["items"]
+        hit = next(item for item in normal_items if item["memory_id"] == trigger.id)
+        self.assertGreater(hit["score"], 0)
+        self.assertTrue(hit["why_selected"])
+        self.db.refresh(trigger)
+        self.assertEqual(trigger.access_count, 1)
         self.assertEqual(high_risk_response.status_code, 200)
         self.assertEqual([item["memory_type"] for item in high_risk_response.json()["items"]], ["safety_summary"])
+        audit_actions = [
+            item["action"]
+            for item in self.client.get("/api/v1/memories/audit", headers=self.auth_headers(user)).json()["items"]
+        ]
+        self.assertIn("retrieve", audit_actions)
+
+    def test_search_and_audit_are_scoped_to_current_user(self) -> None:
+        user = self.create_user("owner", memory_mode="long_term")
+        other = self.create_user("other", memory_mode="long_term")
+        self.add_memory(other, content="exam anxiety belongs to another user", memory_type="recurring_trigger")
+
+        other_response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(other),
+            json={"query": "exam anxiety", "limit": 5},
+        )
+        owner_response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(user),
+            json={"query": "exam anxiety", "limit": 5},
+        )
+        owner_audit = self.client.get("/api/v1/memories/audit", headers=self.auth_headers(user))
+
+        self.assertEqual(other_response.status_code, 200)
+        self.assertEqual(len(other_response.json()["items"]), 1)
+        self.assertEqual(owner_response.status_code, 200)
+        self.assertEqual(owner_response.json()["items"], [])
+        self.assertEqual(owner_audit.status_code, 200)
+        self.assertEqual(owner_audit.json()["items"], [])
 
     def test_memory_feedback_can_disable_memory_and_audit_it(self) -> None:
         user = self.create_user()
@@ -295,7 +348,7 @@ class FakeGraphRuntime:
             "risk_level": self.risk_level,
             "intent": "other",
             "risk_reasons": [],
-            "suggested_actions": ["继续说"],
+            "suggested_actions": ["我还想说"],
             "session_summary": "本轮可见摘要" if self.risk_level == "L0" else "本轮安全摘要",
             "memory_candidates": candidates,
             "should_write_memory": True,
@@ -303,8 +356,16 @@ class FakeGraphRuntime:
         }
 
 
+class SlowGraphRuntime:
+    async def invoke_turn(self, **kwargs) -> dict[str, object]:
+        await asyncio.sleep(5)
+        return {}
+
+
 class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        self.original_vector_retrieval = os.environ.get("MEMORY_VECTOR_RETRIEVAL_ENABLED")
+        os.environ["MEMORY_VECTOR_RETRIEVAL_ENABLED"] = "0"
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -315,9 +376,15 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, class_=Session)
         self.db = self.SessionLocal()
         self.original_graph_runtime = chat_service.graph_runtime
+        self.original_settings = chat_service.settings
 
     def tearDown(self) -> None:
+        if self.original_vector_retrieval is None:
+            os.environ.pop("MEMORY_VECTOR_RETRIEVAL_ENABLED", None)
+        else:
+            os.environ["MEMORY_VECTOR_RETRIEVAL_ENABLED"] = self.original_vector_retrieval
         chat_service.graph_runtime = self.original_graph_runtime
+        chat_service.settings = self.original_settings
         self.db.close()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
@@ -354,13 +421,21 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(thread)
         return user, thread
 
-    def add_memory(self, user: User, *, memory_type: str, content: str, importance: int = 3) -> UserMemory:
+    def add_memory(
+        self,
+        user: User,
+        *,
+        memory_type: str,
+        content: str,
+        importance: int = 3,
+        visibility: str = "user_visible",
+    ) -> UserMemory:
         memory_record = UserMemory(
             user_id=user.id,
             memory_type=memory_type,
             content=content,
             importance=importance,
-            visibility="user_visible",
+            visibility=visibility,
             status="active",
         )
         self.db.add(memory_record)
@@ -385,6 +460,59 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_runtime.calls[0]["retrieved_memories"], [])
         self.assertEqual(result["referenced_memories"], [])
         self.assertEqual(len(memories), 1)
+
+    async def test_chat_turn_timeout_returns_failed_no_reply_without_assistant_row(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        _, assistant_message, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="失恋了。"),
+        )
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+        assistant_rows = list(
+            self.db.scalars(
+                select(Message).where(
+                    Message.thread_id == thread.id,
+                    Message.role == "assistant",
+                )
+            )
+        )
+
+        self.assertEqual(result["control_reasons"], ["graph_timeout_fallback"])
+        self.assertIsNone(assistant_message)
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertEqual(result["referenced_memories"], [])
+        self.assertFalse(result["should_write_memory"])
+        self.assertEqual(assistant_rows, [])
+        self.assertEqual(memories, [])
+
+    async def test_high_risk_chat_turn_timeout_persists_safety_fallback(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        _, assistant_message, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我现在想自杀，刀在手里"),
+        )
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertIsNotNone(assistant_message)
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+        self.assertEqual(assistant_message.content, result["assistant_text"])
+        self.assertIn("安全", assistant_message.content)
+        self.assertEqual(result["referenced_memories"], [])
+        self.assertFalse(result["retryable"])
+        self.assertFalse(result["should_write_memory"])
+        self.assertEqual(memories, [])
 
     async def test_summary_only_mode_retrieves_and_writes_only_session_summaries(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
@@ -423,8 +551,42 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue({"session_summary", "preference", "recurring_trigger", "support_strategy"}.issubset(memory_types))
         self.assertGreaterEqual(len(fake_runtime.calls[0]["retrieved_memories"]), 1)
 
+    async def test_long_term_turn_passes_specific_preference_and_metadata(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        preference = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before problem solving",
+            importance=2,
+        )
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        _, assistant_message, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="I need reassurance before problem solving"),
+        )
+
+        retrieved_ids = [memory["id"] for memory in fake_runtime.calls[0]["retrieved_memories"]]
+        self.assertIn(preference.id, retrieved_ids)
+        self.assertIn("memory_index", fake_runtime.calls[0])
+        self.assertIn(preference.id, [item["memory_id"] for item in fake_runtime.calls[0]["memory_index"]])
+        self.assertIn("memory_index", assistant_message.meta)
+        self.assertIn("memory_write_decisions", assistant_message.meta)
+        self.assertEqual(result["memory_write_decisions"][0]["status"], "created")
+
     async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")
+        visible = self.add_memory(user, memory_type="preference", content="prefers reassurance first", importance=5)
+        safety = self.add_memory(
+            user,
+            memory_type="safety_summary",
+            content="prior internal safety summary",
+            importance=5,
+            visibility="internal_safety",
+        )
         fake_runtime = FakeGraphRuntime(risk_level="L2")
         chat_service.graph_runtime = fake_runtime
 
@@ -436,12 +598,18 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         )
         memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
         risk_events = list(self.db.scalars(select(RiskEvent).where(RiskEvent.user_id == user.id)))
+        retrieved_ids = [memory["id"] for memory in fake_runtime.calls[0]["retrieved_memories"]]
+        indexed_ids = [memory["memory_id"] for memory in fake_runtime.calls[0]["memory_index"]]
 
         self.assertEqual(result["referenced_memories"], [])
         self.assertEqual(len(risk_events), 1)
-        self.assertEqual(len(memories), 1)
-        self.assertEqual(memories[0].memory_type, "safety_summary")
-        self.assertEqual(memories[0].visibility, "internal_safety")
+        self.assertIn(safety.id, retrieved_ids)
+        self.assertNotIn(visible.id, retrieved_ids)
+        self.assertEqual(indexed_ids, [safety.id])
+        created = [memory for memory in memories if memory.id not in {visible.id, safety.id}]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].memory_type, "safety_summary")
+        self.assertEqual(created[0].visibility, "internal_safety")
 
 
 if __name__ == "__main__":

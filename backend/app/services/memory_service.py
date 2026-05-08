@@ -22,6 +22,7 @@ from app.db.models import (
     utcnow,
 )
 from app.services.embedding_service import embedding_client
+from app.services.milvus_service import milvus_store
 
 
 VISIBLE_MEMORY_TYPES = {
@@ -262,7 +263,7 @@ def build_memory_index(
     limit: int = 20,
     include_internal: bool = False,
 ) -> list[dict[str, Any]]:
-    allowed_types = _allowed_memory_types_for_mode(memory_mode, include_internal=include_internal)
+    allowed_types = INTERNAL_MEMORY_TYPES if include_internal else _allowed_memory_types_for_mode(memory_mode)
     if not allowed_types:
         return []
 
@@ -270,7 +271,10 @@ def build_memory_index(
     for memory in _base_memory_query(db, user_id):
         if memory.memory_type not in allowed_types:
             continue
-        if memory.visibility != "user_visible" and not include_internal:
+        if include_internal:
+            if memory.visibility != "internal_safety":
+                continue
+        elif memory.visibility != "user_visible":
             continue
         description = memory.summary or memory.content
         items.append(
@@ -345,6 +349,91 @@ def _score_memory(memory: UserMemory, query_text: str, control_category: str | N
     return round(score, 4), reason
 
 
+def _vector_retrieval_enabled() -> bool:
+    explicit = os.getenv("MEMORY_VECTOR_RETRIEVAL_ENABLED")
+    if explicit is not None:
+        return explicit.lower() in {"1", "true", "yes", "on"}
+    return os.getenv("MEMORY_EMBEDDINGS_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _vector_score_memory(
+    memory: UserMemory,
+    *,
+    vector_score: float,
+    query_text: str,
+    control_category: str | None,
+) -> tuple[float, str]:
+    importance_score = max(min(memory.importance, 5), 1) / 5
+    updated_at = memory.updated_at or memory.created_at
+    age_days = max((utcnow() - _aware(updated_at)).days, 0) if updated_at else 365
+    freshness_score = max(0.0, 1.0 - min(age_days, 90) / 90)
+    access_score = min(memory.access_count or 0, 10) / 10
+    normalized_vector_score = max(0.0, min(float(vector_score or 0.0), 1.0))
+    score = (
+        0.62 * normalized_vector_score
+        + 0.18 * importance_score
+        + 0.10 * freshness_score
+        + 0.04 * access_score
+        + _type_boost(memory.memory_type, query_text, control_category)
+    )
+    return round(score, 4), "vector_semantic_match"
+
+
+def _memory_visible_for_turn(memory: UserMemory, *, allowed_types: set[str], risk_level: str) -> bool:
+    if memory.memory_type not in allowed_types:
+        return False
+    if risk_level in {"L2", "L3"}:
+        return memory.visibility == "internal_safety" and memory.memory_type == "safety_summary"
+    return memory.visibility == "user_visible"
+
+
+def _memory_ids_from_vector_hits(
+    *,
+    user_id: str,
+    query_vector: list[float] | None,
+    allowed_types: set[str],
+    risk_level: str,
+    limit: int,
+) -> dict[str, float]:
+    if not query_vector or not _vector_retrieval_enabled() or not milvus_store.is_enabled:
+        return {}
+    memory_types = None if risk_level in {"L2", "L3"} else sorted(allowed_types)
+    try:
+        hits = milvus_store.search_user_memories(
+            query_vector,
+            user_id=user_id,
+            memory_types=memory_types,
+            risk_level=risk_level,
+            limit=max(limit * 4, 20),
+        )
+    except Exception:
+        return {}
+    scores: dict[str, float] = {}
+    for hit in hits:
+        memory_id = str(hit.entity.get("memory_id") or hit.id or "")
+        if not memory_id:
+            continue
+        scores[memory_id] = max(scores.get(memory_id, 0.0), float(hit.score or 0.0))
+    return scores
+
+
+def _fetch_memories_by_ids(db: Session, *, user_id: str, memory_ids: list[str]) -> list[UserMemory]:
+    if not memory_ids:
+        return []
+    now = utcnow()
+    return list(
+        db.scalars(
+            select(UserMemory).where(
+                UserMemory.user_id == user_id,
+                UserMemory.id.in_(memory_ids),
+                UserMemory.status == "active",
+                UserMemory.review_state != "do_not_use",
+                or_(UserMemory.expires_at.is_(None), UserMemory.expires_at > now),
+            )
+        )
+    )
+
+
 def retrieve_memories_for_turn(
     db: Session,
     *,
@@ -357,6 +446,7 @@ def retrieve_memories_for_turn(
     control_category: str | None = None,
     limit: int = 5,
     record_access: bool = True,
+    query_vector: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     if memory_mode == "off":
         return []
@@ -375,16 +465,34 @@ def retrieve_memories_for_turn(
         control_category=control_category,
     )
 
-    candidates: list[tuple[float, str, UserMemory]] = []
+    vector_scores = _memory_ids_from_vector_hits(
+        user_id=user_id,
+        query_vector=query_vector,
+        allowed_types=allowed_types,
+        risk_level=risk_level,
+        limit=limit,
+    )
+    candidate_memories: dict[str, UserMemory] = {}
     for memory in _base_memory_query(db, user_id):
-        if memory.memory_type not in allowed_types:
+        if not _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level=risk_level):
             continue
-        if include_internal:
-            if memory.visibility != "internal_safety":
-                continue
-        elif memory.visibility != "user_visible":
-            continue
+        candidate_memories[memory.id] = memory
+    for memory in _fetch_memories_by_ids(db, user_id=user_id, memory_ids=list(vector_scores.keys())):
+        if _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level=risk_level):
+            candidate_memories[memory.id] = memory
+
+    candidates: list[tuple[float, str, UserMemory]] = []
+    for memory in candidate_memories.values():
         score, reason = _score_memory(memory, query_text, control_category)
+        if memory.id in vector_scores:
+            vector_score, vector_reason = _vector_score_memory(
+                memory,
+                vector_score=vector_scores[memory.id],
+                query_text=query_text,
+                control_category=control_category,
+            )
+            if vector_score >= score:
+                score, reason = vector_score, vector_reason
         candidates.append((score, reason, memory))
 
     candidates.sort(
@@ -435,6 +543,48 @@ def retrieve_memories_for_turn(
             reason="turn_memory_retrieval",
         )
     return results
+
+
+async def retrieve_memories_for_turn_async(
+    db: Session,
+    *,
+    user_id: str,
+    query: str,
+    recent_messages: list[dict[str, Any]] | None = None,
+    last_summary: str | None = None,
+    memory_mode: str,
+    risk_level: str = "L0",
+    control_category: str | None = None,
+    limit: int = 5,
+    record_access: bool = True,
+) -> list[dict[str, Any]]:
+    query_vector = None
+    if (
+        memory_mode != "off"
+        and _vector_retrieval_enabled()
+        and milvus_store.is_available
+        and embedding_client.is_configured
+    ):
+        query_text = _query_for_retrieval(
+            query=query,
+            recent_messages=recent_messages,
+            last_summary=last_summary,
+            control_category=control_category,
+        )
+        query_vector = await embedding_client.embed_query(query_text)
+    return retrieve_memories_for_turn(
+        db,
+        user_id=user_id,
+        query=query,
+        recent_messages=recent_messages,
+        last_summary=last_summary,
+        memory_mode=memory_mode,
+        risk_level=risk_level,
+        control_category=control_category,
+        limit=limit,
+        record_access=record_access,
+        query_vector=query_vector,
+    )
 
 
 def _unsafe_visible_memory_reason(content: str) -> str | None:
@@ -707,8 +857,6 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
         )
     if milvus_rows:
         try:
-            from app.services.milvus_service import milvus_store
-
             milvus_store.upsert_memory_vectors(milvus_rows)
         except Exception:
             pass
