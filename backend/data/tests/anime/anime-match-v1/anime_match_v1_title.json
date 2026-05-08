@@ -1,0 +1,10 @@
+{
+  "test_id": "anime-match-v1",
+  "code": "anime_match",
+  "title": "测测你像哪个动漫角色",
+  "test_type": "anime",
+  "estimated_minutes": 5,
+  "audience": "all",
+  "status": "draft",
+  "questions": []
+}
