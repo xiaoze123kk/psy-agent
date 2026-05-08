@@ -175,8 +175,15 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
             {
                 "memory_id": memory.id,
                 "memory_type": memory.memory_type,
+                "title": memory.title,
+                "summary": memory.summary,
                 "content": memory.content,
+                "tags": list(memory.tags or []),
                 "importance": memory.importance,
+                "confidence": float(memory.confidence or 0),
+                "source": memory.source,
+                "review_state": memory.review_state,
+                "access_count": memory.access_count,
                 "created_at": _dt(memory.created_at),
                 "updated_at": _dt(memory.updated_at),
             }

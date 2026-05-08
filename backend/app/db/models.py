@@ -107,12 +107,19 @@ class Message(Base):
 
 class UserMemory(Base):
     __tablename__ = "user_memories"
+    __table_args__ = (
+        Index("idx_user_memories_user_type_status", "user_id", "memory_type", "status"),
+        Index("idx_user_memories_user_review", "user_id", "review_state"),
+    )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     memory_type: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text)
     structured_value: Mapped[dict] = mapped_column(JSON, default=dict)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     importance: Mapped[int] = mapped_column(Integer, default=3)
     confidence: Mapped[float] = mapped_column(Numeric(4, 3), default=0.500)
     source_thread_id: Mapped[str | None] = mapped_column(
@@ -127,9 +134,81 @@ class UserMemory(Base):
     )
     visibility: Mapped[str] = mapped_column(String(24), default="user_visible")
     status: Mapped[str] = mapped_column(String(24), default="active")
+    source: Mapped[str] = mapped_column(String(32), default="chat")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("user_memories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    review_state: Mapped[str] = mapped_column(String(24), default="normal")
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MemoryEmbedding(Base):
+    __tablename__ = "memory_embeddings"
+    __table_args__ = (
+        Index("idx_memory_embeddings_user_memory", "user_id", "memory_id"),
+        Index("idx_memory_embeddings_key", "embedding_key"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    memory_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("user_memories.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    embedding: Mapped[list[float]] = mapped_column(JSON, default=list)
+    embedding_model: Mapped[str] = mapped_column(String(80))
+    embedding_key: Mapped[str] = mapped_column(String(256), default="")
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MemoryOperation(Base):
+    __tablename__ = "memory_operations"
+    __table_args__ = (
+        Index("idx_memory_operations_user_created_at", "user_id", "created_at"),
+        Index("idx_memory_operations_memory_created_at", "memory_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    memory_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("user_memories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(32))
+    before_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor: Mapped[str] = mapped_column(String(32), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MemoryConsolidationRun(Base):
+    __tablename__ = "memory_consolidation_runs"
+    __table_args__ = (
+        Index("idx_memory_consolidation_runs_user_started", "user_id", "started_at"),
+        Index("idx_memory_consolidation_runs_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="running")
+    trigger: Mapped[str] = mapped_column(String(24), default="manual")
+    sessions_reviewed: Mapped[int] = mapped_column(Integer, default=0)
+    memories_touched: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MoodLog(Base):

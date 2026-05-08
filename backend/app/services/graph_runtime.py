@@ -15,7 +15,11 @@ def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dic
             {
                 "memory_id": str(memory.get("id", "")),
                 "memory_type": str(memory.get("memory_type", "")),
+                "title": str(memory.get("title", "") or ""),
                 "content": content,
+                "score": float(memory.get("score", 0.0) or 0.0),
+                "why_selected": str(memory.get("why_selected", "") or ""),
+                "freshness_warning": str(memory.get("freshness_warning", "") or ""),
             }
         )
     return references
@@ -86,6 +90,7 @@ class GraphRuntime:
         companion_style: str = "gentle",
         nickname: str | None = None,
         retrieved_memories: list[dict] | None = None,
+        memory_index: list[dict] | None = None,
     ) -> dict[str, object]:
         input_state = {
             "thread_id": thread_id,
@@ -104,6 +109,7 @@ class GraphRuntime:
                 "style": companion_style,
                 "question_tolerance": "low" if user_mode == "teen" else "medium",
             },
+            "memory_index": memory_index or [],
             "retrieved_memories": retrieved_memories or [],
         }
         result = await self.graph.ainvoke(
@@ -130,6 +136,7 @@ class GraphRuntime:
             "risk_formulation": result.get("risk_formulation", {}),
             "response_contract": result.get("response_contract", {}),
             "memory_policy": result.get("memory_policy", "write_safe_summary"),
+            "memory_policy_reason": result.get("memory_policy_reason", result.get("memory_policy", "")),
             "rag_used": bool(result.get("rag_used", False)),
             "rag_skipped_reason": str(result.get("rag_skipped_reason", "")),
             "example_ids": [
@@ -148,6 +155,7 @@ class GraphRuntime:
             "session_summary": result.get("session_summary", ""),
             "memory_candidates": result.get("memory_candidates", []),
             "should_write_memory": result.get("should_write_memory", False),
+            "memory_write_decisions": result.get("memory_write_decisions", []),
             "referenced_memories": _memory_references(retrieved_memories, str(risk_level)),
             "referenced_counseling_examples": _counseling_references(retrieved_examples, str(risk_level)),
         }
