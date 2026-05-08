@@ -125,14 +125,13 @@ class MilvusEmbeddingKeyTests(unittest.TestCase):
         milvus_service.embedding_client.dim = 1024
         try:
             store = MilvusVectorStore()
-            store.ensure_knowledge_collection = lambda: True  # type: ignore[method-assign]
             captured: dict[str, object] = {}
 
-            def fake_search(*args: object, **kwargs: object) -> list[object]:
+            def fake_search_rest(*args: object, **kwargs: object) -> list[object]:
                 captured.update(kwargs)
                 return []
 
-            store._search = fake_search  # type: ignore[method-assign]
+            store._search_rest = fake_search_rest  # type: ignore[method-assign]
             store.search_knowledge([0.1] * store.dim)
         finally:
             milvus_service.embedding_client.provider = original_provider

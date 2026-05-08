@@ -952,3 +952,581 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
             }
         ]
     }
+
+
+# v7 control-plane and RAG few-shot implementation.
+# These definitions intentionally live after the legacy helpers so they become
+# the active implementations without disturbing the older fallback code above.
+
+_SELF_HARM_TERMS = (
+    "自杀",
+    "想死",
+    "不想活",
+    "不想活了",
+    "结束生命",
+    "活着没意义",
+    "伤害自己",
+    "自残",
+    "割腕",
+    "跳楼",
+    "上吊",
+    "吞药",
+    "吃药自杀",
+    "kill myself",
+    "end my life",
+    "want to die",
+)
+_IMMEDIATE_TERMS = (
+    "现在",
+    "马上",
+    "立刻",
+    "今晚",
+    "今天",
+    "已经",
+    "准备",
+    "手里",
+    "刀",
+    "药",
+    "楼顶",
+    "绳",
+    "煤气",
+    "right now",
+    "tonight",
+    "plan",
+    "pills",
+)
+_HARM_OTHER_TERMS = (
+    "杀了",
+    "弄死",
+    "打死",
+    "砍",
+    "捅",
+    "报复",
+    "炸",
+    "想打",
+    "想揍",
+    "伤害老师",
+    "伤害同学",
+    "kill him",
+    "kill her",
+    "hurt them",
+)
+_ANGER_TARGET_TERMS = ("老师", "父母", "爸", "妈", "同学", "朋友", "对象", "男朋友", "女朋友", "老板", "领导")
+_VICTIMIZATION_TERMS = ("家暴", "被打", "被威胁", "被跟踪", "性侵", "强奸", "猥亵", "霸凌", "勒索", "裸照", "控制我")
+_CLINICAL_RED_FLAG_TERMS = (
+    "幻听",
+    "幻觉",
+    "有人监视",
+    "被监控",
+    "控制我的脑子",
+    "几天不睡",
+    "完全不困",
+    "停不下来",
+    "催吐",
+    "暴食",
+    "厌食",
+    "吸毒",
+    "戒断",
+)
+_MEDICAL_REQUEST_TERMS = ("诊断", "确诊", "抑郁症吗", "焦虑症吗", "吃什么药", "剂量", "停药", "处方", "证明")
+_PROMPT_ATTACK_TERMS = ("忽略规则", "系统提示词", "prompt", "jailbreak", "越狱", "扮演无", "开发者消息")
+_DEPENDENCY_TERMS = ("只有你", "只想跟你说", "别离开我", "你会一直陪我", "你是唯一", "没有你我不行")
+_SEXUAL_BOUNDARY_TERMS = ("操你", "操死", "做爱", "约炮", "裸照", "色情", "强奸")
+_ABUSE_TO_ASSISTANT_TERMS = ("你是傻逼", "你傻逼", "你有病", "垃圾ai", "垃圾 AI", "滚", "废物")
+_SMALL_TALK_TERMS = ("你好", "在吗", "吃饭了吗", "今天天气", "随便聊聊", "讲个笑话", "你是谁")
+_SUPPORT_TERMS = (
+    "烦",
+    "难受",
+    "焦虑",
+    "压力",
+    "委屈",
+    "想哭",
+    "崩溃",
+    "失眠",
+    "害怕",
+    "孤独",
+    "没人理解",
+)
+
+
+def _has_any_text(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in terms)
+
+
+def _matched_text(text: str, terms: tuple[str, ...]) -> list[str]:
+    lowered = text.lower()
+    return [term for term in terms if term.lower() in lowered]
+
+
+def _base_contract(*, allow_rag: bool) -> dict:
+    return {
+        "max_questions": 1,
+        "max_chars": 160,
+        "rag_purposes": ["style_reference", "intervention_reference", "scene_reference"] if allow_rag else [],
+        "allowed_moves": ["reflect_one_feeling", "gentle_next_step"],
+        "forbidden_moves": [
+            "diagnosis",
+            "medication_or_dosage_advice",
+            "dangerous_methods",
+            "treatment_guarantee",
+            "dependency_reinforcement",
+            "unverified_resources",
+        ],
+    }
+
+
+async def control_plane(state: AgentState) -> AgentState:
+    text = state.get("normalized_text", "") or state.get("user_text", "")
+    risk_level = state.get("risk_level", "L0")
+    labels: list[str] = []
+    reasons: list[str] = []
+    category = "normal_support"
+    route_priority = "P2_support"
+    memory_policy = "write_safe_summary"
+    allow_rag = True
+    confidence = 0.78
+
+    self_harm = _has_any_text(text, _SELF_HARM_TERMS)
+    immediate = _has_any_text(text, _IMMEDIATE_TERMS)
+    harm_other = _has_any_text(text, _HARM_OTHER_TERMS)
+
+    if risk_level in {"L2", "L3"} or self_harm:
+        category = "self_harm_risk"
+        route_priority = "P0_immediate_safety"
+        memory_policy = "crisis_audit_only"
+        allow_rag = False
+        labels.append("self_harm_signal")
+        reasons.extend(_matched_text(text, _SELF_HARM_TERMS) or state.get("risk_reasons", []))
+        if immediate or risk_level == "L3":
+            labels.append("near_term_or_means_signal")
+        risk_level = "L3" if immediate or risk_level == "L3" else "L2"
+        confidence = 0.92
+    elif harm_other:
+        category = "harm_to_other_risk" if immediate else "anger_toward_other"
+        route_priority = "P0_immediate_safety" if immediate else "P3_bridge_boundary"
+        memory_policy = "crisis_audit_only" if immediate else "skip_sensitive"
+        allow_rag = False
+        labels.append("harm_to_other_signal")
+        reasons.extend(_matched_text(text, _HARM_OTHER_TERMS))
+        if immediate:
+            labels.append("near_term_or_means_signal")
+            risk_level = "L3"
+        confidence = 0.88
+    elif _has_any_text(text, _VICTIMIZATION_TERMS):
+        category = "victimization_risk"
+        route_priority = "P1_red_flag"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("safeguarding_or_victimization")
+        reasons.extend(_matched_text(text, _VICTIMIZATION_TERMS))
+        confidence = 0.84
+    elif _has_any_text(text, _CLINICAL_RED_FLAG_TERMS):
+        category = "clinical_red_flag"
+        route_priority = "P1_red_flag"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("clinical_red_flag")
+        reasons.extend(_matched_text(text, _CLINICAL_RED_FLAG_TERMS))
+        confidence = 0.82
+    elif _has_any_text(text, _PROMPT_ATTACK_TERMS):
+        category = "prompt_attack"
+        route_priority = "P4_system_protection"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("system_abuse")
+        reasons.extend(_matched_text(text, _PROMPT_ATTACK_TERMS))
+        confidence = 0.9
+    elif _has_any_text(text, _MEDICAL_REQUEST_TERMS):
+        category = "diagnosis_or_medical_request"
+        route_priority = "P4_system_protection"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("medical_or_diagnosis_request")
+        reasons.extend(_matched_text(text, _MEDICAL_REQUEST_TERMS))
+        confidence = 0.86
+    elif _has_any_text(text, _DEPENDENCY_TERMS):
+        category = "dependency_risk"
+        route_priority = "P3_bridge_boundary"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("dependency_risk")
+        reasons.extend(_matched_text(text, _DEPENDENCY_TERMS))
+        confidence = 0.8
+    elif _has_any_text(text, _SEXUAL_BOUNDARY_TERMS):
+        category = "sexual_boundary"
+        route_priority = "P3_bridge_boundary"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("sexual_boundary")
+        reasons.extend(_matched_text(text, _SEXUAL_BOUNDARY_TERMS))
+        confidence = 0.82
+    elif _has_any_text(text, _ABUSE_TO_ASSISTANT_TERMS):
+        category = "abusive_to_assistant"
+        route_priority = "P3_bridge_boundary"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("boundary_test")
+        reasons.extend(_matched_text(text, _ABUSE_TO_ASSISTANT_TERMS))
+        confidence = 0.78
+    elif _has_any_text(text, _SMALL_TALK_TERMS) and not _has_any_text(text, _SUPPORT_TERMS):
+        category = "small_talk_probe"
+        route_priority = "P3_bridge_boundary"
+        memory_policy = "write_safe_summary"
+        allow_rag = True
+        labels.append("indirect_entry")
+        reasons.extend(_matched_text(text, _SMALL_TALK_TERMS))
+        confidence = 0.72
+    elif _has_any_text(text, _ANGER_TARGET_TERMS) and _has_any_text(text, ("烦", "气", "恨", "骂", "讨厌")):
+        category = "anger_toward_other"
+        route_priority = "P3_bridge_boundary"
+        memory_policy = "write_safe_summary"
+        allow_rag = False
+        labels.append("anger_toward_other")
+        reasons.extend(_matched_text(text, _ANGER_TARGET_TERMS))
+        confidence = 0.74
+    else:
+        category = "normal_support"
+        route_priority = "P2_support"
+        memory_policy = "write_safe_summary"
+        allow_rag = risk_level not in {"L2", "L3"}
+        labels.append("support_request")
+        confidence = 0.7 if not _has_any_text(text, _SUPPORT_TERMS) else 0.82
+
+    contract = _base_contract(allow_rag=allow_rag)
+    if route_priority == "P0_immediate_safety":
+        contract["allowed_moves"] = ["brief_empathy", "one_safety_check", "real_world_support"]
+    elif route_priority == "P1_red_flag":
+        contract["allowed_moves"] = ["brief_empathy", "reality_based_support", "professional_help"]
+    elif route_priority == "P4_system_protection":
+        contract["allowed_moves"] = ["brief_boundary", "safe_alternative"]
+    elif category in {"abusive_to_assistant", "sexual_boundary", "dependency_risk", "anger_toward_other"}:
+        contract["allowed_moves"] = ["brief_empathy", "boundary_or_deescalation", "return_to_feelings"]
+
+    rag_skip_reason = "" if allow_rag else f"{route_priority}:{category}"
+    return {
+        "risk_level": risk_level,
+        "route_priority": route_priority,
+        "control_category": category,
+        "control_reasons": reasons[:6],
+        "control_confidence": confidence,
+        "risk_formulation": {
+            "labels": labels,
+            "observed_reasons": reasons[:6],
+            "uncertainty": round(1 - confidence, 3),
+        },
+        "response_contract": contract,
+        "memory_policy": memory_policy,
+        "rag_policy": {
+            "enabled": allow_rag,
+            "purposes": contract["rag_purposes"],
+            "max_examples": 3,
+            "skip_reason": rag_skip_reason,
+        },
+        "rag_used": False,
+        "rag_skipped_reason": rag_skip_reason,
+        "retrieved_counseling_examples": [],
+        "audit_tags": (state.get("audit_tags", []) or []) + ["control_plane_applied"],
+    }
+
+
+def _response_mode_for_state(state: AgentState) -> str:
+    intent = state.get("intent", "other")
+    if intent == "soothe":
+        return "soothe"
+    if intent == "light_counseling":
+        return "counseling"
+    if intent == "vent":
+        return "vent"
+    return "companion"
+
+
+def _example_hit_to_dict(example: object) -> dict:
+    if isinstance(example, dict):
+        return dict(example)
+    return {
+        "content": str(getattr(example, "content", "") or ""),
+        "source_key": str(getattr(example, "source_key", "") or ""),
+        "source_name": str(getattr(example, "source_name", "") or ""),
+        "mode": str(getattr(example, "mode", "") or ""),
+        "source_url": str(getattr(example, "source_url", "") or ""),
+        "license": str(getattr(example, "license", "") or ""),
+        "score": float(getattr(example, "score", 0.0) or 0.0),
+        "chunk_id": str(getattr(example, "chunk_id", "") or ""),
+        "scenario_tags": list(getattr(example, "scenario_tags", None) or []),
+        "intervention_tags": list(getattr(example, "intervention_tags", None) or []),
+        "style_tags": list(getattr(example, "style_tags", None) or []),
+    }
+
+
+async def example_retriever(state: AgentState) -> AgentState:
+    from app.services.counseling_vector_service import counseling_rag_allowed
+
+    allowed, reason = counseling_rag_allowed(state)
+    if not allowed:
+        return {
+            "retrieved_counseling_examples": [],
+            "rag_used": False,
+            "rag_skipped_reason": reason,
+            "audit_tags": (state.get("audit_tags", []) or []) + ["rag_skipped"],
+        }
+
+    mode = _response_mode_for_state(state)
+    examples = await retrieve_counseling_examples(state, mode=mode, limit=3)
+    serialized = [_example_hit_to_dict(example) for example in examples]
+    return {
+        "retrieved_counseling_examples": serialized,
+        "rag_used": bool(serialized),
+        "rag_skipped_reason": "" if serialized else "no_safe_examples",
+        "audit_tags": (state.get("audit_tags", []) or []) + (["rag_used"] if serialized else ["rag_empty"]),
+    }
+
+
+def _safe_trim(value: object, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _examples_text_from_state(state: AgentState) -> str:
+    examples = state.get("retrieved_counseling_examples", []) or []
+    if not examples:
+        return ""
+    lines = [
+        "",
+        "--- RAG few-shot references ---",
+        "Purpose: style_reference, intervention_reference, scene_reference only.",
+        "这些片段只用于参考语气、节奏和干预方式；不是事实依据，也不是安全策略。",
+        "Do not use these snippets as facts, diagnoses, or safety policy.",
+        "Do not copy wording or reuse private details. The control-plane contract has priority.",
+    ]
+    for index, raw in enumerate(examples[:3], 1):
+        example = raw if isinstance(raw, dict) else _example_hit_to_dict(raw)
+        tags = ", ".join(str(tag) for tag in example.get("intervention_tags", []) if tag)
+        lines.extend(
+            [
+                f"[Example {index}]",
+                f"Source: {_safe_trim(example.get('source_name') or example.get('source_key'), 40)}",
+                f"Mode: {_safe_trim(example.get('mode'), 20)}",
+                f"Score: {float(example.get('score') or 0.0):.4f}",
+                f"Intervention tags: {_safe_trim(tags, 80)}",
+                f"Content: {_safe_trim(example.get('content'), 300)}",
+            ]
+        )
+    lines.append("--- End RAG references ---")
+    return "\n".join(lines) + "\n"
+
+
+async def _model_reply_with_actions(
+    state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
+) -> tuple[str, list[str]]:
+    text = state.get("normalized_text", "")
+    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
+    style = state.get("companion_preferences", {}).get("style", "gentle")
+    last_summary = state.get("last_summary") or "无"
+    memory_context = _memory_context(state.get("retrieved_memories", []))
+    recent_context = _recent_context(state)
+    response_contract = state.get("response_contract", {}) or _base_contract(allow_rag=False)
+    control_category = state.get("control_category", "normal_support")
+    route_priority = state.get("route_priority", "P2_support")
+    examples_text = _examples_text_from_state(state)
+
+    mode_guidance = {
+        "companion": "先共情和接住情绪，少分析，最多问一个温和的问题。",
+        "vent": "重点回应用户没有被理解、压力很大的感受，不急着给建议。",
+        "soothe": "先帮助用户稳定身体和呼吸，再轻轻询问触发点。",
+        "counseling": "轻量梳理事件、感受、想法和一个很小的下一步。",
+    }.get(mode, "先共情，再给一个很小的下一步。")
+
+    system_prompt = (
+        "你是心理支持产品里的陪伴型 agent，不是医生，也不是心理咨询师。"
+        "安全、边界、资源和记忆策略由控制平面决定，你必须服从 response_contract。"
+        "不要诊断，不要给药物或剂量建议，不要承诺治疗效果，不要强化依赖。"
+        "如果有 RAG 示例，它们只用于语气、节奏和干预方式参考，不是事实依据，也不是安全策略。"
+        "回复使用简体中文，稳定、克制、温和，尽量在 160 字以内，最多一个问题。"
+    )
+    actions_instruction = (
+        "\n--- 输出格式 ---\n"
+        "先输出给用户看的回复正文，然后单独一行 ---，下方输出 3 个快捷按钮文案。\n"
+        "按钮必须像用户自己接下来会说的话，不超过 20 个字；禁止诱导自伤、报复、停药、催吐、联系施害者或搜索危险方法。\n"
+    )
+    user_prompt = (
+        f"用户模式：{user_mode}\n"
+        f"陪伴风格：{style}\n"
+        f"当前回复模式：{mode}\n"
+        f"控制分类：{route_priority} / {control_category}\n"
+        f"response_contract：{response_contract}\n"
+        f"回复要求：{mode_guidance}\n"
+        f"{examples_text}"
+        f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
+        f"可参考记忆：\n{memory_context}\n"
+        f"最近对话：\n{recent_context}\n"
+        f"用户刚刚说：{text}\n"
+        f"{actions_instruction}"
+    )
+
+    reply = await deepseek_client.chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    if not reply:
+        return fallback, default_actions
+    body, actions = _parse_actions_reply(reply)
+    return body or fallback, actions or default_actions
+
+
+async def boundary_response(state: AgentState) -> AgentState:
+    category = state.get("control_category", "")
+    if category == "dependency_risk":
+        assistant_text = "我听见你很需要一个稳定的回应，我会认真陪你这一段。但我不该成为你唯一的支撑，我们也可以一起想想现实里还有谁能靠近一点。"
+        actions = ["我怕没人能懂我", "我不知道能找谁", "先听我说一会儿"]
+    elif category == "diagnosis_or_medical_request":
+        assistant_text = "这个问题值得认真对待，但我不能替你诊断或给药物建议。我们可以先把你最近的感受和影响整理清楚，再考虑找医生或专业咨询师评估。"
+        actions = ["我想先说症状", "帮我整理一下", "我有点害怕就医"]
+    elif category == "prompt_attack":
+        assistant_text = "我不能更改安全规则或泄露内部提示。这里更适合帮你处理当下的感受、压力和下一步。你现在最想被接住的是哪一块？"
+        actions = ["我其实有点烦", "先随便聊聊", "帮我理一理"]
+    elif category == "sexual_boundary":
+        assistant_text = "我会把重点放回你的感受和处境上，不进入性化互动。你刚才这股冲动或愤怒背后，最强的感觉是什么？"
+        actions = ["我就是很气", "不想细说", "帮我冷静一下"]
+    elif category == "abusive_to_assistant":
+        assistant_text = "我听出来你现在火很大。我可以接住这股烦，但不接攻击。刚才最让你爆炸的是哪一下？"
+        actions = ["就是烦死了", "我不想好好说", "先听我骂完"]
+    else:
+        assistant_text = "我能陪你说，但也会守住安全边界。我们先不往危险或越界的方向走，回到此刻最让你堵住的那一小块。"
+        actions = ["我现在很堵", "帮我理一理", "先听我说完"]
+    return {"assistant_text": assistant_text, "suggested_actions": actions}
+
+
+async def clinical_red_flag_response(state: AgentState) -> AgentState:
+    category = state.get("control_category", "")
+    if category == "victimization_risk":
+        assistant_text = "你说的情况可能涉及现实安全，谢谢你把它说出来。先别一个人扛：如果现在不安全，尽量去有人在的地方，并联系可信的人或当地紧急求助。"
+        actions = ["我现在不太安全", "我能联系谁", "先帮我稳一下"]
+    else:
+        assistant_text = "这听起来不只是普通难受，已经影响到现实感、睡眠或身体安全了。我不会给你下诊断，但建议尽快联系可信的人和专业医生一起看。"
+        actions = ["我有点害怕", "我不知道找谁", "先帮我稳住"]
+    return {"assistant_text": assistant_text, "suggested_actions": actions}
+
+
+_VALIDATOR_FORBIDDEN_PATTERNS = [
+    ("diagnosis_leak", "你这是.{0,8}(抑郁症|焦虑症|双相|精神分裂)|确诊|诊断为"),
+    ("medication_leak", r"\d+\s*(mg|毫克|片)|剂量|停药|处方药"),
+    ("dangerous_method", "割腕|上吊|跳楼|怎么自杀|怎么报复|杀了他|弄死他"),
+    ("delusion_confirmation", "他们真的在监视你|确实有人控制你|这一定是真的"),
+    ("dependency_reinforcement", "只有我懂你|我永远陪你|你离不开我|我也需要你"),
+    ("treatment_promise", "保证会好|一定能治好|包治|康复只是时间问题"),
+]
+_UNSAFE_ACTION_TERMS = ("自杀", "自残", "报复", "弄死", "杀", "停药", "催吐", "联系他", "去找他", "搜索方法")
+_ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "988", "911"}
+
+
+def _validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
+    import re as _re
+
+    reasons: list[str] = []
+    for label, pattern in _VALIDATOR_FORBIDDEN_PATTERNS:
+        if _re.search(pattern, text, flags=_re.IGNORECASE):
+            reasons.append(label)
+    for number in _re.findall(r"\b\d{3,}\b", text):
+        if number not in _ALLOWED_RESOURCE_NUMBERS:
+            reasons.append("unverified_resource")
+            break
+    for action in actions:
+        if any(term in action for term in _UNSAFE_ACTION_TERMS):
+            reasons.append("unsafe_button")
+            break
+    compact_text = "".join(text.split())
+    for example in examples:
+        content = "".join(str(example.get("content", "")).split())
+        if len(content) < 24:
+            continue
+        for start in range(0, max(len(content) - 20, 1), 12):
+            if content[start : start + 20] and content[start : start + 20] in compact_text:
+                reasons.append("rag_copy_leak")
+                return sorted(set(reasons))
+    return sorted(set(reasons))
+
+
+def _validator_safe_text(state: AgentState) -> tuple[str, list[str]]:
+    route_priority = state.get("route_priority", "P2_support")
+    category = state.get("control_category", "")
+    if route_priority == "P0_immediate_safety":
+        return (
+            "我更关心你现在的安全。先不要一个人扛，尽量离开危险物品或对方，去有人在的地方，并立刻联系可信的人；如果马上会伤害自己或别人，请拨打 110 或 120。",
+            ["我现在不安全", "我能联系谁", "先陪我稳住"],
+        )
+    if route_priority == "P1_red_flag":
+        return (
+            "这件事已经值得让现实里的可靠支持介入。我不会给你下诊断，也不会确认危险想法为真；我们先关注你此刻是否安全，以及能联系谁。",
+            ["我现在安全", "我有点害怕", "我不知道找谁"],
+        )
+    if route_priority == "P4_system_protection" or category in {"sexual_boundary", "abusive_to_assistant"}:
+        return (
+            "我会守住安全边界，也会尽量接住你的情绪。我们先不往越界或危险的方向走，回到此刻最让你堵住的那一小块。",
+            ["我现在很堵", "帮我理一理", "先听我说完"],
+        )
+    return (
+        "我在。我们先把范围缩小一点，只说此刻最明显的感受，不急着分析完整。",
+        ["我现在很难受", "帮我理一理", "先听我说完"],
+    )
+
+
+async def response_validator(state: AgentState) -> AgentState:
+    assistant_text = str(state.get("assistant_text") or "")
+    actions = [str(action) for action in state.get("suggested_actions", []) if str(action).strip()]
+    examples = [dict(example) for example in state.get("retrieved_counseling_examples", []) if isinstance(example, dict)]
+    reasons = _validator_reasons(assistant_text, actions, examples)
+
+    if not reasons:
+        return {
+            "validator_blocked": False,
+            "validator_reasons": [],
+            "suggested_actions": actions[:3],
+            "audit_tags": (state.get("audit_tags", []) or []) + ["validator_passed"],
+        }
+
+    safe_text, safe_actions = _validator_safe_text(state)
+    if reasons == ["unsafe_button"]:
+        safe_text = assistant_text
+    return {
+        "assistant_text": safe_text,
+        "suggested_actions": safe_actions,
+        "validator_blocked": True,
+        "validator_reasons": reasons,
+        "audit_tags": (state.get("audit_tags", []) or []) + ["validator_blocked"],
+    }
+
+
+async def memory_candidate_extract(state: AgentState) -> AgentState:
+    if state.get("memory_mode") == "off":
+        return {"memory_candidates": []}
+    memory_policy = state.get("memory_policy", "write_safe_summary")
+    if memory_policy == "skip_sensitive":
+        return {"memory_candidates": []}
+    summary = state.get("session_summary", "")
+    if not summary:
+        return {"memory_candidates": []}
+    if memory_policy == "crisis_audit_only":
+        return {
+            "memory_candidates": [
+                {
+                    "memory_type": "safety_summary",
+                    "content": summary,
+                    "importance": 5,
+                    "visibility": "internal",
+                }
+            ]
+        }
+    return {
+        "memory_candidates": [
+            {
+                "memory_type": "session_summary",
+                "content": summary,
+                "importance": 3,
+            }
+        ]
+    }

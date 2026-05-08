@@ -137,17 +137,17 @@ class MilvusVectorStore:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("Milvus REST search failed for %s: %s", collection_name, exc)
-            return None
+            return []
 
         try:
             data = response.json()
         except ValueError:
             logger.warning("Milvus REST search returned invalid JSON for %s", collection_name)
-            return None
+            return []
 
         if not isinstance(data, dict) or int(data.get("code", -1)) != 0:
             logger.warning("Milvus REST search returned error for %s: %s", collection_name, data)
-            return None
+            return []
 
         rows = data.get("data")
         if not isinstance(rows, list):
@@ -250,6 +250,16 @@ class MilvusVectorStore:
                 ("license", 160),
                 ("status", 24),
                 ("embedding_key", 256),
+                ("language", 24),
+                ("age_group", 24),
+                ("review_status", 32),
+                ("risk_allowed", 32),
+                ("scenario_tags", 512),
+                ("intervention_tags", 512),
+                ("style_tags", 512),
+                ("contraindications", 512),
+                ("quality_score", 32),
+                ("safety_score", 32),
             ],
         )
 
@@ -400,13 +410,14 @@ class MilvusVectorStore:
                     expr = "id in [" + ",".join(f'"{item_id}"' for item_id in ids) + "]"
                     client.delete(collection_name=collection_name, filter=expr, timeout=self.request_timeout_seconds)
                 client.insert(collection_name=collection_name, data=clean_rows, timeout=self.request_timeout_seconds)
-            client.flush(collection_name, timeout=self.request_timeout_seconds)
         except Exception as exc:  # pragma: no cover - requires Milvus runtime
             logger.warning("Milvus upsert failed for %s: %s", collection_name, exc)
             return False
         return True
 
     def search_knowledge(self, vector: list[float], *, limit: int = 8) -> list[VectorHit]:
+        if not self.is_enabled:
+            return []
         filter_expr = f'status == "published" and embedding_key == "{self._escape_filter_value(embedding_client.embedding_key)}"'
         rest_hits = self._search_rest(
             self.knowledge_collection,
@@ -428,30 +439,7 @@ class MilvusVectorStore:
                 "content",
             ],
         )
-        if rest_hits is not None:
-            return rest_hits
-        if not self.ensure_knowledge_collection():
-            return []
-        return self._search(
-            self.knowledge_collection,
-            vector,
-            limit=limit,
-            filter_expr=filter_expr,
-            output_fields=[
-                "chunk_id",
-                "article_id",
-                "article_slug",
-                "article_title",
-                "category",
-                "audience",
-                "source_key",
-                "source_name",
-                "source_url",
-                "license",
-                "embedding_key",
-                "content",
-            ],
-        )
+        return rest_hits or []
 
     def search_counseling_examples(
         self,
@@ -460,6 +448,8 @@ class MilvusVectorStore:
         mode: str | None = None,
         limit: int = 5,
         ) -> list[VectorHit]:
+        if not self.is_enabled:
+            return []
         filter_expr = f'status == "published" and embedding_key == "{self._escape_filter_value(embedding_client.embedding_key)}"'
         if mode:
             filter_expr += f' and mode == "{self._escape_filter_value(mode)}"'
@@ -478,33 +468,22 @@ class MilvusVectorStore:
                 "topic",
                 "source_url",
                 "license",
+                "status",
                 "embedding_key",
+                "language",
+                "age_group",
+                "review_status",
+                "risk_allowed",
+                "scenario_tags",
+                "intervention_tags",
+                "style_tags",
+                "contraindications",
+                "quality_score",
+                "safety_score",
                 "content",
             ],
         )
-        if rest_hits is not None:
-            return rest_hits
-        if not self.ensure_counseling_collection():
-            return []
-        return self._search(
-            self.counseling_collection,
-            vector,
-            limit=limit,
-            filter_expr=filter_expr,
-            output_fields=[
-                "chunk_id",
-                "source_id",
-                "source_key",
-                "source_name",
-                "external_id",
-                "mode",
-                "topic",
-                "source_url",
-                "license",
-                "embedding_key",
-                "content",
-            ],
-        )
+        return rest_hits or []
 
     def _search(
         self,

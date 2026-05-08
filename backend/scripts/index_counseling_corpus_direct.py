@@ -381,12 +381,21 @@ def _iter_json_or_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 yield value
 
 
-def _iter_source_examples(source_key: str, corpus_root: Path) -> Iterator[ParsedExample]:
+def _iter_source_examples(
+    source_key: str,
+    corpus_root: Path,
+    *,
+    smilechat_start_file: int | None = None,
+    quiet_files: bool = False,
+) -> Iterator[ParsedExample]:
     if source_key == "smilechat":
         data_dir = corpus_root / "smilechat" / "data"
         files = sorted(data_dir.glob("*.json"), key=lambda path: int(path.stem) if path.stem.isdigit() else path.stem)
         for file_index, file_path in enumerate(files):
-            print(f"[{source_key}] reading {file_path.name}", flush=True)
+            if smilechat_start_file is not None and file_path.stem.isdigit() and int(file_path.stem) < smilechat_start_file:
+                continue
+            if not quiet_files:
+                print(f"[{source_key}] reading {file_path.name}", flush=True)
             try:
                 turns = json.loads(file_path.read_text(encoding="utf-8-sig"))
             except (json.JSONDecodeError, OSError):
@@ -458,6 +467,8 @@ async def index_sources(
     limit: int | None,
     batch_size: int,
     progress_every: int,
+    smilechat_start_file: int | None = None,
+    quiet_files: bool = False,
 ) -> dict[str, ImportCounts]:
     if not embedding_client.is_configured:
         raise RuntimeError("Embedding provider is not configured.")
@@ -469,7 +480,12 @@ async def index_sources(
         counts = ImportCounts()
         batch: list[ParsedExample] = []
         last_report = 0
-        for example in _iter_source_examples(source_key, corpus_root):
+        for example in _iter_source_examples(
+            source_key,
+            corpus_root,
+            smilechat_start_file=smilechat_start_file,
+            quiet_files=quiet_files,
+        ):
             batch.append(example)
             counts.parsed += 1
             if len(batch) >= batch_size:
@@ -516,6 +532,12 @@ async def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32, help="Embedding/upsert batch size.")
     parser.add_argument("--progress-every", type=int, default=1000, help="Print progress after this many parsed chunks.")
     parser.add_argument("--recreate", action="store_true", help="Drop and recreate the counseling Milvus collection first.")
+    parser.add_argument(
+        "--smilechat-start-file",
+        type=int,
+        help="Skip SMILECHAT files whose numeric file stem is lower than this value.",
+    )
+    parser.add_argument("--quiet-files", action="store_true", help="Do not print every source file as it is read.")
     args = parser.parse_args()
 
     sources = args.source or ["soulchat_corpus", "psydt_corpus", "smilechat"]
@@ -528,6 +550,8 @@ async def main() -> None:
         limit=args.limit,
         batch_size=max(args.batch_size, 1),
         progress_every=max(args.progress_every, 1),
+        smilechat_start_file=args.smilechat_start_file,
+        quiet_files=args.quiet_files,
     )
     print(
         json.dumps(
