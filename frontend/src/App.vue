@@ -11,6 +11,7 @@ import type {
   ChatStreamGraphUpdateEvent,
   ChatStreamTokenEvent,
   CompleteAttemptResponse,
+  DeliveryStatus,
   FeedbackCreateRequest,
   FeedbackResponse,
   KnowledgeArticleResponse,
@@ -68,8 +69,17 @@ interface ChatMessage {
   suggestedActions?: string[];
   referencedMemories?: MemoryReference[];
   memoryRefsExpanded?: boolean;
+  deliveryStatus?: DeliveryStatus;
+  failureReason?: string | null;
+  retryable?: boolean;
   streaming?: boolean;
   streamError?: boolean;
+}
+
+interface FailedReplyStatus {
+  userText: string;
+  failureReason?: string | null;
+  retryable: boolean;
 }
 
 interface KnowledgeChatMessage {
@@ -411,7 +421,8 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
     text: "今天想弄清楚哪件事？焦虑、睡眠、关系、情绪调节，都可以慢慢说。",
   },
 ]);
-const quickActions = ref<string[]>(["继续听我说", "帮我理一理", "先听我说完"]);
+const quickActions = ref<string[]>([]);
+const failedReplyStatus = ref<FailedReplyStatus | null>(null);
 const composerText = ref("");
 const threadSearchQuery = ref("");
 const knowledgeDraft = ref("");
@@ -756,6 +767,10 @@ function normalizeRiskLevel(value: unknown): RiskLevel | null {
   return value === "L0" || value === "L1" || value === "L2" || value === "L3" ? value : null;
 }
 
+function normalizeDeliveryStatus(value: unknown): DeliveryStatus {
+  return value === "failed_no_reply" || value === "safety_fallback" ? value : "generated";
+}
+
 function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -814,6 +829,7 @@ function sortThreads(items: ThreadListItem[]) {
 }
 
 function setMessages(items: ChatMessage[]) {
+  failedReplyStatus.value = null;
   messages.value = items.map((message, index) => ({ ...message, id: index + 1 }));
   messageSeed.value = messages.value.length + 1;
 }
@@ -886,14 +902,18 @@ async function refreshAccessToken(): Promise<boolean> {
 
 function mapMessage(item: MessageItem): ChatMessage | null {
   if (item.role !== "assistant" && item.role !== "user") return null;
+  const deliveryStatus = normalizeDeliveryStatus(item.metadata.delivery_status);
   return {
     id: 0,
     role: item.role,
     text: item.content,
     createdAt: item.created_at,
     riskLevel: item.risk_level,
-    suggestedActions: normalizeStringList(item.metadata.suggested_actions),
-    referencedMemories: normalizeMemoryReferences(item.metadata.referenced_memories),
+    suggestedActions: deliveryStatus === "failed_no_reply" ? [] : normalizeStringList(item.metadata.suggested_actions),
+    referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(item.metadata.referenced_memories) : [],
+    deliveryStatus,
+    failureReason: typeof item.metadata.failure_reason === "string" ? item.metadata.failure_reason : null,
+    retryable: Boolean(item.metadata.retryable),
   };
 }
 
@@ -1460,7 +1480,7 @@ async function selectThread(threadId: string) {
   localStorage.setItem(THREAD_ID_KEY, threadId);
   activeTab.value = "chat";
   await loadThreadMessages(threadId);
-  quickActions.value = [...fallbackQuickActions];
+  quickActions.value = [];
 }
 
 function openThreadDrawer() {
@@ -1534,7 +1554,7 @@ async function createChatThread() {
     } else {
       await createThread();
     }
-    quickActions.value = [...fallbackQuickActions];
+    quickActions.value = [];
     threadSearchQuery.value = "";
     activeTab.value = "chat";
     closeThreadDrawer();
@@ -1556,6 +1576,10 @@ function updateMessage(id: number, patch: Partial<Omit<ChatMessage, "id">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
 }
 
+function removeMessage(id: number) {
+  messages.value = messages.value.filter((message) => message.id !== id);
+}
+
 function appendMessageText(id: number, text: string) {
   messages.value = messages.value.map((message) =>
     message.id === id ? { ...message, text: `${message.text}${text}` } : message,
@@ -1569,14 +1593,32 @@ function inferRisk(message: string): RiskLevel | null {
   return null;
 }
 
-const fallbackQuickActions = ["继续听我说", "帮我理一理", "先听我说完"];
+interface LocalSafetyFallback {
+  reply: string;
+  actions: string[];
+}
 
-function buildReply(message: string) {
-  if (message.includes("睡")) return "睡不好的时候，很多情绪都会被放大。我们先不急着解决全部，只分开看看：是入睡难、半夜醒，还是醒来后很累？";
-  if (message.includes("焦虑") || message.includes("慌")) return "焦虑来的时候，身体常常比想法更快。我们先让身体退一步，再看事情本身。";
-  if (message.includes("关系") || message.includes("家人")) return "关系里的难受，通常不只是一句话，而是那句话碰到了你很在意的东西。你最怕哪种感受被忽略？";
-  if (message.includes("呼吸")) return "现在先把注意力放回身体。吸气四拍，停一拍，呼气六拍。先做三轮，不用追求标准。";
-  return "我在这里。你不用一下子说得很完整，先把压在胸口最重的那一小块说出来就够了。";
+function buildLocalSafetyFallback(): LocalSafetyFallback {
+  return {
+    reply: "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；如果马上有危险，请立刻拨打当地紧急电话。",
+    actions: ["我现在不安全", "我能联系谁", "先陪我稳住"],
+  };
+}
+
+function showFailedNoReply(assistantId: number | null, userText: string, failureReason?: string | null) {
+  if (assistantId !== null) removeMessage(assistantId);
+  failedReplyStatus.value = {
+    userText,
+    failureReason: failureReason ?? null,
+    retryable: true,
+  };
+  quickActions.value = [];
+}
+
+async function retryFailedReply() {
+  const userText = failedReplyStatus.value?.userText;
+  if (!userText || isSending.value) return;
+  await submitMessage(userText);
 }
 
 function syncLocalThread(summary: string, risk: RiskLevel | null) {
@@ -1591,21 +1633,48 @@ function syncLocalThread(summary: string, risk: RiskLevel | null) {
   demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
 }
 
-function applySendMessageResponse(assistantId: number, userContent: string, response: SendMessageResponse) {
+function syncFailedNoReplyThread(risk: RiskLevel | null) {
+  if (!activeThreadId.value) return;
+  threads.value = sortThreads(
+    threads.value.map((thread) =>
+      thread.thread_id === activeThreadId.value
+        ? { ...thread, last_risk_level: risk ?? thread.last_risk_level, updated_at: new Date().toISOString() }
+        : thread,
+    ),
+  );
+  demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
+}
+
+function applySendMessageResponse(
+  assistantId: number,
+  userContent: string,
+  response: SendMessageResponse,
+  fallbackRisk: RiskLevel | null = null,
+) {
   const assistant = response.assistant_message;
+  if (response.delivery_status === "failed_no_reply" || !assistant) {
+    showFailedNoReply(assistantId, userContent, response.failure_reason);
+    syncFailedNoReplyThread(fallbackRisk);
+    return;
+  }
+  const deliveryStatus = normalizeDeliveryStatus(assistant.delivery_status);
   const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
   const reply = assistant.assistant_text || assistant.content;
-  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : fallbackQuickActions;
+  const actions = assistant.suggested_actions.slice(0, 3);
   updateMessage(assistantId, {
     text: reply,
     riskLevel: risk,
     graphNode: null,
     suggestedActions: actions,
-    referencedMemories: assistant.referenced_memories ?? [],
+    referencedMemories: deliveryStatus === "generated" ? assistant.referenced_memories ?? [] : [],
+    deliveryStatus,
+    failureReason: assistant.failure_reason ?? null,
+    retryable: assistant.retryable,
     streaming: false,
     streamError: false,
   });
-  quickActions.value = actions.slice(0, 3);
+  failedReplyStatus.value = null;
+  quickActions.value = actions;
   syncLocalThread(reply, risk);
   if (assistant.should_write_memory) void refreshMemories();
   if (risk === "L2" || risk === "L3") openSafety();
@@ -1616,17 +1685,24 @@ async function submitMessage(text = composerText.value) {
   if (!content || isSending.value) return;
   composerText.value = "";
   clearApiFeedback();
+  failedReplyStatus.value = null;
+  quickActions.value = [];
   activeTab.value = "chat";
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
   const localRisk = inferRisk(content);
-  quickActions.value = [...fallbackQuickActions];
 
   if (isDemoMode.value || !accessToken.value || activeThreadId.value.startsWith("local-")) {
-    const reply = buildReply(content);
-    addMessage("assistant", reply, localRisk);
-    syncLocalThread(reply, localRisk);
-    if (localRisk === "L2" || localRisk === "L3") openSafety();
+    if (localRisk === "L2" || localRisk === "L3") {
+      const safetyFallback = buildLocalSafetyFallback();
+      addMessage("assistant", safetyFallback.reply, localRisk, false);
+      quickActions.value = safetyFallback.actions;
+      syncLocalThread(safetyFallback.reply, localRisk);
+      openSafety();
+      return;
+    }
+    showFailedNoReply(null, content, "local_generation_unavailable");
+    syncFailedNoReplyThread(localRisk);
     return;
   }
 
@@ -1636,6 +1712,7 @@ async function submitMessage(text = composerText.value) {
   let risk: RiskLevel | null = null;
   let receivedStreamEvent = false;
   let receivedFinalEvent = false;
+  let failedNoReply = false;
   try {
     isSending.value = true;
     await api.streamMessage(
@@ -1658,20 +1735,29 @@ async function submitMessage(text = composerText.value) {
           streamed += data.text;
           appendMessageText(assistantId, data.text);
         }
-        if (event === "final") {
+        if (event === "final" && isFinalEventData(data)) {
           receivedStreamEvent = true;
           receivedFinalEvent = true;
           risk = normalizeRiskLevel(data.risk_level) ?? "L0";
-          const actions = normalizeStringList(data.suggested_actions);
-          const finalActions = actions.length ? actions : fallbackQuickActions;
-          quickActions.value = finalActions.slice(0, 3);
-          if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
+          const deliveryStatus = normalizeDeliveryStatus(data.delivery_status);
+          if (deliveryStatus === "failed_no_reply") {
+            failedNoReply = true;
+            showFailedNoReply(assistantId, content, data.failure_reason ?? null);
+            syncFailedNoReplyThread(risk);
+            return;
+          }
+          const finalActions = normalizeStringList(data.suggested_actions).slice(0, 3);
+          quickActions.value = finalActions;
+          if (!streamed) streamed = data.assistant_text;
           updateMessage(assistantId, {
             text: streamed,
             riskLevel: risk,
             graphNode: null,
             suggestedActions: finalActions,
-            referencedMemories: normalizeMemoryReferences(data.referenced_memories),
+            referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(data.referenced_memories) : [],
+            deliveryStatus,
+            failureReason: data.failure_reason ?? null,
+            retryable: Boolean(data.retryable),
             streaming: false,
             streamError: false,
           });
@@ -1690,13 +1776,18 @@ async function submitMessage(text = composerText.value) {
     if (!receivedStreamEvent) {
       apiNotice.value = "流式连接无返回，已切换到稳定发送。";
       const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      applySendMessageResponse(assistantId, content, response, localRisk);
       return;
     }
 
-    if (!streamed) {
-      streamed = buildReply(content);
-      updateMessage(assistantId, { text: streamed, riskLevel: risk });
+    if (failedNoReply) {
+      return;
+    }
+
+    if (!streamed.trim()) {
+      showFailedNoReply(assistantId, content, "empty_stream_reply");
+      syncFailedNoReplyThread(risk ?? localRisk);
+      return;
     }
     syncLocalThread(streamed, risk);
     if (risk === "L2" || risk === "L3") openSafety();
@@ -1711,22 +1802,14 @@ async function submitMessage(text = composerText.value) {
     try {
       apiNotice.value = "流式连接失败，已切换到稳定发送。";
       const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      applySendMessageResponse(assistantId, content, response, localRisk);
     } catch (fallbackError) {
-      apiError.value =
-        fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
-      const reply = buildReply(content);
-      quickActions.value = [...fallbackQuickActions];
-      updateMessage(assistantId, {
-        text: reply,
-        riskLevel: localRisk,
-        graphNode: null,
-        suggestedActions: fallbackQuickActions,
-        streaming: false,
-        streamError: true,
-      });
-      syncLocalThread(reply, localRisk);
-      if (localRisk === "L2" || localRisk === "L3") openSafety();
+      showFailedNoReply(
+        assistantId,
+        content,
+        fallbackError instanceof Error ? fallbackError.message : "send_failed",
+      );
+      syncFailedNoReplyThread(localRisk);
     }
   } finally {
     updateMessage(assistantId, { streaming: false });
@@ -2872,9 +2955,15 @@ onMounted(async () => {
               </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
+            <div v-if="failedReplyStatus" class="retry-status-row" role="status">
+              <span>这次没有生成成功，可以重试。</span>
+              <button type="button" :disabled="isSending || !failedReplyStatus.retryable" @click="retryFailedReply">
+                重试
+              </button>
+            </div>
           </div>
 
-          <div class="quick-actions">
+          <div v-if="quickActions.length" class="quick-actions">
             <button v-for="action in quickActions" :key="action" type="button" :disabled="isSending" @click="submitMessage(action)">
               {{ action }}
             </button>
@@ -4623,6 +4712,37 @@ onMounted(async () => {
 .stream-status {
   background: #fff6ed;
   color: #9a4a25;
+}
+
+.retry-status-row {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8faf8;
+  color: var(--text-muted);
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.retry-status-row button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.retry-status-row button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .memory-reference {

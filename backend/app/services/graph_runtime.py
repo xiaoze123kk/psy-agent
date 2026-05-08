@@ -123,9 +123,25 @@ class GraphRuntime:
         )
 
         risk_level = result.get("risk_level", "L0")
+        delivery_status = str(result.get("delivery_status") or "")
+        assistant_text = str(result.get("assistant_text", "") or "")
+        if not delivery_status:
+            delivery_status = "generated" if assistant_text.strip() else "failed_no_reply"
+        if delivery_status == "failed_no_reply":
+            assistant_text = ""
         retrieved_examples = result.get("retrieved_counseling_examples", [])
+        referenced_memories = (
+            []
+            if delivery_status != "generated"
+            else _memory_references(retrieved_memories, str(risk_level))
+        )
+        referenced_examples = (
+            []
+            if delivery_status != "generated"
+            else _counseling_references(retrieved_examples, str(risk_level))
+        )
         return {
-            "assistant_text": result.get("assistant_text", ""),
+            "assistant_text": assistant_text,
             "risk_level": risk_level,
             "intent": result.get("intent", "other"),
             "risk_reasons": result.get("risk_reasons", []),
@@ -151,11 +167,14 @@ class GraphRuntime:
             ],
             "validator_blocked": bool(result.get("validator_blocked", False)),
             "validator_reasons": result.get("validator_reasons", []),
-            "suggested_actions": result.get("suggested_actions", []),
-            "session_summary": result.get("session_summary", ""),
-            "memory_candidates": result.get("memory_candidates", []),
-            "should_write_memory": result.get("should_write_memory", False),
+            "suggested_actions": [] if delivery_status == "failed_no_reply" else result.get("suggested_actions", []),
+            "session_summary": "" if delivery_status == "failed_no_reply" else result.get("session_summary", ""),
+            "memory_candidates": [] if delivery_status == "failed_no_reply" else result.get("memory_candidates", []),
+            "should_write_memory": False if delivery_status == "failed_no_reply" else result.get("should_write_memory", False),
             "memory_write_decisions": result.get("memory_write_decisions", []),
-            "referenced_memories": _memory_references(retrieved_memories, str(risk_level)),
-            "referenced_counseling_examples": _counseling_references(retrieved_examples, str(risk_level)),
+            "referenced_memories": referenced_memories,
+            "referenced_counseling_examples": referenced_examples,
+            "delivery_status": delivery_status,
+            "failure_reason": result.get("failure_reason"),
+            "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
         }

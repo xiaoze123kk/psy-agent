@@ -57,6 +57,9 @@ class AgentState(TypedDict, total=False):
     retrieved_counseling_examples: list[dict]
     validator_blocked: bool
     validator_reasons: list[str]
+    delivery_status: Literal["generated", "failed_no_reply", "safety_fallback"]
+    failure_reason: str | None
+    retryable: bool
 
     response_style: dict
     system_policy: dict

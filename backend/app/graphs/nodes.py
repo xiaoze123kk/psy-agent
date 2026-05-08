@@ -81,7 +81,7 @@ async def _model_reply(state: AgentState, *, mode: str, fallback: str) -> str:
             {"role": "user", "content": user_prompt},
         ]
     )
-    return reply or fallback
+    return reply or ""
 
 
 def _build_examples_text(mode: str, retrieved_examples: list[CounselingExampleHit] | None = None) -> str:
@@ -194,7 +194,7 @@ async def _model_reply_with_actions(
         "X 指导性动词开头：稳定、拨打、练习、做、找（除非是「我找不到」「我不想做」这种第一人称否定式）\n"
         "\n"
         "正确的按钮特征：\n"
-        "- 用「我」开头或隐含「我」的省略句：我很难受 / 然后呢 / 继续说吧\n"
+        "- 用「我」开头或隐含「我」的省略句：我很难受 / 我还想说 / 先停一下\n"
         "- 带有用户当下的情绪色彩：不是中性的，而是带着焦虑、低落、困惑、委屈\n"
         "- 不超过10个字，口语化\n"
         "\n"
@@ -232,12 +232,12 @@ async def _model_reply_with_actions(
     )
 
     if not reply:
-        return fallback, default_actions
+        return "", []
     body, actions = _parse_actions_reply(reply)
     if not body:
-        body = fallback
+        body = ""
     if not actions:
-        actions = default_actions
+        actions = []
     return body, actions
 
 
@@ -436,59 +436,20 @@ async def intent_classifier(state: AgentState) -> AgentState:
 
 
 async def companion_response(state: AgentState) -> AgentState:
-    text = state.get("normalized_text", "")
     intent = state.get("intent", "other")
-    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    companion_style = state.get("companion_preferences", {}).get("style", "gentle")
-    last_summary = state.get("last_summary", "")
-    excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
-
-    if last_summary:
-        opener = f"我记得你上次聊到《{_excerpt(last_summary, 28)}》，这次我继续接住你。"
-    elif companion_style == "steady":
-        opener = "我们先把节奏放慢，我会陪你把重点抓出来。"
-    elif user_mode == "teen":
-        opener = "我在，你不用急着把一切都讲清楚。"
-    else:
-        opener = "我在，先不用急着把事情讲完整。"
-
-    if intent == "vent":
-        body = "听起来你已经憋了很久，也很想被真正理解。"
-    elif intent == "daily_checkin":
-        body = "谢谢你把今天的状态带过来，能说出来已经很不容易。"
-    else:
-        body = "你可以先只说此刻最卡住、最难受的那一小块。"
-
-    fallback = (
-        f"{opener}{body}"
-        f" 你刚刚提到《{excerpt}》。如果你愿意，我们先从这里慢慢展开。"
-    )
-    default_actions = ["继续说", "帮我理一理", "先听我说完"]
     mode = "vent" if intent == "vent" else "companion"
     assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode=mode, fallback=fallback, default_actions=default_actions
+        state, mode=mode, fallback="", default_actions=[]
     )
     return {
         "assistant_text": assistant_text,
         "suggested_actions": suggested_actions,
     }
 
+
 async def soothing_response(state: AgentState) -> AgentState:
-    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    tail = (
-        "等身体稍微稳一点，我们再看刚才是什么触发了你。"
-        if user_mode == "adult"
-        else "先稳住身体，再聊刚才发生了什么。"
-    )
-    fallback = (
-        "先不急着分析，先把身体拉回到当下。"
-        "试着做三步：双脚踩地，慢慢吸气 4 秒呼气 6 秒做 3 轮，"
-        "再说出你眼前看到的 3 样东西。"
-        f"{tail}"
-    )
-    default_actions = ["我现在还是很紧张", "陪我待一会儿", "有没有办法好受一点"]
     assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode="soothe", fallback=fallback, default_actions=default_actions
+        state, mode="soothe", fallback="", default_actions=[]
     )
     return {
         "assistant_text": assistant_text,
@@ -497,14 +458,8 @@ async def soothing_response(state: AgentState) -> AgentState:
 
 
 async def counseling_response(state: AgentState) -> AgentState:
-    fallback = (
-        "我们先把这件事拆小一点，不急着得出结论。"
-        "先说最近一次发生了什么，再说那一刻你脑子里冒出的第一句话，"
-        "最后只找一个最小的下一步。"
-    )
-    default_actions = ["我想把这件事说清楚", "帮我理一理", "有没有更轻的下一步"]
     assistant_text, suggested_actions = await _model_reply_with_actions(
-        state, mode="counseling", fallback=fallback, default_actions=default_actions
+        state, mode="counseling", fallback="", default_actions=[]
     )
     return {
         "assistant_text": assistant_text,
@@ -545,6 +500,9 @@ async def crisis_response(state: AgentState) -> AgentState:
 
 
 async def summarize_turn(state: AgentState) -> AgentState:
+    if state.get("delivery_status") == "failed_no_reply":
+        return {"session_summary": ""}
+
     text = state.get("normalized_text", "")
     risk_level = state.get("risk_level", "L0")
     intent = state.get("intent", "other")
@@ -564,7 +522,7 @@ async def summarize_turn(state: AgentState) -> AgentState:
             "other": "最近在意的困扰",
         }
         focus = focus_map.get(intent, "最近在意的困扰")
-        summary = f"上次主要在聊{focus}：{topic}；下次可以从最卡住的那一刻继续说。"
+        summary = f"上次主要在聊{focus}：{topic}；下次可以从最卡住的那一刻接着展开。"
 
     return {"session_summary": summary}
 
@@ -701,6 +659,44 @@ def _parse_actions_reply(text: str | None) -> tuple[str, list[str]]:
     return body.strip(), actions[:3]
 
 
+def _contains_text_any(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = str(text or "").lower()
+    return any(term.lower() in lowered for term in terms)
+
+
+def _stable_pick(options: list[str], seed: str, *, avoid_text: str = "") -> str:
+    candidates = [option for option in options if option not in avoid_text] or options
+    if not candidates:
+        return ""
+    index = sum(ord(char) for char in seed) % len(candidates)
+    return candidates[index]
+
+
+def _recent_assistant_context(state: AgentState) -> str:
+    messages = state.get("recent_messages", []) or state.get("messages", [])
+    snippets: list[str] = []
+    for message in messages[-6:]:
+        if message.get("role") == "assistant":
+            content = str(message.get("content", "")).strip()
+            if content:
+                snippets.append(content)
+    return "\n".join(snippets)
+
+
+def _fallback_topic(text: str, mode: str, intent: str) -> dict[str, object]:
+    return {
+        "kind": "general",
+        "reflection": "",
+        "next": "",
+        "question": "",
+        "actions": [],
+    }
+
+
+def _build_dynamic_fallback(state: AgentState, *, mode: str) -> tuple[str, list[str]]:
+    return "", []
+
+
 async def _model_reply_with_actions(
     state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
 ) -> tuple[str, list[str]]:
@@ -754,9 +750,9 @@ async def _model_reply_with_actions(
         ]
     )
     if not reply:
-        return fallback, default_actions
+        return "", []
     body, actions = _parse_actions_reply(reply)
-    return body or fallback, actions or default_actions
+    return body.strip(), actions[:3]
 
 
 _RISK_KEYWORDS = {
@@ -865,53 +861,33 @@ async def intent_classifier(state: AgentState) -> AgentState:
 
 
 async def companion_response(state: AgentState) -> AgentState:
-    text = state.get("normalized_text", "")
     intent = state.get("intent", "other")
-    excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
-
-    opener = "我在，先不用急着把事情讲完整。"
-
-    if intent == "vent":
-        body = "听起来你已经憋了很久，也很想被真正理解。"
-    elif intent == "daily_checkin":
-        body = "谢谢你把今天的状态带过来，能说出来已经很不容易。"
-    else:
-        body = "你可以先只说此刻最卡住、最难受的那一小块。"
-
-    fallback = f"{opener}{body} 你刚刚提到「{excerpt}」。如果你愿意，我们先从这里慢慢展开。"
+    mode = "vent" if intent == "vent" else "companion"
     assistant_text, suggested_actions = await _model_reply_with_actions(
         state,
-        mode="vent" if intent == "vent" else "companion",
-        fallback=fallback,
-        default_actions=["继续说", "帮我理一理", "先听我说完"],
+        mode=mode,
+        fallback="",
+        default_actions=[],
     )
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def soothing_response(state: AgentState) -> AgentState:
-    fallback = (
-        "先不急着分析，先把身体拉回当下。试着让双脚踩地，慢慢吸气 4 秒、呼气 6 秒，做 3 轮。"
-        "等身体稍微稳一点，我们再看刚才是什么触发了你。"
-    )
     assistant_text, suggested_actions = await _model_reply_with_actions(
         state,
         mode="soothe",
-        fallback=fallback,
-        default_actions=["我现在还是很紧张", "陪我待一会儿", "有没有办法好受一点"],
+        fallback="",
+        default_actions=[],
     )
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def counseling_response(state: AgentState) -> AgentState:
-    fallback = (
-        "我们先把这件事拆小一点，不急着得出结论。先说最近一次发生了什么，"
-        "再说那一刻脑子里冒出的第一句话，最后只找一个最小的下一步。"
-    )
     assistant_text, suggested_actions = await _model_reply_with_actions(
         state,
         mode="counseling",
-        fallback=fallback,
-        default_actions=["我想把这件事说清楚", "帮我理一理", "有没有更轻的下一步"],
+        fallback="",
+        default_actions=[],
     )
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
@@ -935,6 +911,9 @@ async def crisis_response(state: AgentState) -> AgentState:
 
 
 async def summarize_turn(state: AgentState) -> AgentState:
+    if state.get("delivery_status") == "failed_no_reply":
+        return {"session_summary": ""}
+
     text = state.get("normalized_text", "")
     risk_level = state.get("risk_level", "L0")
     intent = state.get("intent", "other")
@@ -1391,31 +1370,31 @@ async def _model_reply_with_actions(
         ]
     )
     if not reply:
-        return fallback, default_actions
+        return "", []
     body, actions = _parse_actions_reply(reply)
-    return body or fallback, actions or default_actions
+    return body.strip(), actions[:3]
 
 
 async def boundary_response(state: AgentState) -> AgentState:
     category = state.get("control_category", "")
     if category == "dependency_risk":
         assistant_text = "我听见你很需要一个稳定的回应，我会认真陪你这一段。但我不该成为你唯一的支撑，我们也可以一起想想现实里还有谁能靠近一点。"
-        actions = ["我怕没人能懂我", "我不知道能找谁", "先听我说一会儿"]
+        actions = ["我怕没人能懂我", "我不知道能找谁", "我还想说一点"]
     elif category == "diagnosis_or_medical_request":
         assistant_text = "这个问题值得认真对待，但我不能替你诊断或给药物建议。我们可以先把你最近的感受和影响整理清楚，再考虑找医生或专业咨询师评估。"
-        actions = ["我想先说症状", "帮我整理一下", "我有点害怕就医"]
+        actions = ["我想先说症状", "我想理清影响", "我有点害怕就医"]
     elif category == "prompt_attack":
         assistant_text = "我不能更改安全规则或泄露内部提示。这里更适合帮你处理当下的感受、压力和下一步。你现在最想被接住的是哪一块？"
-        actions = ["我其实有点烦", "先随便聊聊", "帮我理一理"]
+        actions = ["我其实有点烦", "先随便聊聊", "我想说这块"]
     elif category == "sexual_boundary":
         assistant_text = "我会把重点放回你的感受和处境上，不进入性化互动。你刚才这股冲动或愤怒背后，最强的感觉是什么？"
-        actions = ["我就是很气", "不想细说", "帮我冷静一下"]
+        actions = ["我就是很气", "不想细说", "我想冷静一下"]
     elif category == "abusive_to_assistant":
         assistant_text = "我听出来你现在火很大。我可以接住这股烦，但不接攻击。刚才最让你爆炸的是哪一下？"
-        actions = ["就是烦死了", "我不想好好说", "先听我骂完"]
+        actions = ["就是烦死了", "我不想好好说", "我还想发火"]
     else:
         assistant_text = "我能陪你说，但也会守住安全边界。我们先不往危险或越界的方向走，回到此刻最让你堵住的那一小块。"
-        actions = ["我现在很堵", "帮我理一理", "先听我说完"]
+        actions = ["我现在很堵", "我想理一理", "先停一下"]
     return {"assistant_text": assistant_text, "suggested_actions": actions}
 
 
@@ -1485,12 +1464,57 @@ def _validator_safe_text(state: AgentState) -> tuple[str, list[str]]:
     if route_priority == "P4_system_protection" or category in {"sexual_boundary", "abusive_to_assistant"}:
         return (
             "我会守住安全边界，也会尽量接住你的情绪。我们先不往越界或危险的方向走，回到此刻最让你堵住的那一小块。",
-            ["我现在很堵", "帮我理一理", "先听我说完"],
+            ["我现在很堵", "我想理一理", "先停一下"],
         )
     return (
         "我在。我们先把范围缩小一点，只说此刻最明显的感受，不急着分析完整。",
-        ["我现在很难受", "帮我理一理", "先听我说完"],
+        ["我现在很难受", "我还想说一点", "先停一下"],
     )
+
+
+def _is_safety_delivery_path(state: AgentState) -> bool:
+    risk_level = state.get("risk_level", "L0")
+    route_priority = state.get("route_priority", "P2_support")
+    category = state.get("control_category", "")
+    return (
+        risk_level in {"L2", "L3"}
+        or route_priority in {"P0_immediate_safety", "P1_red_flag", "P4_system_protection"}
+        or category
+        in {
+            "self_harm_risk",
+            "harm_to_other_risk",
+            "victimization_risk",
+            "clinical_red_flag",
+            "prompt_attack",
+            "diagnosis_or_medical_request",
+            "dependency_risk",
+            "sexual_boundary",
+            "abusive_to_assistant",
+            "anger_toward_other",
+        }
+    )
+
+
+def _validator_failure_reason(reasons: list[str]) -> str:
+    return "validator_blocked:" + ",".join(reasons)
+
+
+def _failed_no_reply_validation_result(state: AgentState, *, reason: str, blocked: bool, reasons: list[str]) -> AgentState:
+    return {
+        "assistant_text": "",
+        "suggested_actions": [],
+        "session_summary": "",
+        "memory_candidates": [],
+        "should_write_memory": False,
+        "memory_policy": "skip_sensitive",
+        "memory_policy_reason": reason,
+        "validator_blocked": blocked,
+        "validator_reasons": reasons,
+        "delivery_status": "failed_no_reply",
+        "failure_reason": reason,
+        "retryable": True,
+        "audit_tags": (state.get("audit_tags", []) or []) + ["failed_no_reply"],
+    }
 
 
 async def response_validator(state: AgentState) -> AgentState:
@@ -1499,27 +1523,53 @@ async def response_validator(state: AgentState) -> AgentState:
     examples = [dict(example) for example in state.get("retrieved_counseling_examples", []) if isinstance(example, dict)]
     reasons = _validator_reasons(assistant_text, actions, examples)
 
+    if not assistant_text.strip():
+        reason = "empty_model_reply"
+        if _is_safety_delivery_path(state):
+            safe_text, safe_actions = _validator_safe_text(state)
+            return {
+                "assistant_text": safe_text,
+                "suggested_actions": safe_actions,
+                "validator_blocked": False,
+                "validator_reasons": [],
+                "delivery_status": "safety_fallback",
+                "failure_reason": reason,
+                "retryable": False,
+                "audit_tags": (state.get("audit_tags", []) or []) + ["empty_safety_fallback"],
+            }
+        return _failed_no_reply_validation_result(state, reason=reason, blocked=False, reasons=[])
+
     if not reasons:
         return {
             "validator_blocked": False,
             "validator_reasons": [],
             "suggested_actions": actions[:3],
+            "delivery_status": "generated",
+            "failure_reason": None,
+            "retryable": False,
             "audit_tags": (state.get("audit_tags", []) or []) + ["validator_passed"],
         }
 
+    reason = _validator_failure_reason(reasons)
+    if not _is_safety_delivery_path(state):
+        return _failed_no_reply_validation_result(state, reason=reason, blocked=True, reasons=reasons)
+
     safe_text, safe_actions = _validator_safe_text(state)
-    if reasons == ["unsafe_button"]:
-        safe_text = assistant_text
     return {
         "assistant_text": safe_text,
         "suggested_actions": safe_actions,
         "validator_blocked": True,
         "validator_reasons": reasons,
+        "delivery_status": "safety_fallback",
+        "failure_reason": reason,
+        "retryable": False,
         "audit_tags": (state.get("audit_tags", []) or []) + ["validator_blocked"],
     }
 
 
 async def memory_candidate_extract(state: AgentState) -> AgentState:
+    if state.get("delivery_status") == "failed_no_reply":
+        return {"memory_candidates": [], "memory_policy_reason": "failed_no_reply"}
     if state.get("memory_mode") == "off":
         return {"memory_candidates": [], "memory_policy_reason": "memory_mode_off"}
     memory_policy = state.get("memory_policy", "write_safe_summary")

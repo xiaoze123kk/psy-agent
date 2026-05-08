@@ -52,8 +52,10 @@ class Settings:
     deepseek_chat_model: str
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
+    chat_turn_timeout_seconds: float
     knowledge_llm_answers_enabled: bool
     knowledge_warm_index_on_startup: bool
+    counseling_rag_enabled: bool
     milvus_enabled: bool
     milvus_uri: str
     milvus_token: str | None
@@ -93,10 +95,12 @@ def load_settings() -> Settings:
             os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         ),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
+        chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "25")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
         knowledge_warm_index_on_startup=os.getenv("KNOWLEDGE_WARM_INDEX_ON_STARTUP", "0").lower()
         in {"1", "true", "yes", "on"},
+        counseling_rag_enabled=os.getenv("COUNSELING_RAG_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
         milvus_enabled=os.getenv("MILVUS_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
         milvus_uri=os.getenv("MILVUS_URI", "http://localhost:19530"),
         milvus_token=os.getenv("MILVUS_TOKEN") or None,

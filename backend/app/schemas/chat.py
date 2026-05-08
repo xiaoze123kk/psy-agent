@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.schemas.common import InputType, RiskLevel, ThreadMode, UserMode
 from app.schemas.memory import MemoryReferenceResponse
+
+DeliveryStatus = Literal["generated", "failed_no_reply", "safety_fallback"]
 
 
 class StartThreadRequest(BaseModel):
@@ -53,14 +56,20 @@ class AssistantMessageResponse(BaseModel):
     should_write_memory: bool
     referenced_memories: list[MemoryReferenceResponse] = Field(default_factory=list)
     referenced_counseling_examples: list[dict] = Field(default_factory=list)
+    delivery_status: DeliveryStatus = "generated"
+    failure_reason: str | None = None
+    retryable: bool = False
     created_at: datetime
 
 
 class SendMessageResponse(BaseModel):
     thread_id: str
     message_id: str
-    assistant_message_id: str
-    assistant_message: AssistantMessageResponse
+    assistant_message_id: str | None
+    assistant_message: AssistantMessageResponse | None
+    delivery_status: DeliveryStatus
+    failure_reason: str | None = None
+    retryable: bool = False
 
 
 class MessageItemResponse(BaseModel):

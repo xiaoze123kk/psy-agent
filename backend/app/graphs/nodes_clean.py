@@ -70,7 +70,7 @@ async def _model_reply(state: AgentState, *, mode: str, fallback: str) -> str:
             {"role": "user", "content": user_prompt},
         ]
     )
-    return reply or fallback
+    return reply or ""
 
 
 async def normalize_input(state: AgentState) -> AgentState:
@@ -234,71 +234,25 @@ async def intent_classifier(state: AgentState) -> AgentState:
 
 
 async def companion_response(state: AgentState) -> AgentState:
-    text = state.get("normalized_text", "")
     intent = state.get("intent", "other")
-    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    companion_style = state.get("companion_preferences", {}).get("style", "gentle")
-    last_summary = state.get("last_summary", "")
-    excerpt = _excerpt(text or _last_user_message(state.get("messages", [])) or "这件事")
-
-    if last_summary:
-        opener = f"我记得你上次聊到“{_excerpt(last_summary, 28)}”，这次我继续接住你。"
-    elif companion_style == "steady":
-        opener = "我们先把节奏放慢，我会陪你把重点抓出来。"
-    elif user_mode == "teen":
-        opener = "我在，你不用急着把一切都讲清楚。"
-    else:
-        opener = "我在，先不用急着把事情讲完整。"
-
-    if intent == "vent":
-        body = "听起来你已经憋了很久，也很想被真正理解。"
-        actions = ["继续说", "我想被理解", "给我一个小建议"]
-    elif intent == "daily_checkin":
-        body = "谢谢你把今天的状态带过来，能说出来已经很不容易。"
-        actions = ["说说今天发生了什么", "先聊情绪", "先聊压力源"]
-    else:
-        body = "你可以先只说此刻最卡住、最难受的那一小块。"
-        actions = ["继续说", "帮我理一理", "先听我说完"]
-
-    fallback = (
-        f"{opener}{body}"
-        f" 你刚刚提到“{excerpt}”。如果你愿意，我们先从这里慢慢展开。"
-    )
     mode = "vent" if intent == "vent" else "companion"
     return {
-        "assistant_text": await _model_reply(state, mode=mode, fallback=fallback),
-        "suggested_actions": actions,
+        "assistant_text": await _model_reply(state, mode=mode, fallback=""),
+        "suggested_actions": [],
     }
 
 
 async def soothing_response(state: AgentState) -> AgentState:
-    user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    tail = (
-        "等身体稍微稳一点，我们再看刚才是什么触发了你。"
-        if user_mode == "adult"
-        else "先稳住身体，再聊刚才发生了什么。"
-    )
-    fallback = (
-        "先不急着分析，先把身体拉回到当下。"
-        "试着做三步：双脚踩地，慢慢吸气 4 秒呼气 6 秒做 3 轮，"
-        "再说出你眼前看到的 3 样东西。"
-        f"{tail}"
-    )
     return {
-        "assistant_text": await _model_reply(state, mode="soothe", fallback=fallback),
-        "suggested_actions": ["跟我做 60 秒稳定练习", "继续聊触发点", "打开 SOS"],
+        "assistant_text": await _model_reply(state, mode="soothe", fallback=""),
+        "suggested_actions": [],
     }
 
 
 async def counseling_response(state: AgentState) -> AgentState:
-    fallback = (
-        "我们先把这件事拆小一点，不急着得出结论。"
-        "先说最近一次发生了什么，再说那一刻你脑子里冒出的第一句话，"
-        "最后只找一个最小的下一步。"
-    )
     return {
-        "assistant_text": await _model_reply(state, mode="counseling", fallback=fallback),
-        "suggested_actions": ["先说发生了什么", "帮我理清想法", "一起定下一步"],
+        "assistant_text": await _model_reply(state, mode="counseling", fallback=""),
+        "suggested_actions": [],
     }
 
 
@@ -354,7 +308,7 @@ async def summarize_turn(state: AgentState) -> AgentState:
             "other": "最近在意的困扰",
         }
         focus = focus_map.get(intent, "最近在意的困扰")
-        summary = f"上次主要在聊{focus}：{topic}；下次可以从最卡住的那一刻继续说。"
+        summary = f"上次主要在聊{focus}：{topic}；下次可以从最卡住的那一刻接着展开。"
 
     return {"session_summary": summary}
 

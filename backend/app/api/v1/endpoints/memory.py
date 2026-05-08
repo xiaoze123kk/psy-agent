@@ -29,7 +29,7 @@ from app.services.memory_service import (
     list_memory_operations,
     log_memory_operation,
     record_memory_feedback,
-    retrieve_memories_for_turn,
+    retrieve_memories_for_turn_async,
 )
 
 
@@ -120,7 +120,7 @@ async def search_memories(
     db: Session = Depends(get_db_session),
 ) -> SearchMemoriesResponse:
     memory_mode = getattr(current_user.settings, "memory_mode", "summary_only") if current_user.settings else "summary_only"
-    items = retrieve_memories_for_turn(
+    items = await retrieve_memories_for_turn_async(
         db,
         user_id=current_user.id,
         query=payload.query,

@@ -3,6 +3,7 @@ export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 export type RiskLevel = "L0" | "L1" | "L2" | "L3";
 export type MemoryMode = "off" | "summary_only" | "long_term";
+export type DeliveryStatus = "generated" | "failed_no_reply" | "safety_fallback";
 export type ChatStreamEventName = "token" | "graph_update" | "final";
 
 export interface CaptchaResponse {
@@ -125,14 +126,21 @@ export interface AssistantMessage {
   session_summary: string;
   should_write_memory: boolean;
   referenced_memories: MemoryReference[];
+  referenced_counseling_examples?: Record<string, unknown>[];
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
   created_at: string;
 }
 
 export interface SendMessageResponse {
   thread_id: string;
   message_id: string;
-  assistant_message_id: string;
-  assistant_message: AssistantMessage;
+  assistant_message_id: string | null;
+  assistant_message: AssistantMessage | null;
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
 }
 
 export interface MessageItem {
@@ -161,7 +169,7 @@ export interface ChatStreamGraphUpdateEvent {
 export interface ChatStreamFinalEvent {
   thread_id: string;
   message_id: string;
-  assistant_message_id: string;
+  assistant_message_id: string | null;
   assistant_text: string;
   risk_level: RiskLevel;
   intent: string;
@@ -169,6 +177,9 @@ export interface ChatStreamFinalEvent {
   session_summary: string;
   should_write_memory: boolean;
   referenced_memories: MemoryReference[];
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
   risk_reasons?: string[];
   memory_candidates?: unknown[];
 }

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import ConversationThread, Message, RiskEvent, User, UserMemory, utcnow
 from app.graphs.nodes import sync_risk_classify
 from app.schemas.chat import SendMessageRequest
@@ -13,11 +17,184 @@ from app.services.memory_service import (
     index_memory_embeddings,
     maybe_auto_consolidate_user_memories,
     retrieve_memories_for_turn,
+    retrieve_memories_for_turn_async,
     upsert_memory_candidates,
 )
 
 
+logger = logging.getLogger(__name__)
 graph_runtime = GraphRuntime()
+
+
+def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object]:
+    return {
+        "assistant_text": "",
+        "risk_level": risk_level,
+        "intent": "vent" if risk_level == "L1" else "other",
+        "risk_reasons": [],
+        "route_priority": "P2_support",
+        "control_category": "fallback",
+        "control_reasons": [reason],
+        "control_confidence": 0.0,
+        "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
+        "response_contract": {},
+        "memory_policy": "skip_sensitive",
+        "memory_policy_reason": reason,
+        "rag_used": False,
+        "rag_skipped_reason": reason,
+        "example_ids": [],
+        "example_source_keys": [],
+        "validator_blocked": False,
+        "validator_reasons": [],
+        "suggested_actions": [],
+        "session_summary": "",
+        "memory_candidates": [],
+        "should_write_memory": False,
+        "memory_write_decisions": [{"status": "skipped", "reason": reason}],
+        "referenced_memories": [],
+        "referenced_counseling_examples": [],
+        "delivery_status": "failed_no_reply",
+        "failure_reason": reason,
+        "retryable": True,
+        "audit_tags": [reason],
+    }
+
+
+def _safety_fallback_result(*, risk_level: str, reason: str) -> dict[str, object]:
+    assistant_text = (
+        "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；"
+        "如果马上有危险，请立刻拨打当地紧急电话。"
+    )
+    suggested_actions = ["我现在不安全", "我能联系谁", "先陪我稳住"]
+
+    return {
+        "assistant_text": assistant_text,
+        "risk_level": risk_level,
+        "intent": "crisis",
+        "risk_reasons": [],
+        "route_priority": "P0_immediate_safety",
+        "control_category": "fallback",
+        "control_reasons": [reason],
+        "control_confidence": 0.0,
+        "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
+        "response_contract": {},
+        "memory_policy": "crisis_audit_only",
+        "memory_policy_reason": reason,
+        "rag_used": False,
+        "rag_skipped_reason": reason,
+        "example_ids": [],
+        "example_source_keys": [],
+        "validator_blocked": False,
+        "validator_reasons": [],
+        "suggested_actions": suggested_actions,
+        "session_summary": "",
+        "memory_candidates": [],
+        "should_write_memory": False,
+        "memory_write_decisions": [{"status": "skipped", "reason": reason}],
+        "referenced_memories": [],
+        "referenced_counseling_examples": [],
+        "delivery_status": "safety_fallback",
+        "failure_reason": reason,
+        "retryable": False,
+        "audit_tags": [reason],
+    }
+
+
+def _fallback_assistant_result(*, risk_level: str, reason: str) -> dict[str, object]:
+    if risk_level in {"L2", "L3"}:
+        return _safety_fallback_result(risk_level=risk_level, reason=reason)
+    return _failed_no_reply_result(risk_level=risk_level, reason=reason)
+
+
+def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -> dict[str, object]:
+    delivery_status = str(result.get("delivery_status") or "")
+    risk_level = str(result.get("risk_level") or pre_risk_level or "L0")
+    assistant_text = str(result.get("assistant_text") or "").strip()
+
+    if not delivery_status:
+        delivery_status = "generated" if assistant_text else "failed_no_reply"
+
+    if delivery_status == "generated" and not assistant_text:
+        delivery_status = "failed_no_reply"
+
+    if delivery_status == "failed_no_reply" and risk_level in {"L2", "L3"}:
+        return _safety_fallback_result(
+            risk_level=risk_level,
+            reason=str(result.get("failure_reason") or "safety_fallback"),
+        )
+
+    if delivery_status == "failed_no_reply":
+        result.update(
+            {
+                "assistant_text": "",
+                "suggested_actions": [],
+                "session_summary": "",
+                "memory_candidates": [],
+                "should_write_memory": False,
+                "referenced_memories": [],
+                "referenced_counseling_examples": [],
+                "memory_policy": "skip_sensitive",
+                "memory_policy_reason": str(result.get("failure_reason") or "failed_no_reply"),
+                "delivery_status": "failed_no_reply",
+                "failure_reason": str(result.get("failure_reason") or "failed_no_reply"),
+                "retryable": True,
+            }
+        )
+        return result
+
+    result["delivery_status"] = "safety_fallback" if delivery_status == "safety_fallback" else "generated"
+    result["failure_reason"] = result.get("failure_reason")
+    result["retryable"] = bool(result.get("retryable", False))
+    if result["delivery_status"] == "safety_fallback":
+        result["referenced_memories"] = []
+        result["referenced_counseling_examples"] = []
+        result["retryable"] = False
+    return result
+
+
+async def _invoke_graph_with_fallback(
+    *,
+    thread: ConversationThread,
+    user: User,
+    payload: SendMessageRequest,
+    effective_user_mode: str,
+    serialized_recent_messages: list[dict],
+    memory_mode: str,
+    memory_index: list[dict],
+    retrieved_memories: list[dict],
+    pre_risk_level: str,
+) -> dict[str, object]:
+    timeout_seconds = max(float(settings.chat_turn_timeout_seconds), 0.1)
+    try:
+        return await asyncio.wait_for(
+            graph_runtime.invoke_turn(
+                thread_id=thread.langgraph_thread_id,
+                user_id=user.id,
+                content=payload.content,
+                input_type=payload.input_type.value,
+                user_mode=effective_user_mode,
+                recent_messages=serialized_recent_messages,
+                last_summary=thread.last_summary,
+                memory_mode=memory_mode,
+                companion_style=getattr(user.settings, "companion_style", "gentle") if user.settings else "gentle",
+                nickname=getattr(user.profile, "nickname", None) if user.profile else None,
+                retrieved_memories=retrieved_memories,
+                memory_index=memory_index,
+            ),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Chat graph timed out after %.1fs; returning delivery fallback.", timeout_seconds)
+        return _fallback_assistant_result(
+            risk_level=pre_risk_level,
+            reason="graph_timeout_fallback",
+        )
+    except Exception:
+        logger.exception("Chat graph failed; returning delivery fallback.")
+        return _fallback_assistant_result(
+            risk_level=pre_risk_level,
+            reason="graph_error_fallback",
+        )
 
 
 def get_thread_for_user(db: Session, user_id: str, thread_id: str) -> ConversationThread:
@@ -135,7 +312,7 @@ async def process_message_turn(
     user: User,
     thread: ConversationThread,
     payload: SendMessageRequest,
-) -> tuple[Message, Message, dict[str, object]]:
+) -> tuple[Message, Message | None, dict[str, object]]:
     try:
         user_message = Message(
             thread_id=thread.id,
@@ -171,7 +348,7 @@ async def process_message_turn(
             memory_mode=memory_mode,
             include_internal=pre_risk_level in {"L2", "L3"},
         )
-        retrieved_memories = retrieve_memories_for_turn(
+        retrieved_memories = await retrieve_memories_for_turn_async(
             db,
             user_id=user.id,
             query=payload.content,
@@ -182,20 +359,30 @@ async def process_message_turn(
             limit=5,
             record_access=True,
         )
-        assistant_result = await graph_runtime.invoke_turn(
-            thread_id=thread.langgraph_thread_id,
-            user_id=user.id,
-            content=payload.content,
-            input_type=payload.input_type.value,
-            user_mode=effective_user_mode,
-            recent_messages=serialized_recent_messages,
-            last_summary=thread.last_summary,
+        assistant_result = await _invoke_graph_with_fallback(
+            thread=thread,
+            user=user,
+            payload=payload,
+            effective_user_mode=effective_user_mode,
+            serialized_recent_messages=serialized_recent_messages,
             memory_mode=memory_mode,
-            companion_style=getattr(user.settings, "companion_style", "gentle") if user.settings else "gentle",
-            nickname=getattr(user.profile, "nickname", None) if user.profile else None,
-            retrieved_memories=retrieved_memories,
             memory_index=memory_index,
+            retrieved_memories=retrieved_memories,
+            pre_risk_level=pre_risk_level,
         )
+        assistant_result = _coerce_delivery_result(assistant_result, pre_risk_level=pre_risk_level)
+        delivery_status = str(assistant_result.get("delivery_status", "generated"))
+
+        if not thread.title or thread.title == "new session":
+            thread.title = payload.content[:20] if payload.content else "new session"
+        thread.updated_at = utcnow()
+        thread.last_risk_level = str(assistant_result.get("risk_level", pre_risk_level))
+
+        if delivery_status == "failed_no_reply":
+            db.commit()
+            db.refresh(user_message)
+            db.refresh(thread)
+            return user_message, None, assistant_result
 
         assistant_metadata = {
             "intent": assistant_result.get("intent", "other"),
@@ -208,6 +395,9 @@ async def process_message_turn(
             "memory_index": memory_index,
             "memory_write_decisions": [],
             "memory_policy_reason": assistant_result.get("memory_policy", ""),
+            "delivery_status": delivery_status,
+            "failure_reason": assistant_result.get("failure_reason"),
+            "retryable": bool(assistant_result.get("retryable", False)),
         }
         assistant_message = Message(
             thread_id=thread.id,
@@ -221,11 +411,7 @@ async def process_message_turn(
         db.add(assistant_message)
         db.flush()
 
-        if not thread.title or thread.title == "new session":
-            thread.title = payload.content[:20] if payload.content else "new session"
         thread.last_summary = str(assistant_result.get("session_summary", "") or "")
-        thread.last_risk_level = str(assistant_result.get("risk_level", "L0"))
-        thread.updated_at = utcnow()
 
         risk_level = str(assistant_result.get("risk_level", "L0"))
         if risk_level in {"L2", "L3"}:
