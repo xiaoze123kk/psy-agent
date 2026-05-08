@@ -10,35 +10,30 @@ from app.api.deps import get_current_user
 from app.db.models import User, UserMemory, utcnow
 from app.db.session import get_db_session
 from app.schemas.memory import (
+    MemoryAuditItem,
+    MemoryAuditResponse,
+    MemoryConsolidationResponse,
+    MemoryFeedbackRequest,
     ListMemoriesResponse,
     MemoryItemResponse,
     MemoryMutationResponse,
+    SearchMemoriesRequest,
+    SearchMemoriesResponse,
     StatusResponse,
     UpdateMemoryRequest,
+)
+from app.services.memory_service import (
+    MEMORY_TYPE_LABELS,
+    MEMORY_TYPE_ORDER,
+    consolidate_user_memories,
+    list_memory_operations,
+    log_memory_operation,
+    record_memory_feedback,
+    retrieve_memories_for_turn,
 )
 
 
 router = APIRouter(prefix="/memories", tags=["memory"])
-
-MEMORY_TYPE_LABELS = {
-    "session_summary": "对话摘要",
-    "preference": "陪伴偏好",
-    "recurring_trigger": "触发点",
-    "support_strategy": "支持方式",
-    "state": "长期状态",
-    "relationship": "关系记忆",
-    "safety_summary": "安全摘要",
-}
-
-MEMORY_TYPE_ORDER = [
-    "session_summary",
-    "preference",
-    "recurring_trigger",
-    "support_strategy",
-    "state",
-    "relationship",
-    "safety_summary",
-]
 
 
 def format_doc_datetime(value: datetime) -> str:
@@ -104,10 +99,94 @@ async def list_memories(
                 content=memory.content,
                 created_at=memory.created_at,
                 updated_at=memory.updated_at,
+                title=memory.title,
+                summary=memory.summary,
+                tags=list(memory.tags or []),
+                importance=memory.importance,
+                confidence=float(memory.confidence or 0),
+                review_state=memory.review_state,
+                last_accessed_at=memory.last_accessed_at,
+                access_count=memory.access_count or 0,
             )
             for memory in memories
         ]
     )
+
+
+@router.post("/search", response_model=SearchMemoriesResponse)
+async def search_memories(
+    payload: SearchMemoriesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> SearchMemoriesResponse:
+    memory_mode = getattr(current_user.settings, "memory_mode", "summary_only") if current_user.settings else "summary_only"
+    items = retrieve_memories_for_turn(
+        db,
+        user_id=current_user.id,
+        query=payload.query,
+        memory_mode=memory_mode,
+        risk_level=payload.risk_level,
+        control_category=payload.control_category,
+        limit=payload.limit,
+        record_access=True,
+    )
+    db.commit()
+    return SearchMemoriesResponse(items=[{**item, "memory_id": item["id"]} for item in items])
+
+
+@router.get("/audit", response_model=MemoryAuditResponse)
+async def memory_audit(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MemoryAuditResponse:
+    operations = list_memory_operations(db, user_id=current_user.id, limit=limit)
+    return MemoryAuditResponse(
+        items=[
+            MemoryAuditItem(
+                operation_id=operation.id,
+                memory_id=operation.memory_id,
+                action=operation.action,
+                reason=operation.reason,
+                actor=operation.actor,
+                before_value=operation.before_value,
+                after_value=operation.after_value,
+                created_at=operation.created_at,
+            )
+            for operation in operations
+        ]
+    )
+
+
+@router.post("/consolidate", response_model=MemoryConsolidationResponse)
+async def consolidate_memories(
+    force: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MemoryConsolidationResponse:
+    result = consolidate_user_memories(db, user_id=current_user.id, trigger="manual", force=force)
+    db.commit()
+    return MemoryConsolidationResponse(**result)
+
+
+@router.post("/{memory_id}/feedback", response_model=MemoryMutationResponse)
+async def feedback_memory(
+    memory_id: str,
+    payload: MemoryFeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> MemoryMutationResponse:
+    memory = record_memory_feedback(
+        db,
+        user_id=current_user.id,
+        memory_id=memory_id,
+        feedback=payload.feedback,
+        note=payload.note,
+    )
+    if memory is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
+    db.commit()
+    return MemoryMutationResponse(memory_id=memory.id, content=memory.content, status=memory.status)
 
 
 @router.patch("/{memory_id}", response_model=MemoryMutationResponse)
@@ -128,8 +207,35 @@ async def update_memory(
     if memory is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
 
+    before_value = {
+        "content": memory.content,
+        "title": memory.title,
+        "tags": list(memory.tags or []),
+        "review_state": memory.review_state,
+    }
     memory.content = payload.content
+    if payload.title is not None:
+        memory.title = payload.title
+    if payload.tags is not None:
+        memory.tags = payload.tags
+    memory.summary = payload.content[:180]
+    memory.review_state = "user_edited"
+    memory.version = int(memory.version or 1) + 1
     memory.updated_at = utcnow()
+    log_memory_operation(
+        db,
+        user_id=current_user.id,
+        memory_id=memory.id,
+        action="user_edit",
+        before_value=before_value,
+        after_value={
+            "content": memory.content,
+            "title": memory.title,
+            "tags": list(memory.tags or []),
+            "review_state": memory.review_state,
+        },
+        actor="user",
+    )
     db.commit()
     db.refresh(memory)
     return MemoryMutationResponse(memory_id=memory.id, content=memory.content, status="updated")
@@ -152,8 +258,18 @@ async def delete_memory(
     if memory is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found.")
 
+    before_value = {"content": memory.content, "status": memory.status}
     memory.status = "deleted"
     memory.updated_at = utcnow()
+    log_memory_operation(
+        db,
+        user_id=current_user.id,
+        memory_id=memory.id,
+        action="delete",
+        before_value=before_value,
+        after_value={"content": memory.content, "status": memory.status},
+        actor="user",
+    )
     db.commit()
     return MemoryMutationResponse(memory_id=memory.id, status="deleted")
 
@@ -163,7 +279,7 @@ async def clear_memories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> StatusResponse:
-    db.execute(
+    rows = db.execute(
         update(UserMemory)
         .where(
             UserMemory.user_id == current_user.id,
@@ -171,6 +287,15 @@ async def clear_memories(
             UserMemory.visibility == "user_visible",
         )
         .values(status="deleted", updated_at=utcnow())
+    )
+    log_memory_operation(
+        db,
+        user_id=current_user.id,
+        memory_id=None,
+        action="delete",
+        after_value={"deleted_count": int(rows.rowcount or 0)},
+        reason="clear_visible_memories",
+        actor="user",
     )
     db.commit()
     return StatusResponse(status="cleared")

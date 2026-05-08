@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 KNOWLEDGE_COLLECTION_BASE = "knowledge_chunks_v1"
 COUNSELING_COLLECTION_BASE = "counseling_examples_v1"
+MEMORY_COLLECTION_BASE = "user_memories_v1"
 
 
 def _patch_pymilvus_connect_timeout() -> None:
@@ -64,6 +65,7 @@ class MilvusVectorStore:
         self.dim = settings.embedding_dim
         self._client: Any | None = None
         self._client_error: str | None = None
+        self._field_cache: dict[str, set[str]] = {}
 
     @property
     def knowledge_collection(self) -> str:
@@ -72,6 +74,10 @@ class MilvusVectorStore:
     @property
     def counseling_collection(self) -> str:
         return self._collection_name(COUNSELING_COLLECTION_BASE)
+
+    @property
+    def memory_collection(self) -> str:
+        return self._collection_name(MEMORY_COLLECTION_BASE)
 
     @property
     def is_enabled(self) -> bool:
@@ -115,6 +121,7 @@ class MilvusVectorStore:
         if len(vector) != self.dim:
             return []
 
+        output_fields = self._filter_existing_output_fields(collection_name, output_fields)
         payload: dict[str, Any] = {
             "dbName": self.db_name or "default",
             "collectionName": collection_name,
@@ -167,6 +174,44 @@ class MilvusVectorStore:
             if item_id:
                 hits.append(VectorHit(id=item_id, score=score, entity=entity))
         return hits
+
+    def _filter_existing_output_fields(self, collection_name: str, output_fields: list[str]) -> list[str]:
+        field_names = self._collection_field_names(collection_name)
+        if not field_names:
+            return output_fields
+        return [field for field in output_fields if field in field_names]
+
+    def _collection_field_names(self, collection_name: str) -> set[str]:
+        cached = self._field_cache.get(collection_name)
+        if cached is not None:
+            return cached
+
+        endpoint = self._rest_base_url().rstrip("/") + "/v2/vectordb/collections/describe"
+        payload = {
+            "dbName": self.db_name or "default",
+            "collectionName": collection_name,
+        }
+        try:
+            with httpx.Client(timeout=self.request_timeout_seconds, trust_env=False) as client:
+                response = client.post(endpoint, headers=self._rest_headers(), json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.debug("Milvus collection describe failed for %s: %s", collection_name, exc)
+            return set()
+
+        if not isinstance(data, dict) or int(data.get("code", -1)) != 0:
+            logger.debug("Milvus collection describe returned error for %s: %s", collection_name, data)
+            return set()
+
+        raw_fields = ((data.get("data") or {}).get("fields") or [])
+        field_names = {
+            str(field.get("name"))
+            for field in raw_fields
+            if isinstance(field, dict) and field.get("name")
+        }
+        self._field_cache[collection_name] = field_names
+        return field_names
 
     def _endpoint_reachable(self) -> bool:
         parsed = urlparse(self.uri)
@@ -232,7 +277,7 @@ class MilvusVectorStore:
         return self._client
 
     def ensure_collections(self) -> bool:
-        return self.ensure_knowledge_collection() and self.ensure_counseling_collection()
+        return self.ensure_knowledge_collection() and self.ensure_counseling_collection() and self.ensure_memory_collection()
 
     def ensure_knowledge_collection(self) -> bool:
         return self._ensure_collection(
@@ -278,6 +323,33 @@ class MilvusVectorStore:
                 ("license", 160),
                 ("status", 24),
                 ("embedding_key", 256),
+                ("language", 24),
+                ("age_group", 24),
+                ("review_status", 32),
+                ("risk_allowed", 32),
+                ("scenario_tags", 512),
+                ("intervention_tags", 512),
+                ("style_tags", 512),
+                ("contraindications", 512),
+                ("quality_score", 32),
+                ("safety_score", 32),
+            ],
+        )
+
+    def ensure_memory_collection(self) -> bool:
+        return self._ensure_collection(
+            self.memory_collection,
+            extra_fields=[
+                ("memory_id", 80),
+                ("user_id", 80),
+                ("memory_type", 32),
+                ("visibility", 24),
+                ("status", 24),
+                ("review_state", 24),
+                ("title", 160),
+                ("source", 32),
+                ("embedding_key", 256),
+                ("updated_at", 64),
             ],
         )
 
@@ -340,8 +412,9 @@ class MilvusVectorStore:
         target_names = {
             "knowledge": [self.knowledge_collection],
             "counseling": [self.counseling_collection],
-            "all": [self.knowledge_collection, self.counseling_collection],
-        }.get(target, [self.knowledge_collection, self.counseling_collection])
+            "memory": [self.memory_collection],
+            "all": [self.knowledge_collection, self.counseling_collection, self.memory_collection],
+        }.get(target, [self.knowledge_collection, self.counseling_collection, self.memory_collection])
         results: dict[str, bool] = {}
         for collection_name in target_names:
             try:
@@ -389,6 +462,11 @@ class MilvusVectorStore:
         if not rows or not self.ensure_counseling_collection():
             return False
         return self._upsert(self.counseling_collection, rows)
+
+    def upsert_memory_vectors(self, rows: list[dict[str, Any]]) -> bool:
+        if not rows or not self.ensure_memory_collection():
+            return False
+        return self._upsert(self.memory_collection, rows)
 
     def _upsert(self, collection_name: str, rows: list[dict[str, Any]]) -> bool:
         if not self._endpoint_reachable():
@@ -480,6 +558,51 @@ class MilvusVectorStore:
                 "contraindications",
                 "quality_score",
                 "safety_score",
+                "content",
+            ],
+        )
+        return rest_hits or []
+
+    def search_user_memories(
+        self,
+        vector: list[float],
+        *,
+        user_id: str,
+        memory_types: list[str] | None = None,
+        risk_level: str = "L0",
+        limit: int = 5,
+    ) -> list[VectorHit]:
+        if not self.is_enabled:
+            return []
+        filter_expr = (
+            f'user_id == "{self._escape_filter_value(user_id)}" '
+            f'and status == "active" '
+            f'and embedding_key == "{self._escape_filter_value(embedding_client.embedding_key)}" '
+            f'and review_state != "do_not_use"'
+        )
+        if risk_level in {"L2", "L3"}:
+            filter_expr += ' and visibility == "internal_safety" and memory_type == "safety_summary"'
+        else:
+            filter_expr += ' and visibility == "user_visible"'
+            if memory_types:
+                encoded_types = ",".join(f'"{self._escape_filter_value(item)}"' for item in memory_types)
+                filter_expr += f" and memory_type in [{encoded_types}]"
+        rest_hits = self._search_rest(
+            self.memory_collection,
+            vector,
+            limit=limit,
+            filter_expr=filter_expr,
+            output_fields=[
+                "memory_id",
+                "user_id",
+                "memory_type",
+                "visibility",
+                "status",
+                "review_state",
+                "title",
+                "source",
+                "embedding_key",
+                "updated_at",
                 "content",
             ],
         )

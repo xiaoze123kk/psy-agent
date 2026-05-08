@@ -101,6 +101,7 @@ const USERNAME_KEY = "counseling_username";
 const THREAD_ID_KEY = "counseling_thread_id";
 const STYLE_KEY = "counseling_style";
 const GOAL_KEY = "counseling_goal";
+const NEW_THREAD_TITLE = "新的对话";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -346,6 +347,8 @@ const isSending = ref(false);
 const isMoodSubmitting = ref(false);
 const isMoodTrendLoading = ref(false);
 const isSafetyOpen = ref(false);
+const isThreadDrawerOpen = ref(false);
+const isCreatingThread = ref(false);
 
 const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
 const refreshToken = ref(storageText(REFRESH_TOKEN_KEY));
@@ -410,6 +413,7 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
 ]);
 const quickActions = ref<string[]>(["继续听我说", "帮我理一理", "先听我说完"]);
 const composerText = ref("");
+const threadSearchQuery = ref("");
 const knowledgeDraft = ref("");
 const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
 const quizMode = ref<KnowledgeQuizMode>("10");
@@ -512,6 +516,23 @@ const canSubmitQuiz = computed(() => Boolean(quizSession.value && quizAnsweredCo
 const quizWrongCount = computed(() => quizResult.value?.review.filter((item) => !item.is_correct).length ?? 0);
 const activeReviewItem = computed(() => quizResult.value?.review[activeReviewIndex.value] ?? null);
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
+const visibleThreads = computed(() => {
+  let hasReusableNewThread = false;
+  return threads.value.filter((thread) => {
+    if (!isReusableNewThread(thread)) return true;
+    if (hasReusableNewThread) return false;
+    hasReusableNewThread = true;
+    return true;
+  });
+});
+const filteredThreads = computed(() => {
+  const query = threadSearchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return visibleThreads.value;
+  return visibleThreads.value.filter((thread) => {
+    const searchable = `${thread.title} ${thread.last_summary ?? ""}`.toLocaleLowerCase();
+    return searchable.includes(query);
+  });
+});
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const testHeaderTitle = computed(() => {
   if (testView.value !== "result" || !testResult.value) return testView.value === "taking" && currentTest.value ? currentTest.value.title : "测试中心";
@@ -560,6 +581,7 @@ watch(activeTab, (tab) => {
 
   // 这里单独给演示模式做了一个分支，后续看看能不能合并
 
+  if (tab !== "chat") closeThreadDrawer();
   if (tab === "tests" && testItems.value.length === 0) {
     if (isDemoMode.value || !accessToken.value) {
       testItems.value = demoTests;
@@ -819,6 +841,9 @@ function clearSession() {
   memoryDocContent.value = "";
   memoryDocError.value = "";
   memoryError.value = "";
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+  isCreatingThread.value = false;
   privacySummary.value = null;
   privacyExportPreview.value = "";
   privacyExportData.value = null;
@@ -1438,7 +1463,30 @@ async function selectThread(threadId: string) {
   quickActions.value = [...fallbackQuickActions];
 }
 
-async function createThread(title = "新的对话") {
+function openThreadDrawer() {
+  activeTab.value = "chat";
+  isThreadDrawerOpen.value = true;
+}
+
+function closeThreadDrawer() {
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+}
+
+async function selectThreadFromDrawer(threadId: string) {
+  await selectThread(threadId);
+  closeThreadDrawer();
+}
+
+function isReusableNewThread(thread: ThreadListItem) {
+  return thread.title.trim() === NEW_THREAD_TITLE && !thread.last_summary?.trim();
+}
+
+function findReusableNewThread() {
+  return threads.value.find(isReusableNewThread);
+}
+
+async function createThread(title = NEW_THREAD_TITLE) {
   if (isDemoMode.value || !accessToken.value) {
     const threadId = `local-${Date.now()}`;
     threads.value = sortThreads([
@@ -1472,6 +1520,29 @@ async function createThread(title = "新的对话") {
   activeThreadId.value = thread.thread_id;
   localStorage.setItem(THREAD_ID_KEY, thread.thread_id);
   setMessages([]);
+}
+
+async function createChatThread() {
+  if (isCreatingThread.value) return;
+  try {
+    isCreatingThread.value = true;
+    clearApiFeedback();
+    composerText.value = "";
+    const reusableThread = findReusableNewThread();
+    if (reusableThread) {
+      await selectThread(reusableThread.thread_id);
+    } else {
+      await createThread();
+    }
+    quickActions.value = [...fallbackQuickActions];
+    threadSearchQuery.value = "";
+    activeTab.value = "chat";
+    closeThreadDrawer();
+  } catch (error) {
+    apiError.value = error instanceof Error ? `新建会话失败：${error.message}` : "新建会话失败。";
+  } finally {
+    isCreatingThread.value = false;
+  }
 }
 
 function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = null, streaming = false) {
@@ -2720,10 +2791,10 @@ onMounted(async () => {
           <section class="section-block">
             <div class="section-title">
               <h2>继续聊</h2>
-              <button type="button" @click="createThread()">新建</button>
+              <button type="button" :disabled="isCreatingThread" @click="createChatThread">新建</button>
             </div>
             <button
-              v-for="thread in threads"
+              v-for="thread in visibleThreads"
               :key="thread.thread_id"
               class="thread-card"
               type="button"
@@ -2735,20 +2806,17 @@ onMounted(async () => {
               </div>
               <span :class="['risk-pill', riskClass(thread.last_risk_level)]">{{ riskLabel(thread.last_risk_level) }}</span>
             </button>
-            <p v-if="threads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
+            <p v-if="visibleThreads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
           </section>
         </section>
 
         <section v-else-if="activeTab === 'chat'" class="tab-page chat-page">
-          <div v-if="threads.length > 0" class="thread-tabs">
-            <button
-              v-for="thread in threads"
-              :key="thread.thread_id"
-              :class="{ active: activeThreadId === thread.thread_id }"
-              type="button"
-              @click="selectThread(thread.thread_id)"
-            >
-              {{ thread.title }}
+          <div class="chat-thread-toolbar" role="group" aria-label="会话操作">
+            <button class="thread-menu-button" type="button" @click="openThreadDrawer">
+              会话
+            </button>
+            <button class="thread-new-button" type="button" :disabled="isCreatingThread" @click="createChatThread">
+              {{ isCreatingThread ? "创建中..." : "新建" }}
             </button>
           </div>
 
@@ -3496,6 +3564,60 @@ onMounted(async () => {
         </nav>
       </section>
 
+      <section
+        v-if="isThreadDrawerOpen"
+        class="thread-drawer-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="会话列表"
+        @click.self="closeThreadDrawer"
+      >
+        <aside class="thread-drawer">
+          <header class="thread-drawer__header">
+            <div>
+              <h2>会话</h2>
+              <span>{{ visibleThreads.length }} 个会话</span>
+            </div>
+            <button class="thread-drawer__close" type="button" @click="closeThreadDrawer">关闭</button>
+          </header>
+
+          <input
+            v-model="threadSearchQuery"
+            class="thread-search-input"
+            type="search"
+            placeholder="搜索会话"
+            aria-label="搜索会话"
+          />
+
+          <button class="thread-drawer__new" type="button" :disabled="isCreatingThread" @click="createChatThread">
+            {{ isCreatingThread ? "创建中..." : "新建会话" }}
+          </button>
+
+          <div class="thread-drawer__list">
+            <p v-if="visibleThreads.length === 0" class="thread-drawer__empty">还没有会话</p>
+            <p v-else-if="filteredThreads.length === 0" class="thread-drawer__empty">没有找到相关会话</p>
+            <button
+              v-for="thread in filteredThreads"
+              :key="thread.thread_id"
+              :class="['thread-drawer__item', { active: activeThreadId === thread.thread_id }]"
+              type="button"
+              @click="selectThreadFromDrawer(thread.thread_id)"
+            >
+              <span class="thread-drawer__item-main">
+                <strong>{{ thread.title }}</strong>
+                <span>{{ thread.last_summary || "还没有摘要，打开后继续。" }}</span>
+              </span>
+              <span class="thread-drawer__item-meta">
+                <small>{{ formatTime(thread.updated_at) }}</small>
+                <span :class="['risk-pill', riskClass(thread.last_risk_level)]">
+                  {{ riskLabel(thread.last_risk_level) }}
+                </span>
+              </span>
+            </button>
+          </div>
+        </aside>
+      </section>
+
       <section v-if="isMemoryDocOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
         <div class="memory-document-panel">
           <header class="memory-document-header">
@@ -4189,6 +4311,147 @@ onMounted(async () => {
   font-weight: 900;
 }
 
+.thread-drawer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  display: flex;
+  align-items: stretch;
+  background: rgba(15, 20, 18, 0.42);
+}
+
+.thread-drawer {
+  width: min(90%, 360px);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px 14px;
+  background: #fbfdfb;
+  box-shadow: 18px 0 42px rgba(38, 57, 52, 0.2);
+  animation: threadDrawerIn 0.18s ease-out;
+}
+
+.thread-drawer__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.thread-drawer__header h2 {
+  margin: 0 0 4px;
+  color: var(--text-main);
+  font-size: 20px;
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-main span,
+.thread-drawer__item-meta small,
+.thread-drawer__empty {
+  color: var(--text-muted);
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-meta small {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thread-drawer__close {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.thread-search-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0 12px;
+  color: var(--text-main);
+}
+
+.thread-drawer__new {
+  min-height: 44px;
+  border-radius: 14px;
+  background: var(--teal);
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.thread-drawer__list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.thread-drawer__item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  padding: 11px 10px;
+  text-align: left;
+}
+
+.thread-drawer__item.active {
+  border-color: rgba(15, 118, 110, 0.26);
+  background: var(--mint-soft);
+}
+
+.thread-drawer__item-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.thread-drawer__item-main strong,
+.thread-drawer__item-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-drawer__item-main strong {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.thread-drawer__item-main span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.thread-drawer__item-meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.thread-drawer__empty {
+  margin: 20px 4px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
 .risk--steady {
   background: #e8f4ee;
   color: #28745d;
@@ -4212,7 +4475,45 @@ onMounted(async () => {
 .chat-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+}
+
+.chat-thread-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.thread-menu-button,
+.thread-new-button {
+  min-height: 38px;
+  border-radius: 14px;
+  padding: 0 15px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.thread-menu-button {
+  flex: 1;
+  min-width: 0;
+  background: #ffffff;
+  color: var(--text-main);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.thread-new-button {
+  flex: 0 0 auto;
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.thread-new-button:disabled,
+.thread-drawer__new:disabled {
+  background: #c7d5cf;
+  color: #f8faf8;
+  cursor: not-allowed;
 }
 
 .quick-actions {
@@ -5470,6 +5771,17 @@ button:focus-visible,
 input:focus-visible {
   outline: 2px solid rgba(15, 118, 110, 0.45);
   outline-offset: 2px;
+}
+
+@keyframes threadDrawerIn {
+  from {
+    transform: translateX(-16px);
+    opacity: 0.88;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 @keyframes blink {

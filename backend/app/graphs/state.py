@@ -24,6 +24,7 @@ class AgentState(TypedDict, total=False):
     companion_preferences: dict
     memory_mode: Literal["off", "summary_only", "long_term"]
 
+    memory_index: list[dict]
     retrieved_memories: list[dict]
 
     intent: Literal[
@@ -65,5 +66,7 @@ class AgentState(TypedDict, total=False):
 
     session_summary: str
     memory_candidates: list[dict]
+    memory_write_decisions: list[dict]
+    memory_policy_reason: str
     should_write_memory: bool
     audit_tags: list[str]

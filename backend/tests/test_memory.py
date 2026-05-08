@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 from app.api.v1.endpoints import auth, me, memory
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, RiskEvent, User, UserMemory, UserProfile, UserSettings
+from app.db.models import Base, ConversationThread, MoodLog, RiskEvent, User, UserMemory, UserProfile, UserSettings
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
@@ -159,6 +159,72 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(visible.status, "deleted")
         self.assertEqual(hidden.status, "active")
+
+    def test_search_memories_uses_mode_and_risk_filters(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        trigger = self.add_memory(user, content="考试前容易焦虑", memory_type="recurring_trigger")
+        self.add_memory(user, content="内部安全摘要", memory_type="safety_summary", visibility="internal_safety")
+
+        normal_response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(user),
+            json={"query": "我又开始考试焦虑了", "limit": 5},
+        )
+        high_risk_response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(user),
+            json={"query": "我不想活了", "risk_level": "L2", "limit": 5},
+        )
+
+        self.assertEqual(normal_response.status_code, 200)
+        self.assertIn(trigger.id, [item["memory_id"] for item in normal_response.json()["items"]])
+        self.assertEqual(high_risk_response.status_code, 200)
+        self.assertEqual([item["memory_type"] for item in high_risk_response.json()["items"]], ["safety_summary"])
+
+    def test_memory_feedback_can_disable_memory_and_audit_it(self) -> None:
+        user = self.create_user()
+        memory_record = self.add_memory(user, content="用户喜欢先被安抚", memory_type="preference")
+
+        response = self.client.post(
+            f"/api/v1/memories/{memory_record.id}/feedback",
+            headers=self.auth_headers(user),
+            json={"feedback": "dont_use", "note": "这条不准确"},
+        )
+        audit_response = self.client.get("/api/v1/memories/audit", headers=self.auth_headers(user))
+        self.db.refresh(memory_record)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(memory_record.status, "deleted")
+        self.assertEqual(memory_record.review_state, "do_not_use")
+        self.assertEqual(audit_response.status_code, 200)
+        self.assertIn("feedback", [item["action"] for item in audit_response.json()["items"]])
+
+    def test_consolidate_merges_duplicates_and_writes_mood_state(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        first = self.add_memory(user, content="用户希望先被安抚", memory_type="preference")
+        duplicate = self.add_memory(user, content="用户希望先被安抚", memory_type="preference")
+        self.db.add_all(
+            [
+                MoodLog(user_id=user.id, mood_score=2, mood_tags=["焦虑"], source="checkin"),
+                MoodLog(user_id=user.id, mood_score=3, mood_tags=["焦虑", "疲惫"], source="checkin"),
+                MoodLog(user_id=user.id, mood_score=2, mood_tags=["疲惫"], source="checkin"),
+            ]
+        )
+        self.db.commit()
+
+        response = self.client.post("/api/v1/memories/consolidate?force=true", headers=self.auth_headers(user))
+        self.db.refresh(first)
+        self.db.refresh(duplicate)
+        memory_types = list(
+            self.db.scalars(
+                select(UserMemory.memory_type).where(UserMemory.user_id == user.id, UserMemory.status == "active")
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "completed")
+        self.assertIn("state", memory_types)
+        self.assertEqual([first.status, duplicate.status].count("deleted"), 1)
 
     def test_update_settings_and_auth_me_return_latest_values(self) -> None:
         user = self.create_user()

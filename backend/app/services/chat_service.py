@@ -5,8 +5,16 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.db.models import ConversationThread, Message, RiskEvent, User, UserMemory, utcnow
+from app.graphs.nodes import sync_risk_classify
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
+from app.services.memory_service import (
+    build_memory_index,
+    index_memory_embeddings,
+    maybe_auto_consolidate_user_memories,
+    retrieve_memories_for_turn,
+    upsert_memory_candidates,
+)
 
 
 graph_runtime = GraphRuntime()
@@ -58,35 +66,14 @@ def _list_memory_context_for_user(
     memory_mode: str,
     limit: int = 4,
 ) -> list[dict]:
-    if memory_mode == "off":
-        return []
-
-    filters = [
-        UserMemory.user_id == user_id,
-        UserMemory.status == "active",
-        UserMemory.visibility == "user_visible",
-    ]
-    if memory_mode == "summary_only":
-        filters.append(UserMemory.memory_type == "session_summary")
-
-    memories = list(
-        db.scalars(
-            select(UserMemory)
-            .where(*filters)
-            .order_by(desc(UserMemory.importance), desc(UserMemory.updated_at))
-            .limit(limit)
-        )
+    return retrieve_memories_for_turn(
+        db,
+        user_id=user_id,
+        query="",
+        memory_mode=memory_mode,
+        limit=limit,
+        record_access=True,
     )
-    return [
-        {
-            "id": memory.id,
-            "memory_type": memory.memory_type,
-            "content": memory.content,
-            "visibility": memory.visibility,
-            "updated_at": memory.updated_at.isoformat(),
-        }
-        for memory in memories
-    ]
 
 
 def _upsert_risk_event(
@@ -132,92 +119,13 @@ def _maybe_write_summary_memory(
     assistant_message: Message,
     assistant_result: dict[str, object],
 ) -> list[UserMemory]:
-    if not bool(assistant_result.get("should_write_memory")):
-        return []
-
-    memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
-    if memory_mode == "off":
-        return []
-
-    risk_level = str(assistant_result.get("risk_level", "L0"))
-    default_summary = str(assistant_result.get("session_summary") or "").strip()
-    candidates = [
-        candidate
-        for candidate in assistant_result.get("memory_candidates", [])
-        if isinstance(candidate, dict) and str(candidate.get("content", "")).strip()
-    ]
-    if not candidates and default_summary:
-        candidates = [
-            {
-                "memory_type": "session_summary" if risk_level in {"L0", "L1"} else "safety_summary",
-                "content": default_summary,
-                "importance": 5 if risk_level in {"L2", "L3"} else 3,
-            }
-        ]
-    if not candidates:
-        return []
-
-    allowed_types = {"session_summary", "safety_summary"}
-    if memory_mode == "long_term":
-        allowed_types.update({"preference", "recurring_trigger", "support_strategy"})
-
-    written: list[UserMemory] = []
-    for candidate in candidates:
-        memory_type = str(candidate.get("memory_type") or "session_summary")
-        if memory_type not in allowed_types:
-            continue
-        if memory_mode == "summary_only" and risk_level in {"L0", "L1"} and memory_type != "session_summary":
-            continue
-
-        summary = str(candidate.get("content", "")).strip()
-        if not summary:
-            continue
-
-        visibility = "internal_safety" if memory_type == "safety_summary" or risk_level in {"L2", "L3"} else "user_visible"
-        existing = db.scalar(
-            select(UserMemory)
-            .where(
-                UserMemory.user_id == user.id,
-                UserMemory.status == "active",
-                UserMemory.visibility == visibility,
-                UserMemory.memory_type == memory_type,
-                UserMemory.content == summary,
-            )
-            .order_by(desc(UserMemory.updated_at))
-        )
-        if existing is not None:
-            existing.updated_at = utcnow()
-            existing.structured_value = {
-                "thread_id": thread.id,
-                "risk_level": risk_level,
-            }
-            written.append(existing)
-            continue
-
-        try:
-            importance = int(candidate.get("importance", 3))
-        except (TypeError, ValueError):
-            importance = 3
-        importance = max(1, min(5, importance))
-
-        memory = UserMemory(
-            user_id=user.id,
-            memory_type=memory_type,
-            content=summary,
-            structured_value={
-                "thread_id": thread.id,
-                "risk_level": risk_level,
-            },
-            importance=importance,
-            confidence=0.7,
-            source_thread_id=thread.id,
-            source_message_id=assistant_message.id,
-            visibility=visibility,
-            status="active",
-        )
-        db.add(memory)
-        db.flush()
-        written.append(memory)
+    written, _ = upsert_memory_candidates(
+        db,
+        user=user,
+        thread=thread,
+        assistant_message_id=assistant_message.id,
+        assistant_result=assistant_result,
+    )
     return written
 
 
@@ -244,30 +152,49 @@ async def process_message_turn(
         effective_user_mode = payload.user_mode.value if payload.user_mode is not None else profile_user_mode
         recent_messages = list_messages_for_thread(db, thread.id)[-8:]
         memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
-        retrieved_memories = _list_memory_context_for_user(db, user.id, memory_mode=memory_mode)
+        serialized_recent_messages = [
+            {
+                "id": message.id,
+                "role": message.role,
+                "content": message.content,
+                "input_type": message.input_type,
+                "risk_level": message.risk_level,
+                "metadata": message.meta or {},
+                "created_at": message.created_at.isoformat(),
+            }
+            for message in recent_messages
+        ]
+        pre_risk_level = sync_risk_classify(payload.content)
+        memory_index = build_memory_index(
+            db,
+            user.id,
+            memory_mode=memory_mode,
+            include_internal=pre_risk_level in {"L2", "L3"},
+        )
+        retrieved_memories = retrieve_memories_for_turn(
+            db,
+            user_id=user.id,
+            query=payload.content,
+            recent_messages=serialized_recent_messages,
+            last_summary=thread.last_summary,
+            memory_mode=memory_mode,
+            risk_level=pre_risk_level,
+            limit=5,
+            record_access=True,
+        )
         assistant_result = await graph_runtime.invoke_turn(
             thread_id=thread.langgraph_thread_id,
             user_id=user.id,
             content=payload.content,
             input_type=payload.input_type.value,
             user_mode=effective_user_mode,
-            recent_messages=[
-                {
-                    "id": message.id,
-                    "role": message.role,
-                    "content": message.content,
-                    "input_type": message.input_type,
-                    "risk_level": message.risk_level,
-                    "metadata": message.meta or {},
-                    "created_at": message.created_at.isoformat(),
-                }
-                for message in recent_messages
-            ],
+            recent_messages=serialized_recent_messages,
             last_summary=thread.last_summary,
             memory_mode=memory_mode,
             companion_style=getattr(user.settings, "companion_style", "gentle") if user.settings else "gentle",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
             retrieved_memories=retrieved_memories,
+            memory_index=memory_index,
         )
 
         assistant_metadata = {
@@ -278,6 +205,9 @@ async def process_message_turn(
             "should_write_memory": assistant_result.get("should_write_memory", False),
             "referenced_memories": assistant_result.get("referenced_memories", []),
             "referenced_counseling_examples": assistant_result.get("referenced_counseling_examples", []),
+            "memory_index": memory_index,
+            "memory_write_decisions": [],
+            "memory_policy_reason": assistant_result.get("memory_policy", ""),
         }
         assistant_message = Message(
             thread_id=thread.id,
@@ -309,13 +239,20 @@ async def process_message_turn(
                 action_taken=list(assistant_result.get("suggested_actions", [])),
             )
 
-        _maybe_write_summary_memory(
+        written_memories, memory_write_decisions = upsert_memory_candidates(
             db,
             user=user,
             thread=thread,
-            assistant_message=assistant_message,
+            assistant_message_id=assistant_message.id,
             assistant_result=assistant_result,
         )
+        assistant_result["memory_write_decisions"] = memory_write_decisions
+        assistant_message.meta = {
+            **assistant_metadata,
+            "memory_write_decisions": memory_write_decisions,
+        }
+        await index_memory_embeddings(db, written_memories)
+        maybe_auto_consolidate_user_memories(db, user_id=user.id)
 
         db.commit()
         db.refresh(user_message)
