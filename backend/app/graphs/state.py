@@ -37,6 +37,26 @@ class AgentState(TypedDict, total=False):
     risk_level: Literal["L0", "L1", "L2", "L3"]
     risk_reasons: list[str]
 
+    route_priority: Literal[
+        "P0_immediate_safety",
+        "P1_red_flag",
+        "P2_support",
+        "P3_bridge_boundary",
+        "P4_system_protection",
+    ]
+    control_category: str
+    control_reasons: list[str]
+    control_confidence: float
+    risk_formulation: dict
+    response_contract: dict
+    memory_policy: Literal["write_safe_summary", "skip_sensitive", "crisis_audit_only"]
+    rag_policy: dict
+    rag_used: bool
+    rag_skipped_reason: str
+    retrieved_counseling_examples: list[dict]
+    validator_blocked: bool
+    validator_reasons: list[str]
+
     response_style: dict
     system_policy: dict
 
