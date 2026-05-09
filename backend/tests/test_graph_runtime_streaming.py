@@ -14,6 +14,7 @@ class FakeStreamingGraph:
                 "response_contract": {"secret": "do not leak"},
             }
         }
+        yield ("custom", {"type": "assistant_token", "text": "I am "})
         yield {
             "example_retriever": {
                 "rag_used": True,
@@ -38,6 +39,8 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
         runtime.graph = FakeStreamingGraph()
 
         progress_events: list[dict[str, object]] = []
+        token_events: list[str] = []
+        event_order: list[str] = []
         final_result: dict[str, object] | None = None
         async for event_name, data in runtime.stream_turn(
             thread_id="thread-1",
@@ -46,8 +49,11 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
             recent_messages=[{"role": "user", "content": "private recent message"}],
             retrieved_memories=[{"content": "private memory", "visibility": "user_visible"}],
         ):
+            event_order.append(event_name)
             if event_name == "graph_update":
                 progress_events.append(data)
+            elif event_name == "token":
+                token_events.append(str(data["text"]))
             elif event_name == "graph_result":
                 final_result = data
 
@@ -66,6 +72,8 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("response_contract", trace_payload)
         self.assertIn("risk_classifier", progress_payload)
         self.assertTrue(all("duration_ms" in event for event in progress_events))
+        self.assertEqual(token_events, ["I am "])
+        self.assertLess(event_order.index("token"), event_order.index("graph_result"))
         self.assertIsNotNone(final_result)
         self.assertEqual(final_result["assistant_text"], "I am here.")
         self.assertGreaterEqual(len(final_result["graph_trace"]), 3)

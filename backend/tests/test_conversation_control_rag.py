@@ -10,6 +10,7 @@ from app.graphs.nodes.response_nodes import _model_reply_with_actions
 from app.graphs.nodes.validator_nodes import response_validator
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
+from app.services.companion_style import DEFAULT_COMPANION_STYLE_PROMPT, build_companion_style_prompt
 
 
 def _run(coro):
@@ -180,6 +181,39 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("不是事实依据", captured["prompt"])
         self.assertIn("撑了很久", body)
         self.assertEqual(actions, ["我还想说", "我想理清一点", "先停一下"])
+
+    def test_companion_style_prompt_merges_default_with_custom_text(self) -> None:
+        self.assertEqual(build_companion_style_prompt("gentle"), DEFAULT_COMPANION_STYLE_PROMPT)
+        custom_prompt = build_companion_style_prompt("先短短安抚我，再给一个小步骤")
+
+        self.assertIn(DEFAULT_COMPANION_STYLE_PROMPT, custom_prompt)
+        self.assertIn("用户自定义补充", custom_prompt)
+        self.assertIn("先短短安抚我，再给一个小步骤", custom_prompt)
+
+    def test_generator_includes_custom_style_in_prompt(self) -> None:
+        state = self.make_state(
+            "今天有点乱",
+            companion_preferences={"style": "先短短安抚我，再给一个小步骤", "question_tolerance": "medium"},
+        )
+        captured: dict[str, str] = {}
+
+        async def fake_chat(messages):
+            captured["prompt"] = messages[1]["content"]
+            return "我听到你现在有点乱，我们先抓住最卡的一小块。\n---\n继续说\n帮我理一理\n先停一下"
+
+        with patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)):
+            _run(
+                _model_reply_with_actions(
+                    state,
+                    mode="companion",
+                    fallback="",
+                    default_actions=[],
+                )
+            )
+
+        self.assertIn(DEFAULT_COMPANION_STYLE_PROMPT, captured["prompt"])
+        self.assertIn("用户自定义补充", captured["prompt"])
+        self.assertIn("先短短安抚我，再给一个小步骤", captured["prompt"])
 
 
 if __name__ == "__main__":

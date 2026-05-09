@@ -57,7 +57,7 @@ class UserSettings(Base):
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     memory_mode: Mapped[str] = mapped_column(String(24), default="summary_only")
-    companion_style: Mapped[str] = mapped_column(String(32), default="gentle")
+    companion_style: Mapped[str] = mapped_column(Text, default="")
     voice_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     save_voice_audio: Mapped[bool] = mapped_column(Boolean, default=False)
     save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)

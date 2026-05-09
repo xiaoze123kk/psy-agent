@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.graphs.nodes.common import AgentState
+from app.services.companion_style import normalize_custom_companion_style
 
 
 async def normalize_input(state: AgentState) -> AgentState:
@@ -25,7 +26,7 @@ async def load_user_profile(state: AgentState) -> AgentState:
             "nickname": existing_profile.get("nickname", "user"),
         },
         "companion_preferences": {
-            "style": existing_preferences.get("style", "gentle"),
+            "style": normalize_custom_companion_style(existing_preferences.get("style", "")),
             "question_tolerance": existing_preferences.get(
                 "question_tolerance",
                 "low" if user_mode == "teen" else "medium",

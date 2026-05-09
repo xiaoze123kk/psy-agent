@@ -64,6 +64,12 @@ interface SelectOption {
   description: string;
 }
 
+interface CustomCompanionStyle {
+  id: string;
+  title: string;
+  definition: string;
+}
+
 interface ChatMessage {
   id: number;
   role: ChatRole;
@@ -115,23 +121,23 @@ const USER_ID_KEY = "counseling_user_id";
 const USERNAME_KEY = "counseling_username";
 const THREAD_ID_KEY = "counseling_thread_id";
 const STYLE_KEY = "counseling_style";
+const CUSTOM_STYLES_KEY = "counseling_custom_styles";
+const SELECTED_CUSTOM_STYLE_ID_KEY = "counseling_selected_custom_style_id";
 const GOAL_KEY = "counseling_goal";
 const NEW_THREAD_TITLE = "新的对话";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_STYLE_ID = "default";
+const NEW_STYLE_ID = "new";
+const LEGACY_STYLE_IDS = new Set(["gentle", "rational", "reflective", "action"]);
+const MAX_COMPANION_STYLE_TITLE_LENGTH = 24;
+const MAX_COMPANION_STYLE_LENGTH = 500;
 
 const ageOptions: Array<SelectOption & { id: AgeOptionId }> = [
   { id: "13-15", label: "13-15 岁", description: "青少年保护模式" },
   { id: "16-17", label: "16-17 岁", description: "青少年保护模式" },
   { id: "18-24", label: "18-24 岁", description: "标准陪伴模式" },
   { id: "25+", label: "25 岁及以上", description: "标准陪伴模式" },
-];
-
-const styleOptions: SelectOption[] = [
-  { id: "gentle", label: "温柔安抚型", description: "先接住情绪，再慢慢放松。" },
-  { id: "rational", label: "理性分析型", description: "把困扰拆开，理清头绪。" },
-  { id: "reflective", label: "陪你梳理型", description: "一起整理感受和触发点。" },
-  { id: "action", label: "轻量行动型", description: "给出一两个可执行步骤。" },
 ];
 
 const goalOptions: SelectOption[] = [
@@ -344,6 +350,48 @@ function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
 
+function normalizeCompanionStyle(value: string) {
+  const normalized = value.trim();
+  if (LEGACY_STYLE_IDS.has(normalized)) return "";
+  return normalized.slice(0, MAX_COMPANION_STYLE_LENGTH);
+}
+
+function normalizeCompanionStyleTitle(value: string) {
+  return value.trim().slice(0, MAX_COMPANION_STYLE_TITLE_LENGTH);
+}
+
+function createCompanionStyleId() {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function previewCompanionStyle(value: string, maxLength = 58) {
+  const normalized = normalizeCompanionStyle(value);
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function readCustomCompanionStyles() {
+  try {
+    const parsed = JSON.parse(storageText(CUSTOM_STYLES_KEY)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    return parsed
+      .map((item, index): CustomCompanionStyle | null => {
+        if (!item || typeof item !== "object") return null;
+        const record = item as Record<string, unknown>;
+        const rawId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : createCompanionStyleId();
+        if (seen.has(rawId) || rawId === DEFAULT_STYLE_ID || rawId === NEW_STYLE_ID) return null;
+        const definition = normalizeCompanionStyle(typeof record.definition === "string" ? record.definition : "");
+        if (!definition) return null;
+        const title = normalizeCompanionStyleTitle(typeof record.title === "string" ? record.title : "") || `自定义风格 ${index + 1}`;
+        seen.add(rawId);
+        return { id: rawId, title, definition };
+      })
+      .filter((item): item is CustomCompanionStyle => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
 function storageOption(key: string, options: SelectOption[]) {
   const value = localStorage.getItem(key);
   return value && options.some((option) => option.id === value) ? value : null;
@@ -382,7 +430,9 @@ const apiError = ref("");
 const apiNotice = ref("");
 
 const selectedAge = ref<AgeOptionId | null>(null);
-const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
+const customStyles = ref<CustomCompanionStyle[]>(readCustomCompanionStyles());
+const selectedStyle = ref(normalizeCompanionStyle(storageText(STYLE_KEY)));
+const selectedCustomStyleId = ref(storageText(SELECTED_CUSTOM_STYLE_ID_KEY) || DEFAULT_STYLE_ID);
 const selectedGoal = ref<string | null>(storageOption(GOAL_KEY, goalOptions));
 
 const threads = ref<ThreadListItem[]>([]);
@@ -397,6 +447,11 @@ const memoryDocContent = ref("");
 const memoryDocError = ref("");
 const memoryError = ref("");
 const isSettingsSaving = ref(false);
+const isStyleEditorOpen = ref(false);
+const editingStyleId = ref(DEFAULT_STYLE_ID);
+const companionStyleTitleDraft = ref("");
+const companionStyleDraft = ref("");
+const companionStyleError = ref("");
 const privacySummary = ref<PrivacySummaryResponse | null>(null);
 const privacyExportPreview = ref("");
 const privacyExportData = ref<PersonalDataExport | null>(null);
@@ -489,10 +544,18 @@ const isTeenMode = computed(() => selectedAge.value === "13-15" || selectedAge.v
 const modeLabel = computed(() => (isDemoMode.value ? "演示模式" : isTeenMode.value ? "青少年模式" : "标准模式"));
 const userName = computed(() => username.value || "朋友");
 const selectedAgeLabel = computed(() => ageOptions.find((option) => option.id === selectedAge.value)?.label ?? "未设置");
-const selectedStyleLabel = computed(
-  () => styleOptions.find((option) => option.id === selectedStyle.value)?.label ?? "未设置",
+const selectedCustomStyle = computed(
+  () => customStyles.value.find((style) => style.id === selectedCustomStyleId.value) ?? null,
 );
+const selectedStyleLabel = computed(() => selectedCustomStyle.value?.title ?? "未启用自定义风格");
+const companionStylePreview = computed(() => {
+  if (!selectedCustomStyle.value) return "可添加并切换多套自定义回复风格。";
+  return previewCompanionStyle(selectedCustomStyle.value.definition);
+});
 const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
+const companionSettingsSummary = computed(() =>
+  selectedCustomStyle.value ? `${selectedStyleLabel.value} · ${selectedGoalLabel.value}` : selectedGoalLabel.value,
+);
 const memoryModeLabel = computed(() => memoryModeOptions.find((option) => option.id === currentMemoryMode.value)?.label ?? "只记摘要");
 const privacyCounts = computed(() => privacySummary.value?.data_counts ?? {
   memories: memories.value.length,
@@ -519,7 +582,17 @@ const canSubmitMood = computed(
     [moodDraft.value.mood_score, moodDraft.value.anxiety_score, moodDraft.value.energy_score, moodDraft.value.sleep_quality]
       .every((score) => typeof score === "number" && score >= 1 && score <= 5) && !isMoodSubmitting.value,
 );
-const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const canContinueOnboarding = computed(() => Boolean(selectedGoal.value));
+const isEditingDefaultStyle = computed(() => editingStyleId.value === DEFAULT_STYLE_ID);
+const isEditingNewStyle = computed(() => editingStyleId.value === NEW_STYLE_ID);
+const canSaveCompanionStyle = computed(() => {
+  if (isEditingDefaultStyle.value) return !isSettingsSaving.value;
+  return (
+    !isSettingsSaving.value &&
+    Boolean(normalizeCompanionStyleTitle(companionStyleTitleDraft.value)) &&
+    Boolean(normalizeCompanionStyle(companionStyleDraft.value))
+  );
+});
 const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
 const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
   () => quizSession.value?.questions[activeQuizIndex.value] ?? null,
@@ -568,6 +641,8 @@ const contextText = computed(() =>
     .join(" "),
 );
 
+syncCustomStyleSelectionFromDefinition(selectedStyle.value, "当前风格");
+
 watch(
   () => messages.value.map((message) => `${message.id}:${message.text}`).join("\n"),
   async () => {
@@ -588,10 +663,29 @@ watch(
   },
 );
 
-watch([selectedStyle, selectedGoal], ([style, goal]) => {
-  style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
-  goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
-});
+watch(
+  [selectedStyle, selectedGoal, selectedCustomStyleId],
+  ([style, goal, styleId]) => {
+    style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
+    goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+    styleId && styleId !== DEFAULT_STYLE_ID
+      ? localStorage.setItem(SELECTED_CUSTOM_STYLE_ID_KEY, styleId)
+      : localStorage.removeItem(SELECTED_CUSTOM_STYLE_ID_KEY);
+  },
+  { immediate: true },
+);
+
+watch(
+  customStyles,
+  (styles) => {
+    if (styles.length > 0) {
+      localStorage.setItem(CUSTOM_STYLES_KEY, JSON.stringify(styles));
+    } else {
+      localStorage.removeItem(CUSTOM_STYLES_KEY);
+    }
+  },
+  { deep: true, immediate: true },
+);
 
 watch(activeTab, (tab) => {
 
@@ -886,6 +980,11 @@ function clearSession() {
   isThreadDrawerOpen.value = false;
   threadSearchQuery.value = "";
   isCreatingThread.value = false;
+  isStyleEditorOpen.value = false;
+  editingStyleId.value = DEFAULT_STYLE_ID;
+  companionStyleTitleDraft.value = "";
+  companionStyleDraft.value = "";
+  companionStyleError.value = "";
   privacySummary.value = null;
   privacyExportPreview.value = "";
   privacyExportData.value = null;
@@ -977,9 +1076,7 @@ async function loadApp() {
     saveVoiceAudio.value = user.save_voice_audio;
     saveTranscript.value = user.save_transcript;
     privacySummary.value = privacy;
-    if (styleOptions.some((option) => option.id === user.companion_style)) {
-      selectedStyle.value = user.companion_style;
-    }
+    syncCustomStyleSelectionFromDefinition(user.companion_style, "当前风格");
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
     memoryError.value = "";
@@ -990,7 +1087,7 @@ async function loadApp() {
       localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
       await loadThreadMessages(activeThreadId.value);
     }
-    stage.value = selectedStyle.value && selectedGoal.value ? "app" : "onboarding";
+    stage.value = selectedGoal.value ? "app" : "onboarding";
   } catch (error) {
     clearSession();
     authError.value = error instanceof Error ? error.message : "登录状态已失效，请重新登录。";
@@ -1051,6 +1148,125 @@ async function refreshPrivacySummary() {
     privacyError.value = "";
   } catch (error) {
     privacyError.value = error instanceof Error ? error.message : "隐私数据加载失败。";
+  }
+}
+
+function syncCustomStyleSelectionFromDefinition(value: string, fallbackTitle = "当前风格") {
+  const definition = normalizeCompanionStyle(value);
+  selectedStyle.value = definition;
+  if (!definition) {
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
+    return;
+  }
+  const existing = customStyles.value.find((style) => style.definition === definition);
+  if (existing) {
+    selectedCustomStyleId.value = existing.id;
+    return;
+  }
+  const style: CustomCompanionStyle = {
+    id: createCompanionStyleId(),
+    title: normalizeCompanionStyleTitle(fallbackTitle) || "当前风格",
+    definition,
+  };
+  customStyles.value = [style, ...customStyles.value];
+  selectedCustomStyleId.value = style.id;
+}
+
+function selectCompanionStyleDraft(styleId: string) {
+  companionStyleError.value = "";
+  if (styleId === DEFAULT_STYLE_ID) {
+    editingStyleId.value = DEFAULT_STYLE_ID;
+    companionStyleTitleDraft.value = "";
+    companionStyleDraft.value = "";
+    return;
+  }
+  const style = customStyles.value.find((item) => item.id === styleId);
+  if (!style) return;
+  editingStyleId.value = style.id;
+  companionStyleTitleDraft.value = style.title;
+  companionStyleDraft.value = style.definition;
+}
+
+function startNewCompanionStyleDraft() {
+  companionStyleError.value = "";
+  editingStyleId.value = NEW_STYLE_ID;
+  companionStyleTitleDraft.value = `自定义风格 ${customStyles.value.length + 1}`;
+  companionStyleDraft.value = "";
+}
+
+function openCompanionStyleEditor() {
+  companionStyleError.value = "";
+  isStyleEditorOpen.value = true;
+  if (selectedCustomStyle.value) {
+    selectCompanionStyleDraft(selectedCustomStyle.value.id);
+  } else {
+    selectCompanionStyleDraft(DEFAULT_STYLE_ID);
+  }
+}
+
+async function saveCompanionStyle() {
+  if (isSettingsSaving.value) return;
+  const previousStyle = selectedStyle.value;
+  const previousStyleId = selectedCustomStyleId.value;
+  const previousStyles = customStyles.value.map((style) => ({ ...style }));
+  companionStyleError.value = "";
+
+  let nextStyle = "";
+  let nextStyleId = DEFAULT_STYLE_ID;
+  let nextStyles = customStyles.value.map((style) => ({ ...style }));
+  let successMessage = "已关闭自定义回复风格。";
+
+  if (!isEditingDefaultStyle.value) {
+    const title = normalizeCompanionStyleTitle(companionStyleTitleDraft.value);
+    const definition = normalizeCompanionStyle(companionStyleDraft.value);
+    if (!title) {
+      companionStyleError.value = "请填写风格标题。";
+      return;
+    }
+    if (!definition) {
+      companionStyleError.value = "请填写具体风格定义，或选择默认。";
+      return;
+    }
+    if (isEditingNewStyle.value) {
+      nextStyleId = createCompanionStyleId();
+      nextStyles = [{ id: nextStyleId, title, definition }, ...nextStyles];
+    } else {
+      nextStyleId = editingStyleId.value;
+      const styleIndex = nextStyles.findIndex((style) => style.id === nextStyleId);
+      const nextRecord = { id: nextStyleId, title, definition };
+      nextStyles = styleIndex >= 0
+        ? nextStyles.map((style, index) => (index === styleIndex ? nextRecord : style))
+        : [nextRecord, ...nextStyles];
+    }
+    nextStyle = definition;
+    successMessage = "回复风格已保存。";
+  }
+
+  customStyles.value = nextStyles;
+  selectedCustomStyleId.value = nextStyleId;
+  selectedStyle.value = nextStyle;
+  companionStyleDraft.value = nextStyle;
+
+  if (isDemoMode.value || !accessToken.value) {
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings({ companion_style: nextStyle });
+    syncCustomStyleSelectionFromDefinition(response.companion_style, companionStyleTitleDraft.value || "当前风格");
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+  } catch (error) {
+    customStyles.value = previousStyles;
+    selectedCustomStyleId.value = previousStyleId;
+    selectedStyle.value = previousStyle;
+    companionStyleDraft.value = previousStyle;
+    companionStyleError.value = error instanceof Error ? error.message : "回复风格保存失败。";
+  } finally {
+    isSettingsSaving.value = false;
   }
 }
 
@@ -1368,7 +1584,8 @@ async function deleteCurrentAccount() {
     clearSession();
     isDemoMode.value = false;
     selectedAge.value = null;
-    selectedStyle.value = null;
+    selectedStyle.value = "";
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
     selectedGoal.value = null;
     threads.value = [];
     memories.value = [];
@@ -1482,7 +1699,8 @@ function enterDemoMode() {
   isDemoMode.value = true;
   username.value = "小林";
   selectedAge.value = "18-24";
-  selectedStyle.value ||= "gentle";
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value ||= "anxiety";
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
@@ -2744,7 +2962,8 @@ async function logout() {
   clearSession();
   isDemoMode.value = false;
   selectedAge.value = null;
-  selectedStyle.value = null;
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value = null;
   threads.value = [];
   memories.value = [];
@@ -2837,22 +3056,8 @@ onMounted(async () => {
         <header class="screen-header">
           <span class="top-label">{{ selectedAgeLabel }} · {{ modeLabel }}</span>
           <h1>你希望我怎么陪你？</h1>
-          <p>先选一种交流语气，再选一个这段时间更需要的方向。</p>
+          <p>先选一个这段时间更需要的方向。</p>
         </header>
-
-        <div class="choice-section">
-          <h2>陪伴风格</h2>
-          <button
-            v-for="option in styleOptions"
-            :key="option.id"
-            :class="['choice-row', { active: selectedStyle === option.id }]"
-            type="button"
-            @click="selectedStyle = option.id"
-          >
-            <strong>{{ option.label }}</strong>
-            <span>{{ option.description }}</span>
-          </button>
-        </div>
 
         <div class="choice-section">
           <h2>当前目标</h2>
@@ -3601,22 +3806,83 @@ onMounted(async () => {
               <h2>陪伴设置</h2>
               <span>自动保存</span>
             </div>
-            <p>{{ selectedStyleLabel }} · {{ selectedGoalLabel }}</p>
+            <p>{{ companionSettingsSummary }}</p>
           </section>
 
-          <div class="choice-section compact">
-            <h2>风格</h2>
-            <button
-              v-for="option in styleOptions"
-              :key="option.id"
-              :class="['choice-row', { active: selectedStyle === option.id }]"
-              type="button"
-              @click="selectedStyle = option.id"
-            >
-              <strong>{{ option.label }}</strong>
-              <span>{{ option.description }}</span>
+          <section class="style-settings">
+            <button class="style-setting-card" type="button" @click="openCompanionStyleEditor">
+              <div>
+                <h2>自定义回复风格</h2>
+                <strong>{{ selectedStyleLabel }}</strong>
+                <p>{{ companionStylePreview }}</p>
+              </div>
+              <span>管理</span>
             </button>
-          </div>
+
+            <div v-if="isStyleEditorOpen" class="style-editor">
+              <div class="style-switcher" role="radiogroup" aria-label="回复风格切换">
+                <button
+                  :class="{ active: editingStyleId === DEFAULT_STYLE_ID }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(DEFAULT_STYLE_ID)"
+                >
+                  <strong>默认</strong>
+                  <span>未启用自定义</span>
+                </button>
+                <button
+                  v-for="style in customStyles"
+                  :key="style.id"
+                  :class="{ active: editingStyleId === style.id }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(style.id)"
+                >
+                  <strong>{{ style.title }}</strong>
+                  <span>{{ previewCompanionStyle(style.definition, 28) }}</span>
+                </button>
+                <button
+                  :class="{ active: editingStyleId === NEW_STYLE_ID }"
+                  type="button"
+                  @click="startNewCompanionStyleDraft"
+                >
+                  <strong>新建</strong>
+                  <span>添加一套风格</span>
+                </button>
+              </div>
+              <template v-if="!isEditingDefaultStyle">
+                <label class="field">
+                  <span>标题</span>
+                  <input
+                    v-model="companionStyleTitleDraft"
+                    type="text"
+                    maxlength="24"
+                    placeholder="例如：先安抚再行动"
+                  />
+                </label>
+                <label class="field">
+                  <span>具体风格定义</span>
+                  <textarea
+                    v-model="companionStyleDraft"
+                    rows="5"
+                    maxlength="500"
+                    placeholder="例如：先短短安抚我，再给一个可执行的小步骤。"
+                  ></textarea>
+                </label>
+                <div class="style-editor-meta">
+                  <span>{{ companionStyleTitleDraft.trim().length }}/24</span>
+                  <span>{{ companionStyleDraft.trim().length }}/500</span>
+                </div>
+              </template>
+              <p v-if="companionStyleError" class="notice notice--error">{{ companionStyleError }}</p>
+              <div class="style-editor-actions">
+                <button class="secondary-action" type="button" :disabled="isSettingsSaving" @click="isStyleEditorOpen = false">
+                  取消
+                </button>
+                <button class="primary-action" type="button" :disabled="!canSaveCompanionStyle" @click="saveCompanionStyle">
+                  {{ isSettingsSaving ? "保存中..." : "保存" }}
+                </button>
+              </div>
+            </div>
+          </section>
 
           <section class="section-block memory-center">
             <div class="section-title">
@@ -4101,6 +4367,7 @@ onMounted(async () => {
 }
 
 .field input,
+.field textarea,
 .composer input,
 .knowledge-composer input {
   min-height: 52px;
@@ -4573,6 +4840,13 @@ onMounted(async () => {
   background: #ffffff;
   padding: 0 12px;
   color: var(--text-main);
+}
+
+.field textarea {
+  min-height: 132px;
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: 1.6;
 }
 
 .thread-drawer__new {
@@ -5652,6 +5926,121 @@ onMounted(async () => {
   margin: 0 0 4px;
 }
 
+.style-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.style-setting-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 16px;
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-setting-card h2,
+.style-setting-card p {
+  margin: 0;
+}
+
+.style-setting-card div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.style-setting-card h2 {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.style-setting-card strong {
+  color: var(--teal-dark);
+  font-size: 14px;
+}
+
+.style-setting-card p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.style-setting-card > span {
+  color: var(--teal);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.style-editor {
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-switcher {
+  display: grid;
+  gap: 8px;
+}
+
+.style-switcher button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.style-switcher button.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.style-switcher strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.style-switcher button.active strong {
+  color: var(--teal-dark);
+}
+
+.style-switcher span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.style-editor-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.style-editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .memory-center {
   padding-bottom: 4px;
 }
@@ -5995,7 +6384,8 @@ onMounted(async () => {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid rgba(15, 118, 110, 0.45);
   outline-offset: 2px;
 }

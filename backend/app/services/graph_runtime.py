@@ -112,6 +112,23 @@ def _iter_node_updates(update: object):
             yield node, node_update
 
 
+def _split_stream_update(update: object) -> tuple[str | None, object]:
+    if isinstance(update, tuple) and len(update) == 2 and isinstance(update[0], str):
+        return update[0], update[1]
+    return None, update
+
+
+def _assistant_token_payload(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("type") != "assistant_token":
+        return None
+    text = payload.get("text")
+    if not isinstance(text, str) or not text:
+        return None
+    return {"text": text}
+
+
 class GraphRuntime:
     _compiled_graph = None
 
@@ -131,7 +148,7 @@ class GraphRuntime:
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
         memory_mode: str = "summary_only",
-        companion_style: str = "gentle",
+        companion_style: str = "",
         nickname: str | None = None,
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
@@ -266,7 +283,7 @@ class GraphRuntime:
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
         memory_mode: str = "summary_only",
-        companion_style: str = "gentle",
+        companion_style: str = "",
         nickname: str | None = None,
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
@@ -301,7 +318,7 @@ class GraphRuntime:
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
         memory_mode: str = "summary_only",
-        companion_style: str = "gentle",
+        companion_style: str = "",
         nickname: str | None = None,
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
@@ -334,8 +351,17 @@ class GraphRuntime:
             )
             return
 
-        async for update in self.graph.astream(input_state, config=config, stream_mode="updates"):
-            for node, node_update in _iter_node_updates(update):
+        async for update in self.graph.astream(input_state, config=config, stream_mode=["updates", "custom"]):
+            stream_mode, payload = _split_stream_update(update)
+            if stream_mode == "custom":
+                token_payload = _assistant_token_payload(payload)
+                if token_payload is not None:
+                    yield "token", token_payload
+                continue
+            if stream_mode is not None and stream_mode != "updates":
+                continue
+
+            for node, node_update in _iter_node_updates(payload):
                 if isinstance(node_update, dict):
                     state.update(node_update)
                 trace_record = collector.record_node(node, node_update)

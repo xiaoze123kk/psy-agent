@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.db.models import User, utcnow
 from app.db.session import get_db_session
 from app.schemas.settings import UserSettingsResponse, UserSettingsUpdateRequest
+from app.services.companion_style import normalize_custom_companion_style
 
 
 router = APIRouter(prefix="/me", tags=["user"])
@@ -28,7 +29,7 @@ async def update_settings(
     if payload.memory_mode is not None:
         settings.memory_mode = payload.memory_mode.value
     if payload.companion_style is not None:
-        settings.companion_style = payload.companion_style
+        settings.companion_style = normalize_custom_companion_style(payload.companion_style)
     if payload.voice_enabled is not None:
         settings.voice_enabled = payload.voice_enabled
     if payload.save_voice_audio is not None:
@@ -49,7 +50,7 @@ async def update_settings(
 
     return UserSettingsResponse(
         memory_mode=settings.memory_mode,
-        companion_style=settings.companion_style,
+        companion_style=normalize_custom_companion_style(settings.companion_style),
         voice_enabled=settings.voice_enabled,
         save_voice_audio=settings.save_voice_audio,
         save_transcript=settings.save_transcript,

@@ -284,13 +284,14 @@ class MemoryApiTests(unittest.TestCase):
 
     def test_update_settings_and_auth_me_return_latest_values(self) -> None:
         user = self.create_user()
+        custom_style = "先用两句话接住我的情绪，然后只给一个很小的下一步，不要一下子列太多建议。"
 
         response = self.client.patch(
             "/api/v1/me/settings",
             headers=self.auth_headers(user),
             json={
                 "memory_mode": "long_term",
-                "companion_style": "steady",
+                "companion_style": custom_style,
                 "voice_enabled": True,
                 "save_voice_audio": True,
             },
@@ -299,11 +300,21 @@ class MemoryApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["memory_mode"], "long_term")
+        self.assertEqual(response.json()["companion_style"], custom_style)
         self.assertEqual(me_response.status_code, 200)
         self.assertEqual(me_response.json()["memory_mode"], "long_term")
-        self.assertEqual(me_response.json()["companion_style"], "steady")
+        self.assertEqual(me_response.json()["companion_style"], custom_style)
         self.assertTrue(me_response.json()["voice_enabled"])
         self.assertTrue(me_response.json()["save_voice_audio"])
+
+        restore_response = self.client.patch(
+            "/api/v1/me/settings",
+            headers=self.auth_headers(user),
+            json={"companion_style": ""},
+        )
+
+        self.assertEqual(restore_response.status_code, 200)
+        self.assertEqual(restore_response.json()["companion_style"], "")
 
     def test_update_settings_rejects_invalid_memory_mode(self) -> None:
         user = self.create_user()

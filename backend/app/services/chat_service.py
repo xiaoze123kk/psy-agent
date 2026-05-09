@@ -210,7 +210,7 @@ async def _invoke_graph_with_fallback(
                 recent_messages=serialized_recent_messages,
                 last_summary=thread.last_summary,
                 memory_mode=memory_mode,
-                companion_style=getattr(user.settings, "companion_style", "gentle") if user.settings else "gentle",
+                companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
                 retrieved_memories=retrieved_memories,
                 memory_index=memory_index,
@@ -850,7 +850,7 @@ async def process_message_turn_stream(
             recent_messages=context.serialized_recent_messages,
             last_summary=thread.last_summary,
             memory_mode=context.memory_mode,
-            companion_style=getattr(user.settings, "companion_style", "gentle") if user.settings else "gentle",
+            companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
             retrieved_memories=context.retrieved_memories,
             memory_index=context.memory_index,
@@ -916,10 +916,6 @@ async def process_message_turn_stream(
             context=context,
             assistant_result=assistant_result,
         )
-
-        if assistant_message is not None:
-            for chunk in _iter_stream_chunks(assistant_message.content):
-                yield "token", {"text": chunk}
 
         yield "final", {
             "thread_id": thread.id,

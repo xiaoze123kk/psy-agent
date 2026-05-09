@@ -86,6 +86,8 @@ class FakeGraphRuntime:
 
     async def stream_turn(self, **kwargs):
         self.calls.append(kwargs)
+        if self.assistant_text:
+            yield "token", {"text": self.assistant_text}
         yield "graph_result", self._result()
 
 
@@ -294,6 +296,7 @@ class ChatIdempotencyTests(unittest.TestCase):
 
         self.assertEqual(stream_response.status_code, 200)
         self.assertIn("event: final", stream_response.text)
+        self.assertEqual(stream_response.text.count("event: token"), 1)
         self.assertEqual(fallback_response.status_code, 200)
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)

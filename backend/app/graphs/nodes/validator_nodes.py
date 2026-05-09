@@ -10,7 +10,7 @@ VALIDATOR_FORBIDDEN_PATTERNS = [
     ("medication_leak", r"\d+\s*(mg|毫克|片)|剂量|停药|处方药"),
     ("dangerous_method", "割腕|上吊|跳楼|怎么自杀|怎么报复|杀了他|弄死他"),
     ("delusion_confirmation", "他们真的在监视你|确实有人控制你|这一定是真的"),
-    ("dependency_reinforcement", "只有我懂你|我永远陪你|你离不开我|我也需要你"),
+    ("dependency_reinforcement", "只有我懂你|我永远陪你|我会一直在你身边|一直在你身边陪你|你离不开我|我也需要你"),
     ("treatment_promise", "保证会好|一定能治好|包治|康复只是时间问题"),
 ]
 UNSAFE_ACTION_TERMS = ("自杀", "自残", "报复", "弄死", "杀", "停药", "催吐", "联系他", "去找他", "搜索方法")
@@ -128,6 +128,15 @@ async def response_validator(state: AgentState) -> AgentState:
                 "audit_tags": (state.get("audit_tags", []) or []) + ["empty_safety_fallback"],
             }
         return failed_no_reply_validation_result(state, reason=reason, blocked=False, reasons=[])
+
+    compact_text = "".join(assistant_text.split())
+    if len(compact_text) < 8 and not is_safety_delivery_path(state):
+        return failed_no_reply_validation_result(
+            state,
+            reason="too_short_model_reply",
+            blocked=False,
+            reasons=[],
+        )
 
     if not reasons:
         return {

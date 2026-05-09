@@ -1,9 +1,105 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
+from langgraph.config import get_stream_writer
+
 from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, recent_context, safe_trim
 from app.graphs.nodes.control_nodes import base_contract
 from app.graphs.nodes.rag_nodes import example_hit_to_dict
+from app.services.companion_style import build_companion_style_prompt
 from app.services.deepseek_client import deepseek_client
+
+
+logger = logging.getLogger(__name__)
+_ACTIONS_SEPARATOR = "---"
+_STREAM_TAIL_CHARS = 8
+
+
+class _VisibleReplyBuffer:
+    def __init__(self) -> None:
+        self._pending = ""
+        self._done = False
+
+    def feed(self, chunk: str) -> str:
+        if self._done or not chunk:
+            return ""
+
+        self._pending += chunk
+        separator_index = self._pending.find(_ACTIONS_SEPARATOR)
+        if separator_index >= 0:
+            visible = self._pending[:separator_index].rstrip()
+            self._pending = ""
+            self._done = True
+            return visible
+
+        if len(self._pending) <= _STREAM_TAIL_CHARS:
+            return ""
+
+        emit_length = len(self._pending) - _STREAM_TAIL_CHARS
+        visible = self._pending[:emit_length]
+        self._pending = self._pending[emit_length:]
+        return visible
+
+    def flush(self) -> str:
+        if self._done:
+            return ""
+
+        visible = self._pending
+        self._pending = ""
+        return visible
+
+
+def _assistant_stream_writer() -> Callable[[dict[str, object]], None] | None:
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return None
+    return writer if callable(writer) else None
+
+
+def _write_assistant_token(writer: Callable[[dict[str, object]], None], text: str) -> None:
+    if not text:
+        return
+    writer({"type": "assistant_token", "text": text})
+
+
+async def _non_streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[str, list[str]]:
+    reply = await deepseek_client.chat(messages)
+    if not reply:
+        return "", []
+    body, actions = parse_actions_reply(reply)
+    return body.strip(), actions[:3]
+
+
+async def _streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[str, list[str]]:
+    writer = _assistant_stream_writer()
+    if writer is None:
+        return await _non_streamed_reply_with_actions(messages)
+
+    reply_parts: list[str] = []
+    visible = _VisibleReplyBuffer()
+    try:
+        async for chunk in deepseek_client.stream_chat(messages):
+            reply_parts.append(chunk)
+            token = visible.feed(chunk)
+            _write_assistant_token(writer, token)
+    except Exception:
+        if not reply_parts:
+            logger.warning("DeepSeek streaming reply failed before any tokens; falling back.", exc_info=True)
+            return await _non_streamed_reply_with_actions(messages)
+        logger.warning("DeepSeek streaming reply failed after partial tokens; using partial reply.", exc_info=True)
+
+    token = visible.flush()
+    _write_assistant_token(writer, token)
+
+    reply = "".join(reply_parts)
+    if not reply:
+        return await _non_streamed_reply_with_actions(messages)
+
+    body, actions = parse_actions_reply(reply)
+    return body.strip(), actions[:3]
 
 
 def examples_text_from_state(state: AgentState) -> str:
@@ -40,7 +136,7 @@ async def _model_reply_with_actions(
 ) -> tuple[str, list[str]]:
     text = state.get("normalized_text", "")
     user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
-    style = state.get("companion_preferences", {}).get("style", "gentle")
+    style = build_companion_style_prompt(state.get("companion_preferences", {}).get("style", ""))
     last_summary = state.get("last_summary") or "无"
     response_contract = state.get("response_contract", {}) or base_contract(allow_rag=False)
     control_category = state.get("control_category", "normal_support")
@@ -63,6 +159,7 @@ async def _model_reply_with_actions(
         "你是心理支持产品里的陪伴型 agent，不是医生，也不是心理咨询师。"
         "安全、边界、资源和记忆策略由控制平面决定，你必须服从 response_contract。"
         "不要诊断，不要给药物或剂量建议，不要承诺治疗效果，不要强化依赖。"
+        "不要说“我会一直在你身边”“我会永远陪你”或类似唯一支撑话术，可改为“我会认真陪你这一段”。"
         "如果有 RAG 示例，它们只用于语气、节奏和干预方式参考，不是事实依据，也不是安全策略。"
         "回复使用简体中文，稳定、克制、温和，尽量在 160 字以内，最多一个问题。"
     )
@@ -86,16 +183,11 @@ async def _model_reply_with_actions(
         f"{actions_instruction}"
     )
 
-    reply = await deepseek_client.chat(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-    )
-    if not reply:
-        return "", []
-    body, actions = parse_actions_reply(reply)
-    return body.strip(), actions[:3]
+    reply_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    return await _streamed_reply_with_actions(reply_messages)
 
 
 async def companion_response(state: AgentState) -> AgentState:
