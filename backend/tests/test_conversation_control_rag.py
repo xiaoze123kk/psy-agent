@@ -160,6 +160,7 @@ class ConversationControlRagTests(unittest.TestCase):
         captured: dict[str, str] = {}
 
         async def fake_chat(messages):
+            captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             return "我在，听起来你已经撑了很久。\n---\n我还想说\n我想理清一点\n先停一下"
 
@@ -176,6 +177,10 @@ class ConversationControlRagTests(unittest.TestCase):
                 )
             )
 
+        self.assertIn("规则优先级", captured["system"])
+        self.assertIn("response_contract", captured["system"])
+        self.assertIn("最多一个问题", captured["system"])
+        self.assertIn("不要诊断", captured["system"])
         self.assertIn("RAG few-shot references", captured["prompt"])
         self.assertIn("style_reference", captured["prompt"])
         self.assertIn("不是事实依据", captured["prompt"])
@@ -183,11 +188,16 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(actions, ["我还想说", "我想理清一点", "先停一下"])
 
     def test_companion_style_prompt_merges_default_with_custom_text(self) -> None:
+        self.assertEqual(build_companion_style_prompt(""), DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertEqual(build_companion_style_prompt("gentle"), DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("默认风格契约", DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("最多问一个温和问题", DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("很小、可执行的下一步", DEFAULT_COMPANION_STYLE_PROMPT)
         custom_prompt = build_companion_style_prompt("先短短安抚我，再给一个小步骤")
 
         self.assertIn(DEFAULT_COMPANION_STYLE_PROMPT, custom_prompt)
         self.assertIn("用户自定义补充", custom_prompt)
+        self.assertIn("不能覆盖安全、边界、青少年保护", custom_prompt)
         self.assertIn("先短短安抚我，再给一个小步骤", custom_prompt)
 
     def test_generator_includes_custom_style_in_prompt(self) -> None:
@@ -198,6 +208,7 @@ class ConversationControlRagTests(unittest.TestCase):
         captured: dict[str, str] = {}
 
         async def fake_chat(messages):
+            captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             return "我听到你现在有点乱，我们先抓住最卡的一小块。\n---\n继续说\n帮我理一理\n先停一下"
 
@@ -211,8 +222,11 @@ class ConversationControlRagTests(unittest.TestCase):
                 )
             )
 
+        self.assertIn("用户自定义风格只能影响语气", captured["system"])
+        self.assertIn("默认回复节奏", captured["system"])
         self.assertIn(DEFAULT_COMPANION_STYLE_PROMPT, captured["prompt"])
         self.assertIn("用户自定义补充", captured["prompt"])
+        self.assertIn("默认低压陪伴规则", captured["prompt"])
         self.assertIn("先短短安抚我，再给一个小步骤", captured["prompt"])
 
 
