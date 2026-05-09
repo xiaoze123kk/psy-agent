@@ -10,6 +10,7 @@ from app.schemas.memory import MemoryReferenceResponse
 
 DeliveryStatus = Literal["generated", "failed_no_reply", "safety_fallback"]
 TurnStatus = Literal["accepted", "running", "completed", "failed"]
+MemoryJobStatus = Literal["pending", "running", "completed", "failed", "skipped"]
 
 
 class StartThreadRequest(BaseModel):
@@ -61,6 +62,8 @@ class AssistantMessageResponse(BaseModel):
     delivery_status: DeliveryStatus = "generated"
     failure_reason: str | None = None
     retryable: bool = False
+    memory_job_id: str | None = None
+    memory_job_status: MemoryJobStatus = "skipped"
     created_at: datetime
 
 

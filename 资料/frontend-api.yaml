@@ -707,6 +707,15 @@ types:
       - failed_no_reply
       - safety_fallback
 
+  MemoryJobStatus:
+    type: enum
+    values:
+      - pending
+      - running
+      - completed
+      - failed
+      - skipped
+
   MemoryMode:
     type: enum
     values:
@@ -1010,6 +1019,19 @@ types:
         type: array
         items:
           type: MemoryReference
+      delivery_status: { type: DeliveryStatus }
+      failure_reason:
+        type: string
+        nullable: true
+        required: false
+      retryable: { type: boolean }
+      memory_job_id:
+        type: string
+        nullable: true
+        required: false
+      memory_job_status:
+        type: MemoryJobStatus
+        required: false
 
   SendMessageResponse:
     type: object
@@ -1093,6 +1115,8 @@ types:
       - session_summary
       - should_write_memory
       - referenced_memories
+      - delivery_status
+      - retryable
     fields:
       thread_id: { type: string }
       message_id: { type: string }
@@ -1120,6 +1144,13 @@ types:
         nullable: true
         required: false
       retryable: { type: boolean }
+      memory_job_id:
+        type: string
+        nullable: true
+        required: false
+      memory_job_status:
+        type: MemoryJobStatus
+        required: false
 
   ChatStreamHeartbeatEvent:
     type: object

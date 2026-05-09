@@ -14,18 +14,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, UserMemory, generate_uuid, utcnow
+from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, generate_uuid, utcnow
 from app.graphs.nodes import sync_risk_classify
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
+from app.services.memory_job_service import build_memory_job_payload, enqueue_memory_job, notify_memory_jobs
 from app.services.memory_service import (
     build_memory_index,
-    index_memory_embeddings,
-    maybe_auto_consolidate_user_memories,
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
-    upsert_memory_candidates,
 )
 
 
@@ -322,24 +320,6 @@ def _upsert_risk_event(
     db.add(event)
     db.flush()
     return event
-
-
-def _maybe_write_summary_memory(
-    db: Session,
-    *,
-    user: User,
-    thread: ConversationThread,
-    assistant_message: Message,
-    assistant_result: dict[str, object],
-) -> list[UserMemory]:
-    written, _ = upsert_memory_candidates(
-        db,
-        user=user,
-        thread=thread,
-        assistant_message_id=assistant_message.id,
-        assistant_result=assistant_result,
-    )
-    return written
 
 
 def _request_hash(payload: SendMessageRequest) -> str:
@@ -703,20 +683,40 @@ async def _persist_turn_result(
             action_taken=list(assistant_result.get("suggested_actions", [])),
         )
 
-    written_memories, memory_write_decisions = upsert_memory_candidates(
-        db,
-        user=user,
-        thread=thread,
-        assistant_message_id=assistant_message.id,
-        assistant_result=assistant_result,
+    memory_job_id: str | None = None
+    memory_job_status = "skipped"
+    memory_job_payload, memory_write_decisions = build_memory_job_payload(
+        assistant_result,
+        memory_mode=context.memory_mode,
     )
+    if memory_job_payload is not None:
+        memory_job = enqueue_memory_job(
+            db,
+            user_id=user.id,
+            thread_id=thread.id,
+            turn_id=context.turn.id,
+            assistant_message_id=assistant_message.id,
+            payload=memory_job_payload,
+        )
+        memory_job_id = memory_job.id
+        memory_job_status = memory_job.status
+        memory_write_decisions = [
+            {
+                "status": memory_job.status,
+                "reason": "background_memory_job",
+                "job_id": memory_job.id,
+            }
+        ]
+
     assistant_result["memory_write_decisions"] = memory_write_decisions
+    assistant_result["memory_job_id"] = memory_job_id
+    assistant_result["memory_job_status"] = memory_job_status
     assistant_message.meta = {
         **assistant_metadata,
+        "memory_job_id": memory_job_id,
+        "memory_job_status": memory_job_status,
         "memory_write_decisions": memory_write_decisions,
     }
-    await index_memory_embeddings(db, written_memories)
-    maybe_auto_consolidate_user_memories(db, user_id=user.id)
 
     assistant_result = _complete_turn(
         context.turn,
@@ -730,6 +730,8 @@ async def _persist_turn_result(
     db.refresh(assistant_message)
     db.refresh(context.turn)
     db.refresh(thread)
+    if memory_job_id is not None:
+        notify_memory_jobs()
     return assistant_message, assistant_result
 
 

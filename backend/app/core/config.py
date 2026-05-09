@@ -55,6 +55,10 @@ class Settings:
     risk_semantic_llm_enabled: bool
     risk_semantic_llm_timeout_seconds: float
     chat_turn_timeout_seconds: float
+    memory_background_worker_enabled: bool
+    memory_job_batch_size: int
+    memory_job_max_attempts: int
+    memory_job_poll_interval_seconds: float
     knowledge_llm_answers_enabled: bool
     knowledge_warm_index_on_startup: bool
     counseling_rag_enabled: bool
@@ -101,6 +105,11 @@ def load_settings() -> Settings:
         in {"1", "true", "yes", "on"},
         risk_semantic_llm_timeout_seconds=float(os.getenv("RISK_SEMANTIC_LLM_TIMEOUT_SECONDS", "1.5")),
         chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "25")),
+        memory_background_worker_enabled=os.getenv("MEMORY_BACKGROUND_WORKER_ENABLED", "1").lower()
+        in {"1", "true", "yes", "on"},
+        memory_job_batch_size=int(os.getenv("MEMORY_JOB_BATCH_SIZE", "5")),
+        memory_job_max_attempts=int(os.getenv("MEMORY_JOB_MAX_ATTEMPTS", "3")),
+        memory_job_poll_interval_seconds=float(os.getenv("MEMORY_JOB_POLL_INTERVAL_SECONDS", "2")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
         knowledge_warm_index_on_startup=os.getenv("KNOWLEDGE_WARM_INDEX_ON_STARTUP", "0").lower()

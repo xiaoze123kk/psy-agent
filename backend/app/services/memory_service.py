@@ -682,11 +682,14 @@ def upsert_memory_candidates(
     thread: ConversationThread,
     assistant_message_id: str,
     assistant_result: dict[str, Any],
+    memory_mode_override: str | None = None,
 ) -> tuple[list[UserMemory], list[dict[str, Any]]]:
     if not bool(assistant_result.get("should_write_memory")):
         return [], [{"status": "skipped", "reason": "assistant_result_disabled"}]
 
-    memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
+    memory_mode = memory_mode_override or (
+        getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
+    )
     risk_level = str(assistant_result.get("risk_level", "L0"))
     memory_policy = str(assistant_result.get("memory_policy", "write_safe_summary"))
     if memory_policy == "skip_sensitive" and risk_level not in {"L2", "L3"}:

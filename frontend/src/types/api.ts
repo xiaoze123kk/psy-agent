@@ -5,6 +5,7 @@ export type RiskLevel = "L0" | "L1" | "L2" | "L3";
 export type MemoryMode = "off" | "summary_only" | "long_term";
 export type DeliveryStatus = "generated" | "failed_no_reply" | "safety_fallback";
 export type TurnStatus = "accepted" | "running" | "completed" | "failed";
+export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type ChatStreamEventName = "accepted" | "graph_update" | "heartbeat" | "token" | "final" | "error";
 
 export interface CaptchaResponse {
@@ -132,6 +133,8 @@ export interface AssistantMessage {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   created_at: string;
 }
 
@@ -210,6 +213,8 @@ export interface ChatStreamFinalEvent {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   risk_reasons?: string[];
   memory_candidates?: unknown[];
 }

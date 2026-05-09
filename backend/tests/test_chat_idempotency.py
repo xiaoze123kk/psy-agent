@@ -12,14 +12,22 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import chat
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, ConversationTurn, ConversationTurnTrace, Message, User
+from app.db.models import Base, ConversationThread, ConversationTurn, ConversationTurnTrace, Message, PendingMemoryJob, User
 from app.db.session import get_db_session
 from app.services import chat_service
 
 
 class FakeGraphRuntime:
-    def __init__(self, *, assistant_text: str = "我在。") -> None:
+    def __init__(
+        self,
+        *,
+        assistant_text: str = "我在。",
+        should_write_memory: bool = False,
+        memory_candidates: list[dict[str, object]] | None = None,
+    ) -> None:
         self.assistant_text = assistant_text
+        self.should_write_memory = should_write_memory
+        self.memory_candidates = memory_candidates or []
         self.calls: list[dict] = []
 
     def _result(self) -> dict[str, object]:
@@ -31,8 +39,8 @@ class FakeGraphRuntime:
             "risk_reasons": [],
             "suggested_actions": ["继续说"],
             "session_summary": "本轮摘要",
-            "memory_candidates": [],
-            "should_write_memory": False,
+            "memory_candidates": self.memory_candidates,
+            "should_write_memory": self.should_write_memory,
             "referenced_memories": [],
             "referenced_counseling_examples": [],
             "graph_trace": [
@@ -154,6 +162,12 @@ class ChatIdempotencyTests(unittest.TestCase):
             or 0
         )
 
+    def memory_job_count(self, thread: ConversationThread) -> int:
+        return int(
+            self.db.scalar(select(func.count()).select_from(PendingMemoryJob).where(PendingMemoryJob.thread_id == thread.id))
+            or 0
+        )
+
     def test_same_client_message_id_replays_completed_turn(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)
@@ -173,6 +187,26 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)
         self.assertEqual(self.trace_count(thread), 2)
+        self.assertEqual(len(fake_runtime.calls), 1)
+
+    def test_replay_does_not_create_duplicate_memory_job(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        fake_runtime = FakeGraphRuntime(
+            should_write_memory=True,
+            memory_candidates=[{"memory_type": "session_summary", "content": "memory summary"}],
+        )
+        chat_service.graph_runtime = fake_runtime
+        payload = {"client_message_id": "client-memory-job", "content": "remember this"}
+
+        first = self.client.post(f"/api/v1/chat/threads/{thread.id}/messages", headers=self.auth_headers(user), json=payload)
+        second = self.client.post(f"/api/v1/chat/threads/{thread.id}/messages", headers=self.auth_headers(user), json=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()["assistant_message"]["memory_job_status"], "pending")
+        self.assertEqual(second.json()["assistant_message"]["memory_job_status"], "pending")
+        self.assertEqual(self.memory_job_count(thread), 1)
         self.assertEqual(len(fake_runtime.calls), 1)
 
     def test_same_client_message_id_with_different_content_conflicts(self) -> None:
@@ -215,6 +249,7 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(self.message_count(thread), 1)
         self.assertEqual(self.turn_count(thread), 1)
         self.assertEqual(self.trace_count(thread), 2)
+        self.assertEqual(self.memory_job_count(thread), 0)
         turn = self.db.scalar(select(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
         self.assertIn("trace_summary", turn.response_snapshot)
         self.assertEqual(turn.response_snapshot["trace_summary"]["delivery_status"], "failed_no_reply")

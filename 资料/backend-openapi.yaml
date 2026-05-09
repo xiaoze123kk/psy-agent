@@ -1207,6 +1207,15 @@ components:
         - completed
         - failed
 
+    MemoryJobStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - skipped
+
     MemoryMode:
       type: string
       enum:
@@ -1570,6 +1579,11 @@ components:
           nullable: true
         retryable:
           type: boolean
+        memory_job_id:
+          type: string
+          nullable: true
+        memory_job_status:
+          $ref: "#/components/schemas/MemoryJobStatus"
       required:
         - assistant_text
         - risk_level
@@ -1669,6 +1683,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MemoryReference"
+        delivery_status:
+          type: string
+          enum: [generated, failed_no_reply, safety_fallback]
+        failure_reason:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
+        memory_job_id:
+          type: string
+          nullable: true
+        memory_job_status:
+          $ref: "#/components/schemas/MemoryJobStatus"
       required:
         - thread_id
         - message_id

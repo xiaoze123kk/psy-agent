@@ -24,6 +24,7 @@ import type {
   KnowledgeQuizResultResponse,
   KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
+  MemoryJobStatus,
   MemoryItem,
   MemoryMode,
   MemoryReference,
@@ -1006,6 +1007,16 @@ async function refreshMemories() {
   memories.value = memoryList.items;
 }
 
+function refreshMemoriesForJob(status?: MemoryJobStatus | null) {
+  if (status === "pending" || status === "running") {
+    window.setTimeout(() => {
+      void refreshMemories();
+    }, 2500);
+    return;
+  }
+  void refreshMemories();
+}
+
 function buildLocalPrivacySummary(): PrivacySummaryResponse {
   return {
     user_id: currentUserId.value || "demo-user",
@@ -1717,7 +1728,7 @@ function applySendMessageResponse(
   failedReplyStatus.value = null;
   quickActions.value = actions;
   syncLocalThread(reply, risk);
-  if (assistant.should_write_memory) void refreshMemories();
+  if (assistant.should_write_memory) refreshMemoriesForJob(assistant.memory_job_status);
   if (risk === "L2" || risk === "L3") openSafety();
 }
 
@@ -1835,7 +1846,7 @@ async function submitMessage(text = composerText.value) {
             streaming: false,
             streamError: false,
           });
-          if (Boolean(data.should_write_memory)) void refreshMemories();
+          if (Boolean(data.should_write_memory)) refreshMemoriesForJob(data.memory_job_status);
         }
       },
     );

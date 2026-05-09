@@ -4,6 +4,7 @@ import asyncio
 import os
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from app.db.models import (
     ConversationThread,
     Message,
     MoodLog,
+    PendingMemoryJob,
     RiskEvent,
     User,
     UserMemory,
@@ -28,6 +30,7 @@ from app.db.models import (
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
+from app.services.memory_job_service import process_pending_memory_jobs
 
 
 class MemoryApiTests(unittest.TestCase):
@@ -527,10 +530,16 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
             thread=thread,
             payload=SendMessageRequest(content="我希望你先安抚我"),
         )
+        pending_jobs = list(self.db.scalars(select(PendingMemoryJob).where(PendingMemoryJob.thread_id == thread.id)))
+        memory_types_before = list(self.db.scalars(select(UserMemory.memory_type).where(UserMemory.user_id == user.id)))
+        await process_pending_memory_jobs(self.db)
         memory_types = list(self.db.scalars(select(UserMemory.memory_type).where(UserMemory.user_id == user.id)))
 
         self.assertEqual([memory["id"] for memory in fake_runtime.calls[0]["retrieved_memories"]], [summary_memory.id])
         self.assertEqual(result["referenced_memories"][0]["memory_id"], summary_memory.id)
+        self.assertEqual(result["memory_job_status"], "pending")
+        self.assertEqual(len(pending_jobs), 1)
+        self.assertEqual(memory_types_before.count("session_summary"), 1)
         self.assertEqual(memory_types.count("session_summary"), 2)
         self.assertEqual(memory_types.count("preference"), 1)
 
@@ -546,6 +555,7 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
             thread=thread,
             payload=SendMessageRequest(content="我希望你先听我说，再帮我梳理"),
         )
+        await process_pending_memory_jobs(self.db)
         memory_types = set(self.db.scalars(select(UserMemory.memory_type).where(UserMemory.user_id == user.id)))
 
         self.assertTrue({"session_summary", "preference", "recurring_trigger", "support_strategy"}.issubset(memory_types))
@@ -575,7 +585,11 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(preference.id, [item["memory_id"] for item in fake_runtime.calls[0]["memory_index"]])
         self.assertIn("memory_index", assistant_message.meta)
         self.assertIn("memory_write_decisions", assistant_message.meta)
-        self.assertEqual(result["memory_write_decisions"][0]["status"], "created")
+        self.assertEqual(result["memory_write_decisions"][0]["status"], "pending")
+        await process_pending_memory_jobs(self.db)
+        self.db.refresh(assistant_message)
+        self.assertEqual(assistant_message.meta["memory_job_status"], "completed")
+        self.assertEqual(assistant_message.meta["memory_write_decisions"][0]["status"], "created")
 
     async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")
@@ -606,6 +620,10 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(safety.id, retrieved_ids)
         self.assertNotIn(visible.id, retrieved_ids)
         self.assertEqual(indexed_ids, [safety.id])
+        created = [memory for memory in memories if memory.id not in {visible.id, safety.id}]
+        self.assertEqual(len(created), 0)
+        await process_pending_memory_jobs(self.db)
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
         created = [memory for memory in memories if memory.id not in {visible.id, safety.id}]
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0].memory_type, "safety_summary")

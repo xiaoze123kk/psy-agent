@@ -175,6 +175,47 @@ class ConversationTurnTrace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PendingMemoryJob(Base):
+    __tablename__ = "pending_memory_jobs"
+    __table_args__ = (
+        UniqueConstraint("turn_id", "job_type", name="uq_pending_memory_jobs_turn_type"),
+        Index("idx_pending_memory_jobs_status_next_run", "status", "next_run_at"),
+        Index("idx_pending_memory_jobs_turn", "turn_id"),
+        Index("idx_pending_memory_jobs_thread_created", "thread_id", "created_at"),
+        Index("idx_pending_memory_jobs_assistant_message", "assistant_message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    turn_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_type: Mapped[str] = mapped_column(String(32), default="memory_write")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class UserMemory(Base):
     __tablename__ = "user_memories"
     __table_args__ = (
