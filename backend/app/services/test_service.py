@@ -76,6 +76,16 @@ def _load_scorer(test_type: str, test_id: str):
         return None
 
 
+def _normalize_answers(raw_answers: dict) -> dict[int, str]:
+    normalized: dict[int, str] = {}
+    for idx_key, option_id in raw_answers.items():
+        try:
+            normalized[int(idx_key)] = option_id
+        except (TypeError, ValueError):
+            logger.warning("Skipping malformed answer key %r", idx_key)
+    return normalized
+
+
 def _question_to_schema(q: dict) -> TestQuestion:
     return TestQuestion(
         index=q["index"],
@@ -142,10 +152,14 @@ def submit_answer(attempt_id: str, question_index: int, option_id: str, db: Sess
     if question_index not in valid_indices:
         return False
     question = t["questions"][question_index]
-    if "options" in question:
-        valid_options = {opt["id"] for opt in question["options"]}
-    else:
-        valid_options = {"A", "B"}
+    options = question.get("options")
+    if not isinstance(options, list) or not options:
+        logger.error("Malformed test question %s for test %s", question_index, attempt.test_id)
+        return False
+    valid_options = {opt["id"] for opt in options if isinstance(opt, dict) and "id" in opt}
+    if not valid_options:
+        logger.error("Malformed option set for question %s in test %s", question_index, attempt.test_id)
+        return False
     if option_id not in valid_options:
         return False
     answers = dict(attempt.answers)
@@ -169,7 +183,7 @@ def complete_attempt(attempt_id: str, db: Session) -> CompleteAttemptResponse | 
     scorer = _load_scorer(t["test_type"], t["test_id"])
     if scorer is None:
         return None
-    result_data = scorer.compute(t, attempt.answers)
+    result_data = scorer.compute(t, _normalize_answers(attempt.answers))
     profile_data = result_data
 
     now = datetime.now(timezone.utc)
@@ -222,7 +236,7 @@ def get_attempt_result(attempt_id: str, db: Session) -> CompleteAttemptResponse 
     scorer = _load_scorer(t["test_type"], t["test_id"])
     if scorer is None:
         return None
-    result_data = scorer.compute(t, attempt.answers)
+    result_data = scorer.compute(t, _normalize_answers(attempt.answers))
     profile_data = result_data
     return CompleteAttemptResponse(
         attempt_id=attempt_id,

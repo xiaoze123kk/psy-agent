@@ -341,6 +341,7 @@ paths:
                 summary: 普通倾诉场景
                 value:
                   user_id: demo-user
+                  client_message_id: 7f0b53f7-8a9b-4b18-a7ad-1b1f3bb8b9c4
                   content: 我最近压力好大，感觉没人理解我
                   input_type: text
                   user_mode: teen
@@ -348,6 +349,7 @@ paths:
                 summary: 高风险场景
                 value:
                   user_id: demo-user
+                  client_message_id: 0d6eb1e4-0d24-49e7-9b42-6ca4f410eb0f
                   content: 我真的不想活了
                   input_type: text
                   user_mode: teen
@@ -1197,6 +1199,23 @@ components:
       description: |
         L0=正常，L1=中低风险情绪波动，L2/L3=需进入安全分流。
 
+    TurnStatus:
+      type: string
+      enum:
+        - accepted
+        - running
+        - completed
+        - failed
+
+    MemoryJobStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - skipped
+
     MemoryMode:
       type: string
       enum:
@@ -1514,6 +1533,9 @@ components:
       properties:
         user_id:
           type: string
+        client_message_id:
+          type: string
+          description: 客户端生成的发送幂等键；同一用户、同一会话内重复使用时后端会重放已有 turn。
         content:
           type: string
         input_type:
@@ -1549,6 +1571,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MemoryReference"
+        delivery_status:
+          type: string
+          enum: [generated, failed_no_reply, safety_fallback]
+        failure_reason:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
+        memory_job_id:
+          type: string
+          nullable: true
+        memory_job_status:
+          $ref: "#/components/schemas/MemoryJobStatus"
       required:
         - assistant_text
         - risk_level
@@ -1563,11 +1598,38 @@ components:
       properties:
         thread_id:
           type: string
+        message_id:
+          type: string
+        assistant_message_id:
+          type: string
+          nullable: true
+        client_message_id:
+          type: string
+        turn_id:
+          type: string
+        turn_status:
+          $ref: "#/components/schemas/TurnStatus"
         assistant_message:
           $ref: "#/components/schemas/AssistantMessage"
+          nullable: true
+        delivery_status:
+          type: string
+          enum: [generated, failed_no_reply, safety_fallback]
+        failure_reason:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
       required:
         - thread_id
+        - message_id
+        - assistant_message_id
+        - client_message_id
+        - turn_id
+        - turn_status
         - assistant_message
+        - delivery_status
+        - retryable
 
     ChatStreamTokenEvent:
       type: object
@@ -1596,6 +1658,13 @@ components:
           type: string
         assistant_message_id:
           type: string
+          nullable: true
+        client_message_id:
+          type: string
+        turn_id:
+          type: string
+        turn_status:
+          $ref: "#/components/schemas/TurnStatus"
         assistant_text:
           type: string
         risk_level:
@@ -1614,10 +1683,26 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MemoryReference"
+        delivery_status:
+          type: string
+          enum: [generated, failed_no_reply, safety_fallback]
+        failure_reason:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
+        memory_job_id:
+          type: string
+          nullable: true
+        memory_job_status:
+          $ref: "#/components/schemas/MemoryJobStatus"
       required:
         - thread_id
         - message_id
         - assistant_message_id
+        - client_message_id
+        - turn_id
+        - turn_status
         - assistant_text
         - risk_level
         - intent
@@ -1625,6 +1710,8 @@ components:
         - session_summary
         - should_write_memory
         - referenced_memories
+        - delivery_status
+        - retryable
 
     MemoryReference:
       type: object

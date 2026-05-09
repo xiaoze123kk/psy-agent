@@ -57,7 +57,7 @@ class UserSettings(Base):
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     memory_mode: Mapped[str] = mapped_column(String(24), default="summary_only")
-    companion_style: Mapped[str] = mapped_column(String(32), default="gentle")
+    companion_style: Mapped[str] = mapped_column(Text, default="")
     voice_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     save_voice_audio: Mapped[bool] = mapped_column(Boolean, default=False)
     save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -103,6 +103,117 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     thread: Mapped[ConversationThread] = relationship(back_populates="messages")
+
+
+class ConversationTurn(Base):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        UniqueConstraint("user_id", "thread_id", "client_message_id", name="uq_conversation_turns_client_message"),
+        Index("idx_conversation_turns_thread_created", "thread_id", "created_at"),
+        Index("idx_conversation_turns_status_updated", "turn_status", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    client_message_id: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    turn_status: Mapped[str] = mapped_column(String(16), default="running")
+    delivery_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    response_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ConversationTurnTrace(Base):
+    __tablename__ = "conversation_turn_traces"
+    __table_args__ = (
+        UniqueConstraint("turn_id", "sequence", name="uq_conversation_turn_traces_turn_sequence"),
+        Index("idx_conversation_turn_traces_turn", "turn_id"),
+        Index("idx_conversation_turn_traces_thread_created", "thread_id", "created_at"),
+        Index("idx_conversation_turn_traces_node_status", "node_name", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    turn_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    trace_type: Mapped[str] = mapped_column(String(32), default="graph_node")
+    node_name: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), default="completed")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    output_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PendingMemoryJob(Base):
+    __tablename__ = "pending_memory_jobs"
+    __table_args__ = (
+        UniqueConstraint("turn_id", "job_type", name="uq_pending_memory_jobs_turn_type"),
+        Index("idx_pending_memory_jobs_status_next_run", "status", "next_run_at"),
+        Index("idx_pending_memory_jobs_turn", "turn_id"),
+        Index("idx_pending_memory_jobs_thread_created", "thread_id", "created_at"),
+        Index("idx_pending_memory_jobs_assistant_message", "assistant_message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    turn_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_type: Mapped[str] = mapped_column(String(32), default="memory_write")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class UserMemory(Base):

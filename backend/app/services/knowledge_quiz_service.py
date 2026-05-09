@@ -320,7 +320,7 @@ def _single_choice_question(topic: QuizTopic, variant_index: int) -> QuizQuestio
         "常见误区": _misconception_option(topic, variant_index),
         "求助信号": topic.seek_help,
         "自助边界": f"关于“{topic.topic}”的知识问答只能做科普和自助整理，不能替代诊断、治疗或用药建议。",
-        "支持他人": f"先接住对方关于“{topic.topic}”的感受，关注安全，再鼓励对方连接现实支持。",
+        "支持他人": f"先认真回应对方关于“{topic.topic}”的感受，关注安全，再鼓励对方连接现实支持。",
     }
     correct = correct_options[variant_name]
     options = [correct, *_single_choice_distractors(topic, variant_name, correct, variant_index)]

@@ -1,4 +1,5 @@
 from app.graphs.main_graph import build_main_graph
+from app.services.graph_trace_service import GraphTraceCollector
 
 
 def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
@@ -69,6 +70,65 @@ def _counseling_references(examples: list[object] | None, risk_level: str) -> li
     return references
 
 
+def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str, object]:
+    event: dict[str, object] = {
+        "node": node,
+        "status": "completed",
+    }
+    safe_keys = (
+        "risk_level",
+        "risk_source",
+        "requires_safety_check",
+        "intent",
+        "route_priority",
+        "control_category",
+        "rag_used",
+        "rag_skipped_reason",
+        "validator_blocked",
+        "delivery_status",
+    )
+    for key in safe_keys:
+        value = state.get(key)
+        if value is None:
+            continue
+        if value == "" or value == [] or value == {}:
+            continue
+        event[key] = value
+
+    if node == "response_validator" and isinstance(node_update, dict):
+        event["validator_blocked"] = bool(node_update.get("validator_blocked", False))
+        if node_update.get("delivery_status"):
+            event["delivery_status"] = str(node_update["delivery_status"])
+    return event
+
+
+def _iter_node_updates(update: object):
+    if isinstance(update, tuple) and len(update) == 2:
+        update = update[1]
+    if not isinstance(update, dict):
+        return
+    for node, node_update in update.items():
+        if isinstance(node, str):
+            yield node, node_update
+
+
+def _split_stream_update(update: object) -> tuple[str | None, object]:
+    if isinstance(update, tuple) and len(update) == 2 and isinstance(update[0], str):
+        return update[0], update[1]
+    return None, update
+
+
+def _assistant_token_payload(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("type") != "assistant_token":
+        return None
+    text = payload.get("text")
+    if not isinstance(text, str) or not text:
+        return None
+    return {"text": text}
+
+
 class GraphRuntime:
     _compiled_graph = None
 
@@ -77,8 +137,9 @@ class GraphRuntime:
             GraphRuntime._compiled_graph = build_main_graph()
         self.graph = GraphRuntime._compiled_graph
 
-    async def invoke_turn(
+    def _build_input_state(
         self,
+        *,
         thread_id: str,
         user_id: str,
         content: str,
@@ -87,12 +148,12 @@ class GraphRuntime:
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
         memory_mode: str = "summary_only",
-        companion_style: str = "gentle",
+        companion_style: str = "",
         nickname: str | None = None,
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
     ) -> dict[str, object]:
-        input_state = {
+        return {
             "thread_id": thread_id,
             "user_id": user_id,
             "user_text": content,
@@ -112,16 +173,22 @@ class GraphRuntime:
             "memory_index": memory_index or [],
             "retrieved_memories": retrieved_memories or [],
         }
-        result = await self.graph.ainvoke(
-            input_state,
-            config={
-                "configurable": {
-                    "thread_id": thread_id,
-                    "user_id": user_id,
-                }
-            },
-        )
 
+    def _graph_config(self, *, thread_id: str, user_id: str) -> dict[str, object]:
+        return {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id,
+            }
+        }
+
+    def _map_result(
+        self,
+        result: dict[str, object],
+        *,
+        retrieved_memories: list[dict] | None,
+        graph_trace: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         risk_level = result.get("risk_level", "L0")
         delivery_status = str(result.get("delivery_status") or "")
         assistant_text = str(result.get("assistant_text", "") or "")
@@ -140,11 +207,15 @@ class GraphRuntime:
             if delivery_status != "generated"
             else _counseling_references(retrieved_examples, str(risk_level))
         )
-        return {
+        mapped = {
             "assistant_text": assistant_text,
             "risk_level": risk_level,
             "intent": result.get("intent", "other"),
             "risk_reasons": result.get("risk_reasons", []),
+            "semantic_risk": result.get("semantic_risk", {}),
+            "risk_source": result.get("risk_source", ""),
+            "risk_reason_codes": result.get("risk_reason_codes", []),
+            "requires_safety_check": bool(result.get("requires_safety_check", False)),
             "route_priority": result.get("route_priority", "P2_support"),
             "control_category": result.get("control_category", "normal_support"),
             "control_reasons": result.get("control_reasons", []),
@@ -178,3 +249,128 @@ class GraphRuntime:
             "failure_reason": result.get("failure_reason"),
             "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
         }
+        if graph_trace is not None:
+            mapped["graph_trace"] = graph_trace
+        return mapped
+
+    async def _invoke_graph_with_trace(
+        self,
+        input_state: dict[str, object],
+        *,
+        config: dict[str, object],
+    ) -> tuple[dict[str, object], list[dict[str, object]]]:
+        collector = GraphTraceCollector()
+        if not hasattr(self.graph, "astream"):
+            result = await self.graph.ainvoke(input_state, config=config)
+            collector.record_node("graph_result", result)
+            return result, collector.records
+
+        state = dict(input_state)
+        async for update in self.graph.astream(input_state, config=config, stream_mode="updates"):
+            for node, node_update in _iter_node_updates(update):
+                if isinstance(node_update, dict):
+                    state.update(node_update)
+                collector.record_node(node, node_update)
+        return state, collector.records
+
+    async def invoke_turn(
+        self,
+        thread_id: str,
+        user_id: str,
+        content: str,
+        input_type: str = "text",
+        user_mode: str = "adult",
+        recent_messages: list[dict] | None = None,
+        last_summary: str | None = None,
+        memory_mode: str = "summary_only",
+        companion_style: str = "",
+        nickname: str | None = None,
+        retrieved_memories: list[dict] | None = None,
+        memory_index: list[dict] | None = None,
+    ) -> dict[str, object]:
+        input_state = self._build_input_state(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=content,
+            input_type=input_type,
+            user_mode=user_mode,
+            recent_messages=recent_messages,
+            last_summary=last_summary,
+            memory_mode=memory_mode,
+            companion_style=companion_style,
+            nickname=nickname,
+            retrieved_memories=retrieved_memories,
+            memory_index=memory_index,
+        )
+        result, graph_trace = await self._invoke_graph_with_trace(
+            input_state,
+            config=self._graph_config(thread_id=thread_id, user_id=user_id),
+        )
+        return self._map_result(result, retrieved_memories=retrieved_memories, graph_trace=graph_trace)
+
+    async def stream_turn(
+        self,
+        thread_id: str,
+        user_id: str,
+        content: str,
+        input_type: str = "text",
+        user_mode: str = "adult",
+        recent_messages: list[dict] | None = None,
+        last_summary: str | None = None,
+        memory_mode: str = "summary_only",
+        companion_style: str = "",
+        nickname: str | None = None,
+        retrieved_memories: list[dict] | None = None,
+        memory_index: list[dict] | None = None,
+    ):
+        input_state = self._build_input_state(
+            thread_id=thread_id,
+            user_id=user_id,
+            content=content,
+            input_type=input_type,
+            user_mode=user_mode,
+            recent_messages=recent_messages,
+            last_summary=last_summary,
+            memory_mode=memory_mode,
+            companion_style=companion_style,
+            nickname=nickname,
+            retrieved_memories=retrieved_memories,
+            memory_index=memory_index,
+        )
+        config = self._graph_config(thread_id=thread_id, user_id=user_id)
+        state = dict(input_state)
+        collector = GraphTraceCollector()
+
+        if not hasattr(self.graph, "astream"):
+            result = await self.graph.ainvoke(input_state, config=config)
+            graph_trace = [collector.record_node("graph_result", result)]
+            yield "graph_result", self._map_result(
+                result,
+                retrieved_memories=retrieved_memories,
+                graph_trace=graph_trace,
+            )
+            return
+
+        async for update in self.graph.astream(input_state, config=config, stream_mode=["updates", "custom"]):
+            stream_mode, payload = _split_stream_update(update)
+            if stream_mode == "custom":
+                token_payload = _assistant_token_payload(payload)
+                if token_payload is not None:
+                    yield "token", token_payload
+                continue
+            if stream_mode is not None and stream_mode != "updates":
+                continue
+
+            for node, node_update in _iter_node_updates(payload):
+                if isinstance(node_update, dict):
+                    state.update(node_update)
+                trace_record = collector.record_node(node, node_update)
+                graph_update = _safe_graph_update(node, state, node_update)
+                graph_update["duration_ms"] = trace_record["duration_ms"]
+                yield "graph_update", graph_update
+
+        yield "graph_result", self._map_result(
+            state,
+            retrieved_memories=retrieved_memories,
+            graph_trace=collector.records,
+        )

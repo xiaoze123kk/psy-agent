@@ -4,7 +4,9 @@ export type AgeRange = "13_15" | "16_17" | "18_plus";
 export type RiskLevel = "L0" | "L1" | "L2" | "L3";
 export type MemoryMode = "off" | "summary_only" | "long_term";
 export type DeliveryStatus = "generated" | "failed_no_reply" | "safety_fallback";
-export type ChatStreamEventName = "token" | "graph_update" | "final";
+export type TurnStatus = "accepted" | "running" | "completed" | "failed";
+export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type ChatStreamEventName = "accepted" | "graph_update" | "heartbeat" | "token" | "final" | "error";
 
 export interface CaptchaResponse {
   captcha_id: string;
@@ -110,6 +112,7 @@ export interface ThreadListResponse {
 
 export interface SendMessageRequest {
   user_id?: string;
+  client_message_id?: string;
   content: string;
   input_type?: InputType;
   user_mode?: UserMode;
@@ -130,6 +133,8 @@ export interface AssistantMessage {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   created_at: string;
 }
 
@@ -137,6 +142,9 @@ export interface SendMessageResponse {
   thread_id: string;
   message_id: string;
   assistant_message_id: string | null;
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status: TurnStatus;
   assistant_message: AssistantMessage | null;
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
@@ -157,19 +165,44 @@ export interface MessageListResponse {
   items: MessageItem[];
 }
 
+export interface ChatStreamAcceptedEvent {
+  thread_id: string;
+  status: "accepted";
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status?: TurnStatus;
+}
+
 export interface ChatStreamTokenEvent {
   text: string;
 }
 
 export interface ChatStreamGraphUpdateEvent {
   node: string;
+  status?: string;
   risk_level?: RiskLevel;
+  intent?: string;
+  route_priority?: string;
+  control_category?: string;
+  retrieved_memory_count?: number;
+  rag_used?: boolean;
+  rag_skipped_reason?: string;
+  validator_blocked?: boolean;
+  delivery_status?: DeliveryStatus;
+}
+
+export interface ChatStreamHeartbeatEvent {
+  status: "running";
+  elapsed_ms: number;
 }
 
 export interface ChatStreamFinalEvent {
   thread_id: string;
   message_id: string;
   assistant_message_id: string | null;
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status: TurnStatus;
   assistant_text: string;
   risk_level: RiskLevel;
   intent: string;
@@ -180,11 +213,26 @@ export interface ChatStreamFinalEvent {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   risk_reasons?: string[];
   memory_candidates?: unknown[];
 }
 
-export type ChatStreamEventData = ChatStreamTokenEvent | ChatStreamGraphUpdateEvent | ChatStreamFinalEvent;
+export interface ChatStreamErrorEvent {
+  message: string;
+  retryable: boolean;
+  code?: string;
+  turn_status?: TurnStatus;
+}
+
+export type ChatStreamEventData =
+  | ChatStreamAcceptedEvent
+  | ChatStreamTokenEvent
+  | ChatStreamGraphUpdateEvent
+  | ChatStreamHeartbeatEvent
+  | ChatStreamFinalEvent
+  | ChatStreamErrorEvent;
 
 export interface MemoryItem {
   memory_id: string;

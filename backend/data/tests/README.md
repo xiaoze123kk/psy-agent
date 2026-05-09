@@ -77,7 +77,7 @@ data/tests/
 | `options` | 选项列表，每项含 `id`（如 `"A"`）和 `text`（**所有题型均需提供**） |
 | `metadata` | 可选，附加富文本数据（如 MBTI 的完整 `content`、`category`、`label` 等），scorer.py 自行读取 |
 
-> **score 不在 title.json 中**：选项的计分值统一放在 score.json 的 `scoring` 字段中，保持题目数据与评分规则分离。
+> **score 不在 title.json 中**：选项的计分值统一放在 score.json 的 `scoring` 字段中，保持题目数据与评分规则分离。当前 API 仍返回 `TestOption.score`，当题目 JSON 未提供该字段时会回填 `0` 以兼容旧前端。
 
 ### score.json — 评分规则
 
@@ -139,7 +139,8 @@ def compute(test: dict, answers: dict[int, str]) -> dict:
 
     参数:
         test: 来自 title.json 的完整测试 dict（含 questions）
-        answers: {question_index: option_id}，如 {0: "A", 1: "B", ...}
+        answers: {question_index: option_id}，如 {0: "A", 1: "B", ...}。
+                 若答案来自 JSON 存储，调用方应先把 key 规范化为 int 再传入 scorer。
 
     返回 dict 必须包含:
         result_code       — 结果代码（如 "stable", "INFJ-like"）
@@ -255,4 +256,4 @@ rm -rf data/tests/state/old-test-v1/
 2. **JSON 编码**：所有 JSON 文件必须使用 **UTF-8 without BOM** 编码，否则 Python `json.loads()` 会抛出 `Unexpected UTF-8 BOM` 错误
 3. **scorer 健壮性**：`scorer.py` 应处理 `answers` 中缺失某题答案的情况（`dict.get()` 或 `KeyError` 保护）
 4. **性能**：每次请求实时读取 JSON 文件（轻量，无缓存），单个测试文件建议控制在 500KB 以内
-5. **Python 模块路径**：`scorer.py` 通过 `data.tests.{category}.{test_id}.scorer` 加载，文件夹名中的 `-` 在 Python 模块名中合法（`importlib` 支持）
+5. **Python 模块路径**：`scorer.py` 通过 `data.tests.{category}.{test_id}.scorer` 加载。虽然 `-` 不是标准 Python 标识符的一部分，但这里通过 `importlib.import_module()` 按文件系统路径加载，包含 `-` 的测试文件夹名仍可正常导入。

@@ -52,7 +52,18 @@ class Settings:
     deepseek_chat_model: str
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
+    deepseek_chat_temperature: float
+    deepseek_chat_max_tokens: int
+    deepseek_knowledge_temperature: float
+    deepseek_knowledge_max_tokens: int
+    deepseek_thinking_enabled: bool
+    risk_semantic_llm_enabled: bool
+    risk_semantic_llm_timeout_seconds: float
     chat_turn_timeout_seconds: float
+    memory_background_worker_enabled: bool
+    memory_job_batch_size: int
+    memory_job_max_attempts: int
+    memory_job_poll_interval_seconds: float
     knowledge_llm_answers_enabled: bool
     knowledge_warm_index_on_startup: bool
     counseling_rag_enabled: bool
@@ -88,14 +99,28 @@ def load_settings() -> Settings:
         refresh_token_ttl_seconds=int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", "2592000")),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")),
+        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
+        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")),
         deepseek_knowledge_model=os.getenv(
             "DEEPSEEK_KNOWLEDGE_MODEL",
-            os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
         ),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
+        deepseek_chat_temperature=float(os.getenv("DEEPSEEK_CHAT_TEMPERATURE", "0.75")),
+        deepseek_chat_max_tokens=int(os.getenv("DEEPSEEK_CHAT_MAX_TOKENS", "420")),
+        deepseek_knowledge_temperature=float(os.getenv("DEEPSEEK_KNOWLEDGE_TEMPERATURE", "0.3")),
+        deepseek_knowledge_max_tokens=int(os.getenv("DEEPSEEK_KNOWLEDGE_MAX_TOKENS", "760")),
+        deepseek_thinking_enabled=os.getenv("DEEPSEEK_THINKING_ENABLED", "0").lower()
+        in {"1", "true", "yes", "on"},
+        risk_semantic_llm_enabled=os.getenv("RISK_SEMANTIC_LLM_ENABLED", "0").lower()
+        in {"1", "true", "yes", "on"},
+        risk_semantic_llm_timeout_seconds=float(os.getenv("RISK_SEMANTIC_LLM_TIMEOUT_SECONDS", "1.5")),
         chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "25")),
+        memory_background_worker_enabled=os.getenv("MEMORY_BACKGROUND_WORKER_ENABLED", "1").lower()
+        in {"1", "true", "yes", "on"},
+        memory_job_batch_size=int(os.getenv("MEMORY_JOB_BATCH_SIZE", "5")),
+        memory_job_max_attempts=int(os.getenv("MEMORY_JOB_MAX_ATTEMPTS", "3")),
+        memory_job_poll_interval_seconds=float(os.getenv("MEMORY_JOB_POLL_INTERVAL_SECONDS", "2")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
         knowledge_warm_index_on_startup=os.getenv("KNOWLEDGE_WARM_INDEX_ON_STARTUP", "0").lower()
