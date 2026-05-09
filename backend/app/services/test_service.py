@@ -142,10 +142,14 @@ def submit_answer(attempt_id: str, question_index: int, option_id: str, db: Sess
     if question_index not in valid_indices:
         return False
     question = t["questions"][question_index]
-    if "options" in question:
-        valid_options = {opt["id"] for opt in question["options"]}
-    else:
-        valid_options = {"A", "B"}
+    options = question.get("options")
+    if not isinstance(options, list) or not options:
+        logger.error("Malformed test question %s for test %s", question_index, attempt.test_id)
+        return False
+    valid_options = {opt["id"] for opt in options if isinstance(opt, dict) and "id" in opt}
+    if not valid_options:
+        logger.error("Malformed option set for question %s in test %s", question_index, attempt.test_id)
+        return False
     if option_id not in valid_options:
         return False
     answers = dict(attempt.answers)

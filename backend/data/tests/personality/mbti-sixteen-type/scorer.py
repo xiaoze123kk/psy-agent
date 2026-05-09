@@ -99,15 +99,17 @@ def _parse_normalized(normalized: str) -> dict[str, int]:
     return {"A": 1, "B": 0}
 
 
-def _score_items(score_items: list, answers: dict[int, str]) -> int:
+def _score_items(score_items: list, answers: dict[int | str, str]) -> int:
     """根据 score items（含 1-based index）和用户答案计算总分。"""
     total = 0
     for item in score_items:
         idx_1based = item["index"]
         idx_0based = idx_1based - 1
-        if idx_0based not in answers:
+        answer = answers.get(idx_0based)
+        if answer is None:
+            answer = answers.get(str(idx_0based))
+        if answer is None:
             continue
-        answer = answers[idx_0based]
         normalized = item.get("scoring", {}).get("normalized", "")
         scoring = _parse_normalized(normalized)
         total += scoring.get(answer, 0)
@@ -130,7 +132,7 @@ def _build_generic_result(type_code: str) -> dict:
     }
 
 
-def compute(test: dict, answers: dict[int, str]) -> dict:
+def compute(test: dict, answers: dict[int | str, str]) -> dict:
     score_data = _load_score_data()
     if not score_data:
         return _build_generic_result("UNKN")
