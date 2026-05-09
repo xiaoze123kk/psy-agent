@@ -1366,8 +1366,8 @@ async def _generate_knowledge_answer(
             {"role": "user", "content": user_prompt},
         ],
         model=deepseek_client.knowledge_model,
-        temperature=0.35,
-        max_tokens=760,
+        temperature=settings.deepseek_knowledge_temperature,
+        max_tokens=settings.deepseek_knowledge_max_tokens,
     )
     if not reply:
         return GeneratedKnowledgeAnswer(answer=fallback)

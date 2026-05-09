@@ -291,10 +291,12 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
         original_api_key = knowledge_service.deepseek_client.api_key
         original_chat = knowledge_service.deepseek_client.chat
         captured_system_prompt = ""
+        captured_kwargs: dict[str, object] = {}
 
         async def fake_chat(messages, **kwargs):
-            nonlocal captured_system_prompt
+            nonlocal captured_system_prompt, captured_kwargs
             captured_system_prompt = messages[0]["content"]
+            captured_kwargs = kwargs
             return """
             {
               "scope_status": "out_of_scope",
@@ -325,6 +327,9 @@ class KnowledgeScopeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("不要回答泛百科", captured_system_prompt)
         self.assertIn("scope_status", captured_system_prompt)
+        self.assertEqual(captured_kwargs["model"], "deepseek-v4-pro")
+        self.assertEqual(captured_kwargs["temperature"], original_settings.deepseek_knowledge_temperature)
+        self.assertEqual(captured_kwargs["max_tokens"], original_settings.deepseek_knowledge_max_tokens)
         self.assertEqual(response.scope_status, "out_of_scope")
         self.assertEqual(response.coverage_status, "not_applicable")
         self.assertIsNone(response.gap_id)

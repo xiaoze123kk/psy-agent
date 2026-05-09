@@ -171,7 +171,7 @@ _SIXTEEN_TYPE_RESULTS: dict[str, dict] = {
         "traits": ["对他人的情绪很敏感", "容易想得很深", "压力下会过度消耗自己", "重视深层联结", "很有同理心"],
         "strengths": ["善于洞察他人需求", "忠诚且有耐心", "富有创造力"],
         "blind_spots": ["容易忽略自己的需求", "过度反省", "难以拒绝别人"],
-        "companion_style": "先接住情绪，再轻轻拓宽视角",
+        "companion_style": "先认真回应情绪，再轻轻拓宽视角",
     },
     "ESTP": {
         "result_code": "ESTP-like",

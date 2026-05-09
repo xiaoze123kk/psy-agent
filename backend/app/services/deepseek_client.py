@@ -22,28 +22,62 @@ class DeepSeekClient:
         self.chat_model = settings.deepseek_chat_model
         self.knowledge_model = settings.deepseek_knowledge_model
         self.timeout_seconds = settings.deepseek_timeout_seconds
+        self.chat_temperature = settings.deepseek_chat_temperature
+        self.chat_max_tokens = settings.deepseek_chat_max_tokens
+        self.knowledge_temperature = settings.deepseek_knowledge_temperature
+        self.knowledge_max_tokens = settings.deepseek_knowledge_max_tokens
+        self.thinking_enabled = settings.deepseek_thinking_enabled
 
     @property
     def is_configured(self) -> bool:
         return bool(self.api_key)
+
+    def _chat_payload(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        effective_thinking_enabled = self.thinking_enabled if thinking_enabled is None else thinking_enabled
+        payload: dict[str, Any] = {
+            "model": model or self.chat_model or self.model,
+            "messages": messages,
+            "temperature": self.chat_temperature if temperature is None else temperature,
+            "max_tokens": self.chat_max_tokens if max_tokens is None else max_tokens,
+            "thinking": {"type": "enabled" if effective_thinking_enabled else "disabled"},
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if stream:
+            payload["stream"] = True
+        return payload
 
     async def chat(
         self,
         messages: list[dict[str, str]],
         *,
         model: str | None = None,
-        temperature: float = 0.6,
-        max_tokens: int = 420,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
     ) -> str | None:
         if not self.is_configured:
             return None
 
-        payload: dict[str, Any] = {
-            "model": model or self.chat_model or self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        payload = self._chat_payload(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            thinking_enabled=thinking_enabled,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -102,19 +136,23 @@ class DeepSeekClient:
         messages: list[dict[str, str]],
         *,
         model: str | None = None,
-        temperature: float = 0.6,
-        max_tokens: int = 420,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
     ) -> AsyncIterator[str]:
         if not self.is_configured:
             return
 
-        payload: dict[str, Any] = {
-            "model": model or self.chat_model or self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
+        payload = self._chat_payload(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            thinking_enabled=thinking_enabled,
+            stream=True,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

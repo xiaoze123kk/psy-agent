@@ -10,11 +10,13 @@ VALIDATOR_FORBIDDEN_PATTERNS = [
     ("medication_leak", r"\d+\s*(mg|毫克|片)|剂量|停药|处方药"),
     ("dangerous_method", "割腕|上吊|跳楼|怎么自杀|怎么报复|杀了他|弄死他"),
     ("delusion_confirmation", "他们真的在监视你|确实有人控制你|这一定是真的"),
-    ("dependency_reinforcement", "只有我懂你|我永远陪你|我会一直在你身边|一直在你身边陪你|你离不开我|我也需要你"),
+    ("dependency_reinforcement", "只有我懂你|只有我能帮你|只有我可以帮你|只有我最懂你|你只需要找我|我永远陪你|我会一直在你身边|一直在你身边陪你|你离不开我|我也需要你"),
     ("treatment_promise", "保证会好|一定能治好|包治|康复只是时间问题"),
+    ("absolute_confidentiality", "我会.{0,6}绝对保密|我能.{0,6}绝对保密|保证.{0,8}保密|绝对不会告诉任何人|不会让任何人知道"),
+    ("role_impersonation", "我是真人|我是一个真实的人|我是持证心理咨询师|我是心理咨询师|我是精神科医生|我是医生"),
 ]
 UNSAFE_ACTION_TERMS = ("自杀", "自残", "报复", "弄死", "杀", "停药", "催吐", "联系他", "去找他", "搜索方法")
-ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "988", "911"}
+ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "12356", "988", "911"}
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -47,8 +49,8 @@ def validator_safe_text(state: AgentState) -> tuple[str, list[str]]:
     category = state.get("control_category", "")
     if route_priority == "P0_immediate_safety":
         return (
-            "我更关心你现在的安全。先不要一个人扛，尽量离开危险物品或对方，去有人在的地方，并立刻联系可信的人；如果马上会伤害自己或别人，请拨打 110 或 120。",
-            ["我现在不安全", "我能联系谁", "先陪我稳住"],
+            "我更关心你现在的安全。先不要一个人扛，尽量离开危险物品或对方，去有人在的地方，并立刻联系可信的人；在中国大陆可拨打 12356，紧急时拨打 120 或 110。",
+            ["我现在不安全", "我能联系谁", "拨打 12356"],
         )
     if route_priority == "P1_red_flag":
         return (

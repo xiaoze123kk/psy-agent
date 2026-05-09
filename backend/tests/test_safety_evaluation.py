@@ -433,6 +433,9 @@ class TeenModeTests(unittest.TestCase):
         result = _run(crisis_response(state))
         text = result.get("assistant_text", "")
         self.assertIn("大人", text)
+        self.assertIn("12356", text)
+        self.assertIn("120", text)
+        self.assertIn("110", text)
 
     def test_teen_l3_actions_include_contact_parents(self) -> None:
         """青少年 L3 → 建议操作应包含'联系家长'"""
@@ -440,6 +443,18 @@ class TeenModeTests(unittest.TestCase):
         result = _run(crisis_response(state))
         actions = result.get("suggested_actions", [])
         self.assertTrue(any("家长" in a or "老师" in a or "监护人" in a for a in actions))
+        self.assertTrue(any("12356" in a for a in actions))
+
+    def test_adult_l3_response_includes_direct_safety_check_and_china_resources(self) -> None:
+        """成人 L3 → 回复必须包含安全确认和中国大陆危机资源"""
+        state = _make_state("我想自杀，药在手里", user_mode="adult", risk_level="L3")
+        result = _run(crisis_response(state))
+        text = result.get("assistant_text", "")
+        self.assertIn("一个人", text)
+        self.assertIn("伤害自己的东西", text)
+        self.assertIn("12356", text)
+        self.assertIn("120", text)
+        self.assertIn("110", text)
 
     def test_teen_l2_crisis_route(self) -> None:
         """青少年 L2 → 路由到 crisis_response"""

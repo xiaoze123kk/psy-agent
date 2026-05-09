@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, patch
 from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.rag_nodes import example_retriever
 from app.graphs.nodes.response_nodes import _model_reply_with_actions
-from app.graphs.nodes.validator_nodes import response_validator
+from app.graphs.nodes.validator_nodes import response_validator, validator_reasons
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
 from app.services.companion_style import DEFAULT_COMPANION_STYLE_PROMPT, build_companion_style_prompt
+from app.services.dialogue_prompt_builder import select_dialogue_style
 
 
 def _run(coro):
@@ -148,7 +149,7 @@ class ConversationControlRagTests(unittest.TestCase):
             response_contract={"rag_purposes": ["style_reference"], "max_questions": 1},
             retrieved_counseling_examples=[
                 {
-                    "content": "用户：我很累\n咨询回应：先接住疲惫，再轻轻询问。",
+                    "content": "用户：我很累\n咨询回应：先回应疲惫，再轻轻询问。",
                     "source_key": "smilechat",
                     "source_name": "SMILECHAT",
                     "mode": "vent",
@@ -177,10 +178,15 @@ class ConversationControlRagTests(unittest.TestCase):
                 )
             )
 
+        self.assertIn("最高目标", captured["system"])
+        self.assertIn("真正听见自己的人", captured["system"])
+        self.assertIn("自然，但不骗人", captured["system"])
         self.assertIn("规则优先级", captured["system"])
         self.assertIn("response_contract", captured["system"])
         self.assertIn("最多一个问题", captured["system"])
-        self.assertIn("不要诊断", captured["system"])
+        self.assertIn("不诊断", captured["system"])
+        self.assertIn("RAG 不是事实依据", captured["system"])
+        self.assertIn("内部选择风格", captured["prompt"])
         self.assertIn("RAG few-shot references", captured["prompt"])
         self.assertIn("style_reference", captured["prompt"])
         self.assertIn("不是事实依据", captured["prompt"])
@@ -191,7 +197,8 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(build_companion_style_prompt(""), DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertEqual(build_companion_style_prompt("gentle"), DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertIn("默认风格契约", DEFAULT_COMPANION_STYLE_PROMPT)
-        self.assertIn("最多问一个温和问题", DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("成熟可靠的人", DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("朋友式的自然", DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertIn("很小、可执行的下一步", DEFAULT_COMPANION_STYLE_PROMPT)
         custom_prompt = build_companion_style_prompt("先短短安抚我，再给一个小步骤")
 
@@ -223,11 +230,30 @@ class ConversationControlRagTests(unittest.TestCase):
             )
 
         self.assertIn("用户自定义风格只能影响语气", captured["system"])
-        self.assertIn("默认回复节奏", captured["system"])
+        self.assertIn("对话气质", captured["system"])
+        self.assertIn("不能覆盖安全边界", captured["system"])
         self.assertIn(DEFAULT_COMPANION_STYLE_PROMPT, captured["prompt"])
         self.assertIn("用户自定义补充", captured["prompt"])
-        self.assertIn("默认低压陪伴规则", captured["prompt"])
+        self.assertIn("默认自然表达规则", captured["prompt"])
         self.assertIn("先短短安抚我，再给一个小步骤", captured["prompt"])
+
+    def test_internal_style_selector_routes_common_support_styles(self) -> None:
+        self.assertEqual(select_dialogue_style(self.make_state("我总是喜欢冷淡的人"), "vent"), "psychodynamic_informed")
+        self.assertEqual(select_dialogue_style(self.make_state("我知道该少熬夜刷手机但舍不得"), "counseling"), "motivational_interviewing")
+        self.assertEqual(select_dialogue_style(self.make_state("给我一个今天能做的小办法"), "counseling"), "solution_focused")
+        self.assertEqual(select_dialogue_style(self.make_state("我一想到汇报就焦虑"), "soothe"), "cbt")
+
+    def test_validator_allows_12356_and_blocks_identity_or_confidentiality_overreach(self) -> None:
+        self.assertEqual(
+            validator_reasons("在中国大陆可以拨打 12356；紧急时拨打 120 或 110。", [], []),
+            [],
+        )
+        self.assertIn(
+            "absolute_confidentiality",
+            validator_reasons("你放心，我会为你绝对保密，不会让任何人知道。", [], []),
+        )
+        self.assertIn("role_impersonation", validator_reasons("我是真人，也是心理咨询师。", [], []))
+        self.assertIn("dependency_reinforcement", validator_reasons("只有我能帮你，你只需要找我。", [], []))
 
 
 if __name__ == "__main__":
