@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import chat
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, ConversationTurn, Message, User
+from app.db.models import Base, ConversationThread, ConversationTurn, ConversationTurnTrace, Message, User
 from app.db.session import get_db_session
 from app.services import chat_service
 
@@ -22,6 +23,7 @@ class FakeGraphRuntime:
         self.calls: list[dict] = []
 
     def _result(self) -> dict[str, object]:
+        started_at = datetime.now(timezone.utc)
         return {
             "assistant_text": self.assistant_text,
             "risk_level": "L0",
@@ -33,6 +35,41 @@ class FakeGraphRuntime:
             "should_write_memory": False,
             "referenced_memories": [],
             "referenced_counseling_examples": [],
+            "graph_trace": [
+                {
+                    "sequence": 0,
+                    "trace_type": "graph_node",
+                    "node_name": "risk_classifier",
+                    "status": "completed",
+                    "started_at": started_at,
+                    "completed_at": started_at + timedelta(milliseconds=4),
+                    "duration_ms": 4,
+                    "output_summary": {
+                        "risk_level": "L0",
+                        "risk_reason_codes": [],
+                        "user_text": "private user text",
+                    },
+                    "reason_codes": [],
+                    "error_code": None,
+                },
+                {
+                    "sequence": 1,
+                    "trace_type": "graph_node",
+                    "node_name": "response_validator",
+                    "status": "completed",
+                    "started_at": started_at + timedelta(milliseconds=4),
+                    "completed_at": started_at + timedelta(milliseconds=9),
+                    "duration_ms": 5,
+                    "output_summary": {
+                        "delivery_status": "generated" if self.assistant_text else "failed_no_reply",
+                        "validator_blocked": False,
+                        "retrieved_counseling_examples": [{"content": "private rag passage"}],
+                        "assistant_text": "private assistant text",
+                    },
+                    "reason_codes": [],
+                    "error_code": None,
+                },
+            ],
         }
 
     async def invoke_turn(self, **kwargs) -> dict[str, object]:
@@ -109,6 +146,14 @@ class ChatIdempotencyTests(unittest.TestCase):
             or 0
         )
 
+    def trace_count(self, thread: ConversationThread) -> int:
+        return int(
+            self.db.scalar(
+                select(func.count()).select_from(ConversationTurnTrace).where(ConversationTurnTrace.thread_id == thread.id)
+            )
+            or 0
+        )
+
     def test_same_client_message_id_replays_completed_turn(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)
@@ -127,6 +172,7 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(first.json()["client_message_id"], "client-1")
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)
+        self.assertEqual(self.trace_count(thread), 2)
         self.assertEqual(len(fake_runtime.calls), 1)
 
     def test_same_client_message_id_with_different_content_conflicts(self) -> None:
@@ -168,6 +214,10 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(first.json()["message_id"], second.json()["message_id"])
         self.assertEqual(self.message_count(thread), 1)
         self.assertEqual(self.turn_count(thread), 1)
+        self.assertEqual(self.trace_count(thread), 2)
+        turn = self.db.scalar(select(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
+        self.assertIn("trace_summary", turn.response_snapshot)
+        self.assertEqual(turn.response_snapshot["trace_summary"]["delivery_status"], "failed_no_reply")
         self.assertEqual(len(fake_runtime.calls), 1)
 
     def test_legacy_request_without_client_message_id_still_succeeds(self) -> None:
@@ -212,4 +262,38 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(fallback_response.status_code, 200)
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)
+        self.assertEqual(self.trace_count(thread), 2)
         self.assertEqual(len(fake_runtime.calls), 1)
+
+    def test_trace_rows_are_sanitized_and_trace_summary_is_saved(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        chat_service.graph_runtime = FakeGraphRuntime()
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-trace", "content": "private original content"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        traces = list(
+            self.db.scalars(
+                select(ConversationTurnTrace)
+                .where(ConversationTurnTrace.thread_id == thread.id)
+                .order_by(ConversationTurnTrace.sequence)
+            )
+        )
+        self.assertEqual([trace.sequence for trace in traces], [0, 1])
+        trace_payload = str([(trace.output_summary, trace.reason_codes) for trace in traces])
+        self.assertNotIn("private user text", trace_payload)
+        self.assertNotIn("private original content", trace_payload)
+        self.assertNotIn("private rag passage", trace_payload)
+        self.assertNotIn("private assistant text", trace_payload)
+        self.assertIn("risk_level", trace_payload)
+        self.assertIn("delivery_status", trace_payload)
+
+        assistant_message = self.db.get(Message, response.json()["assistant_message_id"])
+        turn = self.db.scalar(select(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
+        self.assertEqual(assistant_message.meta["trace_summary"]["node_count"], 2)
+        self.assertEqual(turn.response_snapshot["trace_summary"]["node_count"], 2)

@@ -1,4 +1,5 @@
 from app.graphs.main_graph import build_main_graph
+from app.services.graph_trace_service import GraphTraceCollector
 
 
 def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
@@ -76,6 +77,8 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
     }
     safe_keys = (
         "risk_level",
+        "risk_source",
+        "requires_safety_check",
         "intent",
         "route_priority",
         "control_category",
@@ -162,7 +165,13 @@ class GraphRuntime:
             }
         }
 
-    def _map_result(self, result: dict[str, object], *, retrieved_memories: list[dict] | None) -> dict[str, object]:
+    def _map_result(
+        self,
+        result: dict[str, object],
+        *,
+        retrieved_memories: list[dict] | None,
+        graph_trace: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         risk_level = result.get("risk_level", "L0")
         delivery_status = str(result.get("delivery_status") or "")
         assistant_text = str(result.get("assistant_text", "") or "")
@@ -181,7 +190,7 @@ class GraphRuntime:
             if delivery_status != "generated"
             else _counseling_references(retrieved_examples, str(risk_level))
         )
-        return {
+        mapped = {
             "assistant_text": assistant_text,
             "risk_level": risk_level,
             "intent": result.get("intent", "other"),
@@ -223,6 +232,29 @@ class GraphRuntime:
             "failure_reason": result.get("failure_reason"),
             "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
         }
+        if graph_trace is not None:
+            mapped["graph_trace"] = graph_trace
+        return mapped
+
+    async def _invoke_graph_with_trace(
+        self,
+        input_state: dict[str, object],
+        *,
+        config: dict[str, object],
+    ) -> tuple[dict[str, object], list[dict[str, object]]]:
+        collector = GraphTraceCollector()
+        if not hasattr(self.graph, "astream"):
+            result = await self.graph.ainvoke(input_state, config=config)
+            collector.record_node("graph_result", result)
+            return result, collector.records
+
+        state = dict(input_state)
+        async for update in self.graph.astream(input_state, config=config, stream_mode="updates"):
+            for node, node_update in _iter_node_updates(update):
+                if isinstance(node_update, dict):
+                    state.update(node_update)
+                collector.record_node(node, node_update)
+        return state, collector.records
 
     async def invoke_turn(
         self,
@@ -253,11 +285,11 @@ class GraphRuntime:
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
         )
-        result = await self.graph.ainvoke(
+        result, graph_trace = await self._invoke_graph_with_trace(
             input_state,
             config=self._graph_config(thread_id=thread_id, user_id=user_id),
         )
-        return self._map_result(result, retrieved_memories=retrieved_memories)
+        return self._map_result(result, retrieved_memories=retrieved_memories, graph_trace=graph_trace)
 
     async def stream_turn(
         self,
@@ -290,16 +322,29 @@ class GraphRuntime:
         )
         config = self._graph_config(thread_id=thread_id, user_id=user_id)
         state = dict(input_state)
+        collector = GraphTraceCollector()
 
         if not hasattr(self.graph, "astream"):
             result = await self.graph.ainvoke(input_state, config=config)
-            yield "graph_result", self._map_result(result, retrieved_memories=retrieved_memories)
+            graph_trace = [collector.record_node("graph_result", result)]
+            yield "graph_result", self._map_result(
+                result,
+                retrieved_memories=retrieved_memories,
+                graph_trace=graph_trace,
+            )
             return
 
         async for update in self.graph.astream(input_state, config=config, stream_mode="updates"):
             for node, node_update in _iter_node_updates(update):
                 if isinstance(node_update, dict):
                     state.update(node_update)
-                yield "graph_update", _safe_graph_update(node, state, node_update)
+                trace_record = collector.record_node(node, node_update)
+                graph_update = _safe_graph_update(node, state, node_update)
+                graph_update["duration_ms"] = trace_record["duration_ms"]
+                yield "graph_update", graph_update
 
-        yield "graph_result", self._map_result(state, retrieved_memories=retrieved_memories)
+        yield "graph_result", self._map_result(
+            state,
+            retrieved_memories=retrieved_memories,
+            graph_trace=collector.records,
+        )

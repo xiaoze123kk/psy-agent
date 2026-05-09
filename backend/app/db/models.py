@@ -141,6 +141,40 @@ class ConversationTurn(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class ConversationTurnTrace(Base):
+    __tablename__ = "conversation_turn_traces"
+    __table_args__ = (
+        UniqueConstraint("turn_id", "sequence", name="uq_conversation_turn_traces_turn_sequence"),
+        Index("idx_conversation_turn_traces_turn", "turn_id"),
+        Index("idx_conversation_turn_traces_thread_created", "thread_id", "created_at"),
+        Index("idx_conversation_turn_traces_node_status", "node_name", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    turn_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("conversation_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    trace_type: Mapped[str] = mapped_column(String(32), default="graph_node")
+    node_name: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), default="completed")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    output_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class UserMemory(Base):
     __tablename__ = "user_memories"
     __table_args__ = (

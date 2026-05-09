@@ -18,6 +18,7 @@ from app.db.models import ConversationThread, ConversationTurn, Message, RiskEve
 from app.graphs.nodes import sync_risk_classify
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
+from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
 from app.services.memory_service import (
     build_memory_index,
     index_memory_embeddings,
@@ -356,6 +357,15 @@ def _json_safe(value: object) -> object:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
+def _pop_graph_trace(assistant_result: dict[str, object]) -> list[dict[str, object]]:
+    raw_trace = assistant_result.pop("graph_trace", [])
+    graph_trace = [record for record in raw_trace if isinstance(record, dict)] if isinstance(raw_trace, list) else []
+    if not graph_trace:
+        graph_trace = build_delivery_trace(assistant_result)
+    assistant_result["trace_summary"] = build_trace_summary(graph_trace, assistant_result)
+    return graph_trace
+
+
 def _turn_metadata(turn: ConversationTurn | None) -> dict[str, str]:
     if turn is None:
         return {}
@@ -623,6 +633,8 @@ async def _persist_turn_result(
 ) -> tuple[Message | None, dict[str, object]]:
     assistant_result = _coerce_delivery_result(assistant_result, pre_risk_level=context.pre_risk_level)
     delivery_status = str(assistant_result.get("delivery_status", "generated"))
+    graph_trace = _pop_graph_trace(assistant_result)
+    trace_summary = assistant_result.get("trace_summary", {})
 
     if not thread.title or thread.title == "new session":
         thread.title = payload.content[:20] if payload.content else "new session"
@@ -637,6 +649,7 @@ async def _persist_turn_result(
             assistant_result=assistant_result,
         )
         db.commit()
+        persist_turn_traces(db, turn=context.turn, traces=graph_trace)
         db.refresh(context.user_message)
         db.refresh(context.turn)
         db.refresh(thread)
@@ -661,6 +674,7 @@ async def _persist_turn_result(
         "delivery_status": delivery_status,
         "failure_reason": assistant_result.get("failure_reason"),
         "retryable": bool(assistant_result.get("retryable", False)),
+        "trace_summary": trace_summary,
     }
     assistant_message = Message(
         thread_id=thread.id,
@@ -711,6 +725,7 @@ async def _persist_turn_result(
         assistant_result=assistant_result,
     )
     db.commit()
+    persist_turn_traces(db, turn=context.turn, traces=graph_trace)
     db.refresh(context.user_message)
     db.refresh(assistant_message)
     db.refresh(context.turn)
