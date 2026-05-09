@@ -185,6 +185,9 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("response_contract", captured["system"])
         self.assertIn("最多一个问题", captured["system"])
         self.assertIn("不诊断", captured["system"])
+        self.assertIn("不要把每句话都心理问题化", captured["system"])
+        self.assertIn("呵呵", captured["system"])
+        self.assertIn("闲聊", captured["system"])
         self.assertIn("RAG 不是事实依据", captured["system"])
         self.assertIn("内部选择风格", captured["prompt"])
         self.assertIn("RAG few-shot references", captured["prompt"])
@@ -199,6 +202,7 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("默认风格契约", DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertIn("成熟可靠的人", DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertIn("朋友式的自然", DEFAULT_COMPANION_STYLE_PROMPT)
+        self.assertIn("允许普通闲聊存在", DEFAULT_COMPANION_STYLE_PROMPT)
         self.assertIn("很小、可执行的下一步", DEFAULT_COMPANION_STYLE_PROMPT)
         custom_prompt = build_companion_style_prompt("先短短安抚我，再给一个小步骤")
 
