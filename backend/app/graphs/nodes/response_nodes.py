@@ -46,6 +46,9 @@ async def _model_reply_with_actions(
     control_category = state.get("control_category", "normal_support")
     route_priority = state.get("route_priority", "P2_support")
     examples_text = examples_text_from_state(state)
+    teen_guidance = ""
+    if user_mode == "teen":
+        teen_guidance = "青少年模式下语气更短更稳，遇到持续压力、睡眠受影响、害怕或不敢跟家里说时，优先温和提醒可以找家长、监护人、老师或学校心理老师这类可信大人一起扛，不要鼓励隐瞒。"
 
     mode_guidance = {
         "companion": "先共情和接住情绪，少分析，最多问一个温和的问题。",
@@ -53,6 +56,8 @@ async def _model_reply_with_actions(
         "soothe": "先帮助用户稳定身体和呼吸，再轻轻询问触发点。",
         "counseling": "轻量梳理事件、感受、想法和一个很小的下一步。",
     }.get(mode, "先共情，再给一个很小的下一步。")
+    if teen_guidance:
+        mode_guidance = f"{mode_guidance}{teen_guidance}"
 
     system_prompt = (
         "你是心理支持产品里的陪伴型 agent，不是医生，也不是心理咨询师。"
