@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 
+from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.response_nodes import crisis_response
 from app.graphs.nodes.risk_nodes import risk_classifier
 from app.graphs.routing import route_by_intent, route_by_risk
@@ -74,6 +75,10 @@ def _classify(text: str) -> dict:
         "risk_level": result.get("risk_level", "L0"),
         "risk_reasons": result.get("risk_reasons", []),
         "intent": result.get("intent", "other"),
+        "semantic_risk": result.get("semantic_risk", {}),
+        "risk_source": result.get("risk_source", ""),
+        "risk_reason_codes": result.get("risk_reason_codes", []),
+        "requires_safety_check": result.get("requires_safety_check", False),
     }
 
 
@@ -212,6 +217,56 @@ class L2HighRiskTests(unittest.TestCase):
         r = _classify("我最近总想到自杀这两个字")
         self.assertEqual(r["risk_level"], "L2")
         self.assertNotEqual(r["risk_level"], "L3")
+
+
+class TwoStageRiskClassifierTests(unittest.TestCase):
+    """6.1 两阶段风险识别 —— 隐性表达、误报降低、结构化原因。"""
+
+    def test_implicit_farewell_escalates_to_l2(self) -> None:
+        r = _classify("我已经安排好后事了")
+        self.assertEqual(r["risk_level"], "L2")
+        self.assertIn("implicit_farewell", r["risk_reason_codes"])
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_near_term_means_escalates_to_l3(self) -> None:
+        r = _classify("今晚就不想再醒来了，药也准备好了")
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertIn("near_term_timeframe", r["risk_reason_codes"])
+        self.assertIn("means_mentioned", r["risk_reason_codes"])
+
+    def test_final_chat_hint_needs_safety_check_without_forcing_l3(self) -> None:
+        r = _classify("我把东西都送人了，可能这是最后一次聊天")
+        self.assertEqual(r["risk_level"], "L2")
+        self.assertIn("implicit_farewell", r["risk_reason_codes"])
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_academic_context_downgrades_keyword_false_positive(self) -> None:
+        r = _classify("论文里提到自杀风险评估")
+        self.assertEqual(r["risk_level"], "L0")
+        self.assertIn("academic_context", r["risk_reason_codes"])
+        self.assertFalse(r["requires_safety_check"])
+
+    def test_news_context_does_not_trigger_personal_safety_check(self) -> None:
+        state = _make_state("新闻在讨论自杀预防热线")
+        risk_result = _run(risk_classifier(state))
+        state.update(risk_result)
+        state.update(_run(control_plane(state)))
+
+        self.assertEqual(state["risk_level"], "L0")
+        self.assertNotEqual(state["route_priority"], "P0_immediate_safety")
+        self.assertFalse(state["requires_safety_check"])
+
+    def test_course_case_context_is_not_treated_as_user_crisis(self) -> None:
+        r = _classify("我在做课程案例分析，里面有人说不想活了")
+        self.assertEqual(r["risk_level"], "L0")
+        self.assertIn("academic_context", r["risk_reason_codes"])
+        self.assertFalse(r["requires_safety_check"])
+
+    def test_protective_factor_is_recorded_without_dropping_risk(self) -> None:
+        r = _classify("有过不想活的念头，但我不会做，我朋友在旁边")
+        self.assertEqual(r["risk_level"], "L2")
+        self.assertIn("protective_support_present", r["risk_reason_codes"])
+        self.assertTrue(r["semantic_risk"]["protective_factor"])
 
 
 # ---------------------------------------------------------------------------

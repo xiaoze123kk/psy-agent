@@ -55,6 +55,18 @@ def base_contract(*, allow_rag: bool) -> dict:
 async def control_plane(state: AgentState) -> AgentState:
     text = state.get("normalized_text", "") or state.get("user_text", "")
     risk_level = state.get("risk_level", "L0")
+    semantic_risk = state.get("semantic_risk", {}) or {}
+    if not isinstance(semantic_risk, dict):
+        semantic_risk = {}
+    risk_reason_codes = list(state.get("risk_reason_codes", []) or [])
+    discussion_only = (
+        bool(semantic_risk.get("discussion_context"))
+        and risk_level == "L0"
+        and not any(
+            bool(semantic_risk.get(key))
+            for key in ("ideation", "intent", "plan", "means")
+        )
+    )
     labels: list[str] = []
     reasons: list[str] = []
     category = "normal_support"
@@ -63,8 +75,19 @@ async def control_plane(state: AgentState) -> AgentState:
     allow_rag = True
     confidence = 0.78
 
-    self_harm = has_any_text(text, SELF_HARM_TERMS)
-    immediate = has_any_text(text, IMMEDIATE_TERMS)
+    semantic_self_harm = (
+        not discussion_only
+        and any(bool(semantic_risk.get(key)) for key in ("ideation", "intent", "plan", "means"))
+    )
+    self_harm = (not discussion_only and has_any_text(text, SELF_HARM_TERMS)) or semantic_self_harm
+    immediate = (
+        not discussion_only
+        and (
+            has_any_text(text, IMMEDIATE_TERMS)
+            or semantic_risk.get("timeframe") == "near_term"
+            or bool(semantic_risk.get("means"))
+        )
+    )
     harm_other = has_any_text(text, HARM_OTHER_TERMS)
 
     if risk_level in {"L2", "L3"} or self_harm:
@@ -73,7 +96,11 @@ async def control_plane(state: AgentState) -> AgentState:
         memory_policy = "crisis_audit_only"
         allow_rag = False
         labels.append("self_harm_signal")
-        reasons.extend(matched_text(text, SELF_HARM_TERMS) or state.get("risk_reasons", []))
+        if semantic_self_harm:
+            labels.append("semantic_self_harm_signal")
+        if state.get("requires_safety_check"):
+            labels.append("requires_safety_check")
+        reasons.extend(matched_text(text, SELF_HARM_TERMS) or state.get("risk_reasons", []) or risk_reason_codes)
         if immediate or risk_level == "L3":
             labels.append("near_term_or_means_signal")
         risk_level = "L3" if immediate or risk_level == "L3" else "L2"
@@ -163,7 +190,9 @@ async def control_plane(state: AgentState) -> AgentState:
         confidence = 0.74
     else:
         allow_rag = risk_level not in {"L2", "L3"}
-        labels.append("support_request")
+        labels.append("non_personal_risk_discussion" if discussion_only else "support_request")
+        if discussion_only:
+            reasons.extend(state.get("risk_reasons", []) or risk_reason_codes[:3])
         confidence = 0.7 if not has_any_text(text, SUPPORT_TERMS) else 0.82
 
     contract = base_contract(allow_rag=allow_rag)
@@ -184,10 +213,18 @@ async def control_plane(state: AgentState) -> AgentState:
         "control_reasons": reasons[:6],
         "control_confidence": confidence,
         "risk_formulation": {
-            "labels": labels,
+            "labels": list(dict.fromkeys(labels)),
             "observed_reasons": reasons[:6],
             "uncertainty": round(1 - confidence, 3),
+            "semantic_risk": semantic_risk,
+            "reason_codes": risk_reason_codes,
+            "risk_source": state.get("risk_source", ""),
+            "requires_safety_check": bool(state.get("requires_safety_check", route_priority == "P0_immediate_safety")),
         },
+        "semantic_risk": semantic_risk,
+        "risk_reason_codes": risk_reason_codes,
+        "risk_source": state.get("risk_source", ""),
+        "requires_safety_check": bool(state.get("requires_safety_check", route_priority == "P0_immediate_safety")),
         "response_contract": contract,
         "memory_policy": memory_policy,
         "rag_policy": {

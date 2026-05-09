@@ -13,7 +13,13 @@ from app.graphs.nodes.response_nodes import (
     counseling_response,
     soothing_response,
 )
-from app.graphs.nodes.risk_nodes import intent_classifier, risk_classifier, sync_risk_classify
+from app.graphs.nodes.risk_nodes import (
+    classify_risk_text,
+    intent_classifier,
+    risk_classifier,
+    semantic_risk_assess,
+    sync_risk_classify,
+)
 from app.graphs.nodes.validator_nodes import response_validator
 
 _base_contract = base_contract
@@ -35,12 +41,14 @@ __all__ = [
     "example_hit_to_dict",
     "example_retriever",
     "intent_classifier",
+    "classify_risk_text",
     "load_user_profile",
     "memory_candidate_extract",
     "normalize_input",
     "response_mode_for_state",
     "response_validator",
     "risk_classifier",
+    "semantic_risk_assess",
     "skip_memory",
     "soothing_response",
     "summarize_turn",

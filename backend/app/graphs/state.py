@@ -37,6 +37,10 @@ class AgentState(TypedDict, total=False):
     ]
     risk_level: Literal["L0", "L1", "L2", "L3"]
     risk_reasons: list[str]
+    semantic_risk: dict
+    risk_source: str
+    risk_reason_codes: list[str]
+    requires_safety_check: bool
 
     route_priority: Literal[
         "P0_immediate_safety",

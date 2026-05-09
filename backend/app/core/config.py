@@ -52,6 +52,8 @@ class Settings:
     deepseek_chat_model: str
     deepseek_knowledge_model: str
     deepseek_timeout_seconds: float
+    risk_semantic_llm_enabled: bool
+    risk_semantic_llm_timeout_seconds: float
     chat_turn_timeout_seconds: float
     knowledge_llm_answers_enabled: bool
     knowledge_warm_index_on_startup: bool
@@ -95,6 +97,9 @@ def load_settings() -> Settings:
             os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         ),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "20")),
+        risk_semantic_llm_enabled=os.getenv("RISK_SEMANTIC_LLM_ENABLED", "0").lower()
+        in {"1", "true", "yes", "on"},
+        risk_semantic_llm_timeout_seconds=float(os.getenv("RISK_SEMANTIC_LLM_TIMEOUT_SECONDS", "1.5")),
         chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "25")),
         knowledge_llm_answers_enabled=os.getenv("KNOWLEDGE_LLM_ANSWERS_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
