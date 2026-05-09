@@ -17,7 +17,8 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from app.graphs.nodes import crisis_response, risk_classifier
+from app.graphs.nodes.response_nodes import crisis_response
+from app.graphs.nodes.risk_nodes import risk_classifier
 from app.graphs.routing import route_by_intent, route_by_risk
 from app.graphs.state import AgentState
 

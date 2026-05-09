@@ -4,7 +4,8 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.graphs.nodes import companion_response, summarize_turn
+from app.graphs.nodes.memory_nodes import summarize_turn
+from app.graphs.nodes.response_nodes import companion_response
 from app.graphs.state import AgentState
 
 
@@ -42,8 +43,8 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
     def test_companion_empty_model_returns_no_reply(self) -> None:
         state = self.make_state()
         with (
-            patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
-            patch("app.graphs.nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
+            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
         ):
             result = _run(companion_response(state))
 
@@ -59,8 +60,8 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
             recent_messages=[],
         )
         with (
-            patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
-            patch("app.graphs.nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
+            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
         ):
             result = _run(companion_response(state))
 

@@ -4,7 +4,10 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.graphs.nodes import control_plane, example_retriever, response_validator, _model_reply_with_actions
+from app.graphs.nodes.control_nodes import control_plane
+from app.graphs.nodes.rag_nodes import example_retriever
+from app.graphs.nodes.response_nodes import _model_reply_with_actions
+from app.graphs.nodes.validator_nodes import response_validator
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
 
@@ -48,7 +51,7 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(state["risk_level"], "L3")
         self.assertFalse(state["rag_policy"]["enabled"])
 
-        with patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
+        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
             result = _run(example_retriever(state))
 
         self.assertFalse(result["rag_used"])
@@ -69,7 +72,7 @@ class ConversationControlRagTests(unittest.TestCase):
             intervention_tags=["躯体稳定"],
         )
 
-        with patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[hit])):
+        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[hit])):
             result = _run(example_retriever(state))
 
         self.assertTrue(result["rag_used"])
@@ -81,7 +84,7 @@ class ConversationControlRagTests(unittest.TestCase):
         state.update(_run(control_plane(state)))
 
         self.assertEqual(state["control_category"], "abusive_to_assistant")
-        with patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
+        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
             result = _run(example_retriever(state))
 
         self.assertFalse(result["rag_used"])
@@ -160,8 +163,8 @@ class ConversationControlRagTests(unittest.TestCase):
             return "我在，听起来你已经撑了很久。\n---\n我还想说\n我想理清一点\n先停一下"
 
         with (
-            patch("app.graphs.nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("unexpected retrieval"))),
-            patch("app.graphs.nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)),
+            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("unexpected retrieval"))),
+            patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)),
         ):
             body, actions = _run(
                 _model_reply_with_actions(

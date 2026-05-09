@@ -1,6 +1,19 @@
 from langgraph.graph import END, START, StateGraph
 
-from app.graphs import nodes
+from app.graphs.nodes.control_nodes import control_plane
+from app.graphs.nodes.input_nodes import load_user_profile, normalize_input
+from app.graphs.nodes.memory_nodes import memory_candidate_extract, skip_memory, summarize_turn, write_memory
+from app.graphs.nodes.rag_nodes import example_retriever
+from app.graphs.nodes.response_nodes import (
+    boundary_response,
+    clinical_red_flag_response,
+    companion_response,
+    crisis_response,
+    counseling_response,
+    soothing_response,
+)
+from app.graphs.nodes.risk_nodes import intent_classifier, risk_classifier
+from app.graphs.nodes.validator_nodes import response_validator
 from app.graphs.routing import route_by_control, route_by_intent, route_memory_write
 from app.graphs.state import AgentState
 
@@ -8,25 +21,25 @@ from app.graphs.state import AgentState
 def build_main_graph():
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("normalize_input", nodes.normalize_input)
-    workflow.add_node("load_user_profile", nodes.load_user_profile)
-    workflow.add_node("risk_classifier", nodes.risk_classifier)
-    workflow.add_node("control_plane", nodes.control_plane)
-    workflow.add_node("intent_classifier", nodes.intent_classifier)
-    workflow.add_node("example_retriever", nodes.example_retriever)
+    workflow.add_node("normalize_input", normalize_input)
+    workflow.add_node("load_user_profile", load_user_profile)
+    workflow.add_node("risk_classifier", risk_classifier)
+    workflow.add_node("control_plane", control_plane)
+    workflow.add_node("intent_classifier", intent_classifier)
+    workflow.add_node("example_retriever", example_retriever)
 
-    workflow.add_node("boundary_response", nodes.boundary_response)
-    workflow.add_node("clinical_red_flag_response", nodes.clinical_red_flag_response)
-    workflow.add_node("companion_response", nodes.companion_response)
-    workflow.add_node("soothing_response", nodes.soothing_response)
-    workflow.add_node("counseling_response", nodes.counseling_response)
-    workflow.add_node("crisis_response", nodes.crisis_response)
-    workflow.add_node("response_validator", nodes.response_validator)
+    workflow.add_node("boundary_response", boundary_response)
+    workflow.add_node("clinical_red_flag_response", clinical_red_flag_response)
+    workflow.add_node("companion_response", companion_response)
+    workflow.add_node("soothing_response", soothing_response)
+    workflow.add_node("counseling_response", counseling_response)
+    workflow.add_node("crisis_response", crisis_response)
+    workflow.add_node("response_validator", response_validator)
 
-    workflow.add_node("summarize_turn", nodes.summarize_turn)
-    workflow.add_node("memory_candidate_extract", nodes.memory_candidate_extract)
-    workflow.add_node("write_memory", nodes.write_memory)
-    workflow.add_node("skip_memory", nodes.skip_memory)
+    workflow.add_node("summarize_turn", summarize_turn)
+    workflow.add_node("memory_candidate_extract", memory_candidate_extract)
+    workflow.add_node("write_memory", write_memory)
+    workflow.add_node("skip_memory", skip_memory)
 
     workflow.add_edge(START, "normalize_input")
     workflow.add_edge("normalize_input", "load_user_profile")
