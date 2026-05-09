@@ -58,7 +58,7 @@ _TRAD_DIM_NEGATIVE = {"E-I": "I", "S-N": "N", "T-F": "F", "J-P": "P"}
 
 
 def _load_score_data() -> dict:
-    score_files = list(_SCORE_DIR.glob("*_score_*.json"))
+    score_files = list(_SCORE_DIR.glob("*score*.json"))
     if not score_files:
         logger.error("No score file found in %s", _SCORE_DIR)
         return {}
@@ -99,15 +99,13 @@ def _parse_normalized(normalized: str) -> dict[str, int]:
     return {"A": 1, "B": 0}
 
 
-def _score_items(score_items: list, answers: dict[int | str, str]) -> int:
+def _score_items(score_items: list, answers: dict[int, str]) -> int:
     """根据 score items（含 1-based index）和用户答案计算总分。"""
     total = 0
     for item in score_items:
         idx_1based = item["index"]
         idx_0based = idx_1based - 1
         answer = answers.get(idx_0based)
-        if answer is None:
-            answer = answers.get(str(idx_0based))
         if answer is None:
             continue
         normalized = item.get("scoring", {}).get("normalized", "")
@@ -132,7 +130,7 @@ def _build_generic_result(type_code: str) -> dict:
     }
 
 
-def compute(test: dict, answers: dict[int | str, str]) -> dict:
+def compute(test: dict, answers: dict[int, str]) -> dict:
     score_data = _load_score_data()
     if not score_data:
         return _build_generic_result("UNKN")
