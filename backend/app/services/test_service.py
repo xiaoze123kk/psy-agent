@@ -3,6 +3,7 @@
 import importlib
 import json
 import logging
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -84,6 +85,28 @@ def _question_to_schema(q: dict) -> TestQuestion:
     )
 
 
+def _build_shuffled_questions(questions: list[dict], seed: str) -> list[dict]:
+    rng = random.Random(seed)
+    order = list(range(len(questions)))
+    rng.shuffle(order)
+    shuffled = []
+    for new_idx, old_idx in enumerate(order):
+        q = dict(questions[old_idx])
+        q["index"] = new_idx
+        shuffled.append(q)
+    return shuffled
+
+
+def _remap_answer_index(attempt_id: str, shuffled_index: int, question_count: int) -> int | None:
+    rng = random.Random(attempt_id)
+    order = list(range(question_count))
+    rng.shuffle(order)
+    for new_idx, old_idx in enumerate(order):
+        if new_idx == shuffled_index:
+            return old_idx
+    return None
+
+
 def get_tests() -> TestListResponse:
     items = [
         TestListItem(
@@ -124,10 +147,11 @@ def start_attempt(user_id: str, test_id: str, db: Session) -> StartAttemptRespon
     db.add(attempt)
     db.commit()
     db.refresh(attempt)
+    shuffled = _build_shuffled_questions(t["questions"], attempt.id)
     return StartAttemptResponse(
         attempt_id=attempt.id,
         test_id=test_id,
-        questions=[_question_to_schema(q) for q in t["questions"]],
+        questions=[_question_to_schema(q) for q in shuffled],
     )
 
 
@@ -138,10 +162,10 @@ def submit_answer(attempt_id: str, question_index: int, option_id: str, db: Sess
     t = _find_test(attempt.test_id)
     if t is None:
         return False
-    valid_indices = {q["index"] for q in t["questions"]}
-    if question_index not in valid_indices:
+    original_index = _remap_answer_index(attempt_id, question_index, len(t["questions"]))
+    if original_index is None:
         return False
-    question = t["questions"][question_index]
+    question = t["questions"][original_index]
     if "options" in question:
         valid_options = {opt["id"] for opt in question["options"]}
     else:
@@ -149,7 +173,7 @@ def submit_answer(attempt_id: str, question_index: int, option_id: str, db: Sess
     if option_id not in valid_options:
         return False
     answers = dict(attempt.answers)
-    answers[question_index] = option_id
+    answers[original_index] = option_id
     attempt.answers = answers
     db.commit()
     return True
