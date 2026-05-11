@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light;
+
+  /* Material 3-style color roles, tuned from loadingv2 mint/teal. */
+  --md-sys-color-primary: #006c4a;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #d7f7ea;
+  --md-sys-color-on-primary-container: #003826;
+  --md-sys-color-secondary: #4f6358;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #d2e8dc;
+  --md-sys-color-on-secondary-container: #0d1f17;
+  --md-sys-color-tertiary: #286276;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #ccecf8;
+  --md-sys-color-on-tertiary-container: #001f29;
+  --md-sys-color-error: #b3261e;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #f9dedc;
+  --md-sys-color-on-error-container: #410e0b;
+  --md-sys-color-warning: #8a5200;
+  --md-sys-color-warning-container: #fff0cf;
+  --md-sys-color-on-warning-container: #2b1700;
+  --md-sys-color-surface: #fbfcf8;
+  --md-sys-color-surface-dim: #d9ddd6;
+  --md-sys-color-surface-bright: #fbfcf8;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f3f8f2;
+  --md-sys-color-surface-container: #edf4ee;
+  --md-sys-color-surface-container-high: #e6efe8;
+  --md-sys-color-surface-container-highest: #dfe9e2;
+  --md-sys-color-on-surface: #18211c;
+  --md-sys-color-on-surface-variant: #425049;
+  --md-sys-color-outline: #728078;
+  --md-sys-color-outline-variant: #c1cbc4;
+  --md-sys-color-scrim: rgba(15, 23, 18, 0.42);
+
+  /* Brand aliases kept for current placeholders and future readable CSS. */
+  --app-bg: var(--md-sys-color-surface);
+  --surface-muted: var(--md-sys-color-surface-container);
+  --mint-soft: var(--md-sys-color-primary-container);
+  --teal: var(--md-sys-color-primary);
+  --teal-dark: var(--md-sys-color-on-primary-container);
+  --amber: #f6c86f;
+  --safety-bg: var(--md-sys-color-warning-container);
+  --text-main: var(--md-sys-color-on-surface);
+  --text-muted: var(--md-sys-color-on-surface-variant);
+  --line: var(--md-sys-color-outline-variant);
+
+  /* Typography scale: M3-inspired, Chinese-first. */
+  --font-family-sans: "Segoe UI", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --md-sys-typescale-title-large-size: 22px;
+  --md-sys-typescale-title-large-line-height: 30px;
+  --md-sys-typescale-title-medium-size: 16px;
+  --md-sys-typescale-title-medium-line-height: 24px;
+  --md-sys-typescale-body-large-size: 16px;
+  --md-sys-typescale-body-large-line-height: 26px;
+  --md-sys-typescale-body-medium-size: 14px;
+  --md-sys-typescale-body-medium-line-height: 22px;
+  --md-sys-typescale-label-large-size: 14px;
+  --md-sys-typescale-label-large-line-height: 20px;
+  --md-sys-typescale-label-medium-size: 12px;
+  --md-sys-typescale-label-medium-line-height: 16px;
+
+  /* Spacing and layout. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --page-padding-x: 22px;
+  --tap-target-min: 44px;
+  --bottom-nav-height: 72px;
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Shape scale. */
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 24px;
+  --md-sys-shape-corner-full: 999px;
+
+  /* Elevation and glass. */
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1: 0 1px 3px rgba(24, 33, 28, 0.08), 0 1px 2px rgba(24, 33, 28, 0.06);
+  --md-sys-elevation-level2: 0 8px 24px rgba(24, 33, 28, 0.1);
+  --md-sys-elevation-level3: 0 16px 40px rgba(24, 33, 28, 0.14);
+  --shadow-soft: var(--md-sys-elevation-level2);
+  --glass-surface: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.62);
+  --glass-blur: blur(24px);
+
+  /* State layers and motion. */
+  --state-hover-opacity: 0.08;
+  --state-focus-opacity: 0.12;
+  --state-pressed-opacity: 0.12;
+  --motion-duration-short: 150ms;
+  --motion-duration-medium: 220ms;
+  --motion-duration-long: 300ms;
+  --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layering. */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-bottom-nav: 20;
+  --z-sheet: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+}

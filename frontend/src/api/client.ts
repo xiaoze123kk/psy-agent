@@ -33,13 +33,6 @@ export class ApiClient {
     });
   }
 
-  async put<T, B = unknown>(path: string, body: B): Promise<T> {
-    return this.request<T>(path, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
-  }
-
   async patch<T, B = unknown>(path: string, body: B): Promise<T> {
     return this.request<T>(path, {
       method: "PATCH",

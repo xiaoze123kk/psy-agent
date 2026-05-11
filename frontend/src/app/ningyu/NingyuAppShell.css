@@ -1,0 +1,1202 @@
+.ningyu-transition {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background: #e0f2f1;
+}
+
+.ningyu-shell {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: #123b36;
+  transition: background-color 1000ms ease-in-out, color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night {
+  color: #e2e8f0;
+  background: #060e17;
+}
+
+.ningyu-bg,
+.ningyu-bg__image,
+.ningyu-bg__wash {
+  position: absolute;
+  inset: 0;
+}
+
+.ningyu-bg {
+  z-index: 0;
+  background: #060e17;
+}
+
+.ningyu-bg__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: bottom;
+  opacity: 0.96;
+  transition: opacity 1000ms ease-in-out;
+}
+
+.ningyu-bg__image.is-hidden {
+  opacity: 0;
+}
+
+.ningyu-bg__wash {
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(240, 253, 250, 0.42), transparent 42%, rgba(239, 246, 255, 0.32));
+  transition: background 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-bg__wash {
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.ningyu-header {
+  position: relative;
+  z-index: 3;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(153, 246, 228, 0.42);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.84), rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.68));
+  box-shadow: 0 4px 24px -4px rgba(20, 184, 166, 0.12);
+  transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-header {
+  border-bottom-color: rgba(51, 65, 85, 0.62);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.84), rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.72));
+}
+
+.ningyu-brand,
+.ningyu-header__actions,
+.ningyu-section-label,
+.ningyu-new-chat,
+.ningyu-sidebar__bottom button,
+.ningyu-safety,
+.ningyu-safety-entry,
+.ningyu-panel-section h2,
+.ningyu-support-card {
+  display: flex;
+  align-items: center;
+}
+
+.ningyu-brand {
+  gap: 12px;
+}
+
+.ningyu-brand img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(15, 118, 110, 0.2));
+}
+
+.ningyu-brand h1,
+.ningyu-brand p,
+.ningyu-panel-section h2,
+.ningyu-welcome h2,
+.ningyu-welcome p,
+.ningyu-message p {
+  margin: 0;
+}
+
+.ningyu-brand h1 {
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+.ningyu-brand p {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(17, 94, 89, 0.72);
+  transition: color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-brand p {
+  color: #cbd5e1;
+}
+
+.ningyu-brand__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.65);
+  animation: ningyuPulse 3s ease-in-out infinite;
+}
+
+.ningyu-header__actions {
+  gap: 16px;
+}
+
+.ningyu-round-button,
+.ningyu-safety,
+.ningyu-safety-entry,
+.ningyu-login__box button,
+.ningyu-input button,
+.ningyu-new-chat,
+.ningyu-thread,
+.ningyu-sidebar__bottom button,
+.ningyu-support-card,
+.ningyu-suggestions button {
+  transition:
+    transform 220ms ease,
+    background 1000ms ease-in-out,
+    border-color 1000ms ease-in-out,
+    color 1000ms ease-in-out,
+    box-shadow 300ms ease;
+}
+
+.ningyu-round-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.58);
+  color: #f59e0b;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.2);
+}
+
+.ningyu-shell.is-night .ningyu-round-button {
+  color: #34d399;
+  border-color: rgba(71, 85, 105, 0.52);
+  background: rgba(30, 41, 59, 0.52);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.24);
+}
+
+.ningyu-round-button:hover,
+.ningyu-new-chat:hover,
+.ningyu-thread:hover,
+.ningyu-support-card:hover,
+.ningyu-suggestions button:hover {
+  transform: translateY(-1px);
+}
+
+.ningyu-safety {
+  min-height: 44px;
+  gap: 8px;
+  padding: 9px 14px 9px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(153, 246, 228, 0.42);
+  background: rgba(240, 253, 250, 0.46);
+  color: rgba(17, 94, 89, 0.92);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ningyu-safety__content {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ningyu-safety__content strong,
+.ningyu-safety__content small {
+  display: block;
+}
+
+.ningyu-safety__content strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.ningyu-safety__content small {
+  color: inherit;
+  opacity: 0.72;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.ningyu-safety.is-loading {
+  border-color: rgba(125, 211, 252, 0.56);
+  background: rgba(240, 249, 255, 0.62);
+  color: #0369a1;
+}
+
+.ningyu-safety.is-watch {
+  border-color: rgba(253, 186, 116, 0.52);
+  background: rgba(255, 247, 237, 0.64);
+  color: #9a3412;
+}
+
+.ningyu-safety.is-support {
+  border-color: rgba(52, 211, 153, 0.52);
+  background: rgba(236, 253, 245, 0.66);
+  color: #047857;
+}
+
+.ningyu-safety.is-error {
+  border-color: rgba(248, 113, 113, 0.52);
+  background: rgba(254, 242, 242, 0.72);
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-safety {
+  border-color: rgba(51, 65, 85, 0.62);
+  background: rgba(30, 41, 59, 0.46);
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-safety.is-loading {
+  border-color: rgba(56, 189, 248, 0.42);
+  background: rgba(8, 47, 73, 0.7);
+  color: #7dd3fc;
+}
+
+.ningyu-shell.is-night .ningyu-safety.is-watch {
+  border-color: rgba(251, 191, 36, 0.44);
+  background: rgba(69, 26, 3, 0.58);
+  color: #fbbf24;
+}
+
+.ningyu-shell.is-night .ningyu-safety.is-support {
+  border-color: rgba(34, 197, 94, 0.46);
+  background: rgba(20, 83, 45, 0.56);
+  color: #86efac;
+}
+
+.ningyu-shell.is-night .ningyu-safety.is-error {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(69, 10, 10, 0.62);
+  color: #fca5a5;
+}
+
+.ningyu-shell__body {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ningyu-sidebar {
+  width: 256px;
+  height: 100%;
+  flex: 0 0 256px;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(240, 253, 250, 0.68);
+  transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out, color 1000ms ease-in-out;
+}
+
+.ningyu-sidebar--left {
+  border-right: 1px solid rgba(153, 246, 228, 0.42);
+}
+
+.ningyu-sidebar--right {
+  border-left: 1px solid rgba(153, 246, 228, 0.42);
+  overflow-y: auto;
+}
+
+.ningyu-shell.is-night .ningyu-sidebar {
+  background: rgba(15, 23, 42, 0.5);
+  border-color: rgba(51, 65, 85, 0.54);
+}
+
+.ningyu-sidebar__top,
+.ningyu-sidebar__bottom,
+.ningyu-panel-section {
+  padding: 20px;
+  border-bottom: 1px solid rgba(153, 246, 228, 0.32);
+  transition: border-color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-sidebar__top,
+.ningyu-shell.is-night .ningyu-sidebar__bottom,
+.ningyu-shell.is-night .ningyu-panel-section {
+  border-bottom-color: rgba(51, 65, 85, 0.44);
+}
+
+.ningyu-new-chat {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(153, 246, 228, 0.36);
+  border-radius: 20px;
+  background: rgba(240, 253, 250, 0.32);
+  color: #115e59;
+  font-weight: 700;
+}
+
+.ningyu-shell.is-night .ningyu-new-chat {
+  border-color: rgba(51, 65, 85, 0.64);
+  background: rgba(30, 41, 59, 0.45);
+  color: #e2e8f0;
+}
+
+.ningyu-thread-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.ningyu-section-label {
+  gap: 8px;
+  padding: 8px 12px;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+}
+
+.ningyu-shell.is-night .ningyu-section-label {
+  color: #94a3b8;
+}
+
+.ningyu-thread {
+  width: 100%;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: auto;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  text-align: left;
+  color: inherit;
+}
+
+.ningyu-thread:hover {
+  border-color: rgba(153, 246, 228, 0.28);
+  background: rgba(240, 253, 250, 0.32);
+}
+
+.ningyu-shell.is-night .ningyu-thread:hover {
+  border-color: rgba(51, 65, 85, 0.58);
+  background: rgba(30, 41, 59, 0.42);
+}
+
+.ningyu-thread__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: rgba(20, 184, 166, 0.62);
+}
+
+.ningyu-thread__content {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.ningyu-thread strong,
+.ningyu-thread span,
+.ningyu-thread small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ningyu-thread strong {
+  color: rgba(19, 78, 74, 0.96);
+  font-size: 14px;
+}
+
+.ningyu-thread span {
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 12px;
+}
+
+.ningyu-thread small {
+  color: rgba(15, 118, 110, 0.5);
+  font-size: 10px;
+}
+
+.ningyu-shell.is-night .ningyu-thread strong {
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-thread span {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread small {
+  color: #64748b;
+}
+
+.ningyu-sidebar__bottom {
+  display: grid;
+  gap: 6px;
+}
+
+.ningyu-sidebar__bottom button {
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  color: rgba(17, 94, 89, 0.82);
+  font-weight: 600;
+}
+
+.ningyu-sidebar__bottom button:hover {
+  background: rgba(240, 253, 250, 0.38);
+}
+
+.ningyu-shell.is-night .ningyu-sidebar__bottom button {
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-sidebar__bottom button:hover {
+  background: rgba(30, 41, 59, 0.44);
+}
+
+.ningyu-sidebar__mode {
+  position: absolute;
+  right: 12px;
+  bottom: 6px;
+  color: rgba(15, 118, 110, 0.38);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.ningyu-shell.is-night .ningyu-sidebar__mode {
+  color: rgba(148, 163, 184, 0.36);
+}
+
+.ningyu-chat {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ningyu-chat__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 32px 20px;
+}
+
+.ningyu-chat__inner {
+  width: min(100%, 760px);
+  min-height: 100%;
+  margin: 0 auto;
+  display: grid;
+  align-items: center;
+}
+
+.ningyu-chat__messages {
+  align-self: start;
+  display: grid;
+  gap: 12px;
+}
+
+.ningyu-chat__input {
+  padding: 18px 32px 26px;
+}
+
+.ningyu-chat__input > * {
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.ningyu-welcome {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.ningyu-welcome > img {
+  width: 66px;
+  height: 66px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 7px rgba(15, 118, 110, 0.24));
+}
+
+.ningyu-welcome h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: rgba(17, 94, 89, 0.88);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+  transition: color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-welcome h2 {
+  color: #e2e8f0;
+}
+
+.ningyu-welcome p {
+  max-width: 410px;
+  padding: 18px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 32px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
+  box-shadow: 0 2px 10px rgba(15, 118, 110, 0.08);
+  color: rgba(19, 78, 74, 0.82);
+  font-size: 15px;
+  line-height: 1.8;
+  transition: background 1000ms ease-in-out, color 1000ms ease-in-out, border-color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-welcome p {
+  border-color: rgba(51, 65, 85, 0.56);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.64), rgba(15, 23, 42, 0.44));
+  color: #cbd5e1;
+}
+
+.ningyu-welcome span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 14px;
+  font-weight: 700;
+  transition: background 1000ms ease-in-out, color 1000ms ease-in-out, border-color 1000ms ease-in-out;
+}
+
+.ningyu-shell.is-night .ningyu-welcome span {
+  border-color: rgba(51, 65, 85, 0.52);
+  background: rgba(30, 41, 59, 0.44);
+  color: #cbd5e1;
+}
+
+.ningyu-welcome__leaf {
+  position: absolute;
+  opacity: 0.38;
+  color: #14b8a6;
+  animation: ningyuFloat 9s ease-in-out infinite;
+}
+
+.ningyu-welcome__leaf--one {
+  top: -28px;
+  left: 18%;
+}
+
+.ningyu-welcome__leaf--two {
+  right: 18%;
+  bottom: 28px;
+  animation-delay: -3s;
+}
+
+.ningyu-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 32px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(204, 251, 241, 0.72));
+  box-shadow: 0 4px 20px -4px rgba(20, 184, 166, 0.16);
+  transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out, box-shadow 300ms ease;
+}
+
+.ningyu-shell.is-night .ningyu-input {
+  border-color: rgba(51, 65, 85, 0.64);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.84), rgba(15, 23, 42, 0.82));
+}
+
+.ningyu-input:focus-within {
+  box-shadow: 0 4px 26px -4px rgba(20, 184, 166, 0.3);
+}
+
+.ningyu-input input {
+  width: 100%;
+  min-height: 58px;
+  border: 0;
+  padding: 0 70px 0 24px;
+  border-radius: 32px;
+  background: transparent;
+  color: rgba(19, 78, 74, 0.95);
+  font-weight: 600;
+  outline: none;
+}
+
+.ningyu-shell.is-night .ningyu-input input {
+  color: #f8fafc;
+}
+
+.ningyu-input input::placeholder {
+  color: rgba(17, 94, 89, 0.56);
+}
+
+.ningyu-shell.is-night .ningyu-input input::placeholder {
+  color: #64748b;
+}
+
+.ningyu-input button {
+  position: absolute;
+  right: 10px;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.44);
+  color: rgba(15, 118, 110, 0.5);
+}
+
+.ningyu-input button.is-active {
+  border-color: transparent;
+  background: linear-gradient(90deg, #2dd4bf, #34d399);
+  color: #ffffff;
+  box-shadow: 0 0 15px rgba(45, 212, 191, 0.42);
+}
+
+.ningyu-message {
+  max-width: 75%;
+  display: grid;
+  gap: 4px;
+  justify-self: start;
+}
+
+.ningyu-message.is-user {
+  justify-self: end;
+}
+
+.ningyu-message__meta,
+.ningyu-message time {
+  padding: 0 8px;
+  color: rgba(15, 118, 110, 0.58);
+  font-size: 11px;
+}
+
+.ningyu-message.is-night .ningyu-message__meta,
+.ningyu-message.is-night time {
+  color: #94a3b8;
+}
+
+.ningyu-message__bubble {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 14px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background: linear-gradient(135deg, rgba(232, 246, 242, 0.9), rgba(240, 253, 250, 0.72));
+  box-shadow: 0 2px 12px -4px rgba(20, 184, 166, 0.16);
+  border-radius: 6px 32px 24px 32px;
+}
+
+.ningyu-message.is-user .ningyu-message__bubble {
+  background: linear-gradient(225deg, rgba(255, 255, 255, 0.92), rgba(204, 251, 241, 0.76));
+  border-radius: 32px 6px 32px 24px;
+}
+
+.ningyu-message.is-night .ningyu-message__bubble {
+  border-color: rgba(51, 65, 85, 0.6);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.8));
+}
+
+.ningyu-message p {
+  color: rgba(19, 78, 74, 0.86);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.ningyu-message.is-night p {
+  color: #e2e8f0;
+}
+
+.ningyu-panel-section {
+  display: grid;
+  gap: 14px;
+}
+
+.ningyu-panel-section--safety {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(240, 253, 250, 0.88), rgba(240, 253, 250, 0.62));
+}
+
+.ningyu-shell.is-night .ningyu-panel-section--safety {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.68));
+}
+
+.ningyu-panel-section h2 {
+  gap: 8px;
+  color: rgba(17, 94, 89, 0.78);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ningyu-shell.is-night .ningyu-panel-section h2 {
+  color: #cbd5e1;
+}
+
+.ningyu-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ningyu-tags span {
+  padding: 7px 14px;
+  border: 1px solid rgba(153, 246, 228, 0.38);
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.32);
+  color: rgba(17, 94, 89, 0.88);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ningyu-shell.is-night .ningyu-tags span {
+  border-color: rgba(71, 85, 105, 0.6);
+  background: rgba(30, 41, 59, 0.42);
+  color: #e2e8f0;
+}
+
+.ningyu-safety-entry {
+  width: 100%;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(153, 246, 228, 0.4);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.48);
+  color: rgba(19, 78, 74, 0.92);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ningyu-safety-entry:hover {
+  border-color: rgba(45, 212, 191, 0.42);
+  transform: translateY(-1px);
+}
+
+.ningyu-safety-entry__badge {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(204, 251, 241, 0.84);
+}
+
+.ningyu-safety-entry__content {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.ningyu-safety-entry__content strong,
+.ningyu-safety-entry__content small {
+  display: block;
+}
+
+.ningyu-safety-entry__content strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.ningyu-safety-entry__content small {
+  color: inherit;
+  opacity: 0.72;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-safety-entry.is-loading {
+  border-color: rgba(125, 211, 252, 0.5);
+  background: rgba(239, 246, 255, 0.8);
+}
+
+.ningyu-safety-entry.is-watch {
+  border-color: rgba(251, 191, 36, 0.48);
+  background: rgba(255, 251, 235, 0.8);
+}
+
+.ningyu-safety-entry.is-support {
+  border-color: rgba(52, 211, 153, 0.48);
+  background: rgba(236, 253, 245, 0.82);
+}
+
+.ningyu-safety-entry.is-error {
+  border-color: rgba(248, 113, 113, 0.48);
+  background: rgba(254, 242, 242, 0.84);
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry {
+  border-color: rgba(51, 65, 85, 0.6);
+  background: rgba(30, 41, 59, 0.5);
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry__badge {
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry.is-loading {
+  border-color: rgba(56, 189, 248, 0.42);
+  background: rgba(8, 47, 73, 0.72);
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry.is-watch {
+  border-color: rgba(251, 191, 36, 0.42);
+  background: rgba(69, 26, 3, 0.6);
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry.is-support {
+  border-color: rgba(34, 197, 94, 0.42);
+  background: rgba(20, 83, 45, 0.58);
+}
+
+.ningyu-shell.is-night .ningyu-safety-entry.is-error {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(69, 10, 10, 0.6);
+}
+
+.ningyu-safety-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ningyu-safety-actions button {
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  border-radius: 14px;
+  background: rgba(240, 253, 250, 0.32);
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ningyu-shell.is-night .ningyu-safety-actions button {
+  border-color: rgba(51, 65, 85, 0.52);
+  background: rgba(30, 41, 59, 0.44);
+}
+
+.ningyu-panel-section.is-open {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ningyu-support-card {
+  width: 100%;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  text-align: left;
+  color: inherit;
+}
+
+.ningyu-support-card:hover {
+  border-color: rgba(153, 246, 228, 0.34);
+  background: rgba(240, 253, 250, 0.28);
+}
+
+.ningyu-shell.is-night .ningyu-support-card:hover {
+  border-color: rgba(71, 85, 105, 0.58);
+  background: rgba(30, 41, 59, 0.42);
+}
+
+.ningyu-support-card > .ningyu-icon {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 50%;
+  background: rgba(224, 242, 254, 0.56);
+  color: rgba(2, 132, 199, 0.82);
+}
+
+.ningyu-support-card span {
+  display: grid;
+  gap: 3px;
+  color: rgba(19, 78, 74, 0.92);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ningyu-support-card small {
+  color: rgba(17, 94, 89, 0.58);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.ningyu-shell.is-night .ningyu-support-card span {
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-support-card small {
+  color: #94a3b8;
+}
+
+.ningyu-suggestions {
+  display: grid;
+  gap: 10px;
+}
+
+.ningyu-suggestions button {
+  width: 100%;
+  min-height: auto;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  background: rgba(240, 253, 250, 0.24);
+  color: rgba(19, 78, 74, 0.88);
+  text-align: left;
+  font-size: 14px;
+}
+
+.ningyu-shell.is-night .ningyu-suggestions button {
+  background: rgba(30, 41, 59, 0.3);
+  color: #e2e8f0;
+}
+
+.ningyu-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 auto;
+}
+
+.ningyu-login {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+}
+
+.ningyu-login__mist {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.ningyu-login__box {
+  position: relative;
+  z-index: 1;
+  width: min(360px, calc(100vw - 32px));
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: ningyuLoginIn 900ms ease-out both;
+}
+
+.ningyu-login__box--auth {
+  width: min(420px, calc(100vw - 32px));
+  gap: 16px;
+}
+
+.ningyu-login__logo {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.ningyu-login__logo img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+}
+
+.ningyu-login__box h2 {
+  margin: 0 0 8px;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.ningyu-login__box input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 0 18px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.92);
+  text-align: center;
+  outline: none;
+}
+
+.ningyu-auth-form {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+.ningyu-auth-switch,
+.ningyu-auth-age,
+.ningyu-auth-captcha {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+}
+
+.ningyu-auth-switch button,
+.ningyu-auth-age button {
+  min-height: 38px;
+  flex: 1;
+  border-radius: 14px;
+  font-weight: 600;
+}
+
+.ningyu-auth-switch button.is-active,
+.ningyu-auth-age button.is-active {
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+.ningyu-auth-captcha input {
+  flex: 1;
+}
+
+.ningyu-auth-captcha button {
+  width: 116px;
+  min-height: 48px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.ningyu-auth-captcha img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ningyu-auth-error {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(254, 202, 202, 0.38);
+  border-radius: 14px;
+  background: rgba(127, 29, 29, 0.22);
+  color: rgba(254, 226, 226, 0.96);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.ningyu-auth-mode-note {
+  width: 100%;
+  margin: -2px 0 2px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.ningyu-login__box input::placeholder {
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.ningyu-login__box button {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.96);
+  font-weight: 700;
+}
+
+.ningyu-login__box button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ningyu-login__box button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+@keyframes ningyuPulse {
+  0%, 100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes ningyuFloat {
+  0%, 100% {
+    transform: translate3d(-8px, -10px, 0) rotate(-12deg);
+  }
+  50% {
+    transform: translate3d(10px, 14px, 0) rotate(16deg);
+  }
+}
+
+@keyframes ningyuLoginIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 1080px) {
+  .ningyu-sidebar--right {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .ningyu-header {
+    padding: 12px 16px;
+  }
+
+  .ningyu-safety {
+    display: none;
+  }
+
+  .ningyu-sidebar--left {
+    display: none;
+  }
+
+  .ningyu-chat__scroll,
+  .ningyu-chat__input {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
