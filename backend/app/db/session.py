@@ -16,6 +16,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _apply_knowledge_beta_compat_migrations()
     _apply_user_settings_style_compat_migrations()
+    _apply_companion_styles_compat_migrations()
     if engine.dialect.name == "sqlite":
         _apply_sqlite_compat_migrations()
 
@@ -78,6 +79,87 @@ def _apply_user_settings_style_compat_migrations() -> None:
                 """
             )
         )
+
+
+def _apply_companion_styles_compat_migrations() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        table_names = set(inspector.get_table_names())
+        if "user_settings" not in table_names or "companion_styles" not in table_names:
+            return
+
+        if engine.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO companion_styles (
+                        id,
+                        user_id,
+                        title,
+                        definition,
+                        is_default,
+                        sort_order,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        gen_random_uuid(),
+                        user_settings.user_id,
+                        '当前风格',
+                        LEFT(BTRIM(user_settings.companion_style), 500),
+                        TRUE,
+                        0,
+                        NOW(),
+                        NOW()
+                    FROM user_settings
+                    WHERE user_settings.companion_style IS NOT NULL
+                      AND BTRIM(user_settings.companion_style) <> ''
+                      AND user_settings.companion_style NOT IN ('gentle', 'rational', 'reflective', 'action')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM companion_styles
+                          WHERE companion_styles.user_id = user_settings.user_id
+                      )
+                    """
+                )
+            )
+            return
+
+        if engine.dialect.name == "sqlite":
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO companion_styles (
+                        id,
+                        user_id,
+                        title,
+                        definition,
+                        is_default,
+                        sort_order,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        lower(hex(randomblob(16))),
+                        user_settings.user_id,
+                        '当前风格',
+                        substr(trim(user_settings.companion_style), 1, 500),
+                        1,
+                        0,
+                        CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP
+                    FROM user_settings
+                    WHERE user_settings.companion_style IS NOT NULL
+                      AND trim(user_settings.companion_style) <> ''
+                      AND user_settings.companion_style NOT IN ('gentle', 'rational', 'reflective', 'action')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM companion_styles
+                          WHERE companion_styles.user_id = user_settings.user_id
+                      )
+                    """
+                )
+            )
 
 
 def _apply_sqlite_compat_migrations() -> None:

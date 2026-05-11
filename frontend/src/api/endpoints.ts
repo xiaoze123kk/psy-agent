@@ -4,6 +4,8 @@ import type {
   AskKnowledgeResponse,
   CaptchaResponse,
   CompleteAttemptResponse,
+  CompanionStyleListResponse,
+  CompanionStyleReplaceRequest,
   CurrentUserResponse,
   FeedbackCreateRequest,
   FeedbackResponse,
@@ -145,6 +147,14 @@ export class CounselingApi {
 
   updateSettings(payload: UserSettingsUpdateRequest): Promise<UserSettingsResponse> {
     return this.client.patch<UserSettingsResponse, UserSettingsUpdateRequest>("/api/v1/me/settings", payload);
+  }
+
+  listCompanionStyles(): Promise<CompanionStyleListResponse> {
+    return this.client.get<CompanionStyleListResponse>("/api/v1/me/companion-styles");
+  }
+
+  replaceCompanionStyles(payload: CompanionStyleReplaceRequest): Promise<CompanionStyleListResponse> {
+    return this.client.put<CompanionStyleListResponse, CompanionStyleReplaceRequest>("/api/v1/me/companion-styles", payload);
   }
 
   searchKnowledge(query: string, options: { category?: string; audience?: string } = {}): Promise<KnowledgeSearchResponse> {

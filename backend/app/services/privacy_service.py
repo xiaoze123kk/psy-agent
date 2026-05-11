@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    CompanionStyle,
     ConversationThread,
     Message,
     MoodLog,
@@ -99,6 +100,13 @@ def build_privacy_summary(db: Session, user: User) -> PrivacySummaryResponse:
 def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
     profile = user.profile
     settings = user.settings
+    companion_styles = list(
+        db.scalars(
+            select(CompanionStyle)
+            .where(CompanionStyle.user_id == user.id)
+            .order_by(CompanionStyle.sort_order.asc(), CompanionStyle.updated_at.desc())
+        )
+    )
     active_threads = list(
         db.scalars(
             select(ConversationThread)
@@ -172,6 +180,17 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
             "save_transcript": bool(settings.save_transcript) if settings else True,
             "crisis_resource_region": settings.crisis_resource_region if settings else "CN",
         },
+        "companion_styles": [
+            {
+                "style_id": style.id,
+                "title": style.title,
+                "definition": normalize_custom_companion_style(style.definition),
+                "is_default": bool(style.is_default),
+                "created_at": _dt(style.created_at),
+                "updated_at": _dt(style.updated_at),
+            }
+            for style in companion_styles
+        ],
         "memories": [
             {
                 "memory_id": memory.id,
@@ -386,10 +405,14 @@ def delete_account(db: Session, user: User) -> PrivacyMutationResponse:
         user.profile.updated_at = utcnow()
     if user.settings is not None:
         user.settings.memory_mode = "off"
+        user.settings.companion_style = ""
         user.settings.voice_enabled = False
         user.settings.save_voice_audio = False
         user.settings.save_transcript = False
         user.settings.updated_at = utcnow()
+
+    style_rows = db.execute(delete(CompanionStyle).where(CompanionStyle.user_id == user.id))
+    affected["companion_styles"] = int(style_rows.rowcount or 0)
 
     user.username = f"deleted_{user.id.replace('-', '')[:20]}"
     user.email = None

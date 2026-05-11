@@ -7,7 +7,7 @@ from app.api.deps import get_current_user
 from app.db.models import MoodLog, User, utcnow
 from app.db.session import get_db_session
 from app.schemas.onboarding import OnboardingRequest, OnboardingResponse
-from app.services.companion_style import normalize_custom_companion_style
+from app.services.companion_style_library import sync_companion_style_from_definition
 
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
@@ -24,7 +24,7 @@ async def save_onboarding(
     current_user.profile.onboarding_completed = True
     current_user.profile.updated_at = utcnow()
 
-    current_user.settings.companion_style = normalize_custom_companion_style(payload.companion_style)
+    sync_companion_style_from_definition(db, current_user, payload.companion_style, commit=False)
     current_user.settings.memory_mode = payload.memory_mode.value
     current_user.settings.voice_enabled = payload.voice_enabled
     current_user.settings.updated_at = utcnow()

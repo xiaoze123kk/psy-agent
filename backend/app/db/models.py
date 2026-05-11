@@ -35,6 +35,7 @@ class User(Base):
     profile: Mapped["UserProfile"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     settings: Mapped["UserSettings"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     threads: Mapped[list["ConversationThread"]] = relationship(back_populates="user")
+    companion_styles: Mapped[list["CompanionStyle"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -65,6 +66,25 @@ class UserSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(back_populates="settings")
+
+
+class CompanionStyle(Base):
+    __tablename__ = "companion_styles"
+    __table_args__ = (
+        Index("idx_companion_styles_user_updated_at", "user_id", "updated_at"),
+        Index("idx_companion_styles_user_default", "user_id", "is_default"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(80))
+    definition: Mapped[str] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="companion_styles")
 
 
 class ConversationThread(Base):

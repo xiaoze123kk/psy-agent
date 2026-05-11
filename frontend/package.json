@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "npm run check && node --test tests/trace-summary.test.mjs",
+    "test": "npm run check && node --test tests/*.test.mjs",
     "preview": "vite preview",
     "check": "vue-tsc --noEmit"
   },

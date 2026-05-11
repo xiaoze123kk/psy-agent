@@ -151,6 +151,33 @@ export interface CurrentUserResponse {
   save_transcript: boolean;
 }
 
+export interface CompanionStyleItem {
+  style_id: string;
+  title: string;
+  definition: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanionStyleUpsertItem {
+  style_id?: string;
+  client_id?: string;
+  title: string;
+  definition: string;
+}
+
+export interface CompanionStyleReplaceRequest {
+  items: CompanionStyleUpsertItem[];
+  selected_style_id?: string | null;
+}
+
+export interface CompanionStyleListResponse {
+  items: CompanionStyleItem[];
+  selected_style_id: string;
+  companion_style: string;
+}
+
 export interface StartThreadRequest {
   mode?: "companion" | "knowledge" | "test" | "crisis";
   title?: string;

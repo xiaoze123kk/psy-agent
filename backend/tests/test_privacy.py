@@ -12,6 +12,7 @@ from app.api.v1.endpoints import auth, me, privacy
 from app.core.security import create_access_token, create_refresh_token, hash_token
 from app.db.models import (
     Base,
+    CompanionStyle,
     ConversationThread,
     Message,
     MoodLog,
@@ -148,6 +149,23 @@ class PrivacyApiTests(unittest.TestCase):
         other = self.create_user("other")
         self.seed_private_data(user)
         self.seed_private_data(other)
+        self.db.add_all(
+            [
+                CompanionStyle(
+                    user_id=user.id,
+                    title="Calm first",
+                    definition="Use a calm concise tone.",
+                    is_default=True,
+                ),
+                CompanionStyle(
+                    user_id=other.id,
+                    title="Other style",
+                    definition="Do not export this.",
+                    is_default=True,
+                ),
+            ]
+        )
+        self.db.commit()
 
         response = self.client.get("/api/v1/me/data-export?format=json", headers=self.auth_headers(user))
 
@@ -157,6 +175,8 @@ class PrivacyApiTests(unittest.TestCase):
         self.assertNotIn("password_hash", body["account"])
         self.assertNotIn("refresh_token", str(body))
         self.assertEqual(len(body["memories"]), 1)
+        self.assertEqual(body["companion_styles"][0]["title"], "Calm first")
+        self.assertNotIn("Other style", str(body["companion_styles"]))
         self.assertNotIn("internal safety memory", str(body))
         self.assertEqual(body["chat_threads"][0]["messages"][0]["content"], "只属于我的消息")
         self.assertTrue(all(thread["thread_id"] != other.id for thread in body["chat_threads"]))

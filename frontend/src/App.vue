@@ -14,7 +14,9 @@ import type {
   ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
   ChatTraceSummary,
+  CompanionStyleListResponse,
   CompleteAttemptResponse,
+  CurrentUserResponse,
   DeliveryStatus,
   FeedbackCreateRequest,
   FeedbackResponse,
@@ -62,6 +64,17 @@ import {
   traceRagText,
   traceValidatorText,
 } from "./utils/trace";
+import {
+  DEFAULT_STYLE_ID,
+  NEW_STYLE_ID,
+  buildCompanionStyleReplacePayload,
+  createCompanionStyleId,
+  normalizeCompanionStyle,
+  normalizeCompanionStyleTitle,
+  parseCustomCompanionStyles,
+  previewCompanionStyle,
+  type CustomCompanionStyle,
+} from "./utils/companionStyles";
 
 type Stage = "auth" | "onboarding" | "app";
 type Tab = "home" | "chat" | "tests" | "knowledge" | "profile";
@@ -77,12 +90,6 @@ interface SelectOption {
   id: string;
   label: string;
   description: string;
-}
-
-interface CustomCompanionStyle {
-  id: string;
-  title: string;
-  definition: string;
 }
 
 interface ChatMessage {
@@ -140,15 +147,11 @@ const THREAD_ID_KEY = "counseling_thread_id";
 const STYLE_KEY = "counseling_style";
 const CUSTOM_STYLES_KEY = "counseling_custom_styles";
 const SELECTED_CUSTOM_STYLE_ID_KEY = "counseling_selected_custom_style_id";
+const MIGRATED_CUSTOM_STYLES_USER_IDS_KEY = "counseling_custom_styles_migrated_user_ids";
 const GOAL_KEY = "counseling_goal";
 const NEW_THREAD_TITLE = "新的对话";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
-const DEFAULT_STYLE_ID = "default";
-const NEW_STYLE_ID = "new";
-const LEGACY_STYLE_IDS = new Set(["gentle", "rational", "reflective", "action"]);
-const MAX_COMPANION_STYLE_TITLE_LENGTH = 24;
-const MAX_COMPANION_STYLE_LENGTH = 500;
 
 const ageOptions: Array<SelectOption & { id: AgeOptionId }> = [
   { id: "13-15", label: "13-15 岁", description: "青少年保护模式" },
@@ -396,46 +399,33 @@ function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
 
-function normalizeCompanionStyle(value: string) {
-  const normalized = value.trim();
-  if (LEGACY_STYLE_IDS.has(normalized)) return "";
-  return normalized.slice(0, MAX_COMPANION_STYLE_LENGTH);
-}
-
-function normalizeCompanionStyleTitle(value: string) {
-  return value.trim().slice(0, MAX_COMPANION_STYLE_TITLE_LENGTH);
-}
-
-function createCompanionStyleId() {
-  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function previewCompanionStyle(value: string, maxLength = 58) {
-  const normalized = normalizeCompanionStyle(value);
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
-}
-
 function readCustomCompanionStyles() {
+  return parseCustomCompanionStyles(storageText(CUSTOM_STYLES_KEY));
+}
+
+function readMigratedCustomStyleUserIds() {
   try {
-    const parsed = JSON.parse(storageText(CUSTOM_STYLES_KEY)) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    const seen = new Set<string>();
-    return parsed
-      .map((item, index): CustomCompanionStyle | null => {
-        if (!item || typeof item !== "object") return null;
-        const record = item as Record<string, unknown>;
-        const rawId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : createCompanionStyleId();
-        if (seen.has(rawId) || rawId === DEFAULT_STYLE_ID || rawId === NEW_STYLE_ID) return null;
-        const definition = normalizeCompanionStyle(typeof record.definition === "string" ? record.definition : "");
-        if (!definition) return null;
-        const title = normalizeCompanionStyleTitle(typeof record.title === "string" ? record.title : "") || `自定义风格 ${index + 1}`;
-        seen.add(rawId);
-        return { id: rawId, title, definition };
-      })
-      .filter((item): item is CustomCompanionStyle => Boolean(item));
+    const parsed = JSON.parse(storageText(MIGRATED_CUSTOM_STYLES_USER_IDS_KEY)) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
   } catch {
     return [];
   }
+}
+
+function markCustomStylesMigrated(userId: string) {
+  if (!userId) return;
+  const ids = new Set(readMigratedCustomStyleUserIds());
+  ids.add(userId);
+  localStorage.setItem(MIGRATED_CUSTOM_STYLES_USER_IDS_KEY, JSON.stringify([...ids]));
+}
+
+function clearLocalCompanionStyleStorage() {
+  [STYLE_KEY, CUSTOM_STYLES_KEY, SELECTED_CUSTOM_STYLE_ID_KEY].forEach((key) => localStorage.removeItem(key));
+}
+
+function shouldMigrateLocalCompanionStyles(userId: string, serverStyles: CompanionStyleListResponse) {
+  if (!userId || serverStyles.items.length > 0 || readMigratedCustomStyleUserIds().includes(userId)) return false;
+  return readCustomCompanionStyles().length > 0 || Boolean(normalizeCompanionStyle(storageText(STYLE_KEY)));
 }
 
 function storageOption(key: string, options: SelectOption[]) {
@@ -710,10 +700,18 @@ watch(
 );
 
 watch(
-  [selectedStyle, selectedGoal, selectedCustomStyleId],
-  ([style, goal, styleId]) => {
-    style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
+  selectedGoal,
+  (goal) => {
     goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+  },
+  { immediate: true },
+);
+
+watch(
+  [selectedStyle, selectedCustomStyleId],
+  ([style, styleId]) => {
+    if (accessToken.value && !isDemoMode.value) return;
+    style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
     styleId && styleId !== DEFAULT_STYLE_ID
       ? localStorage.setItem(SELECTED_CUSTOM_STYLE_ID_KEY, styleId)
       : localStorage.removeItem(SELECTED_CUSTOM_STYLE_ID_KEY);
@@ -724,6 +722,7 @@ watch(
 watch(
   customStyles,
   (styles) => {
+    if (accessToken.value && !isDemoMode.value) return;
     if (styles.length > 0) {
       localStorage.setItem(CUSTOM_STYLES_KEY, JSON.stringify(styles));
     } else {
@@ -1109,12 +1108,13 @@ async function loadApp() {
   }
   try {
     isLoadingApp.value = true;
-    const [user, threadList, memoryList, mood, privacy] = await Promise.all([
+    const [user, threadList, memoryList, mood, privacy, styleLibrary] = await Promise.all([
       api.getCurrentUser(),
       api.listThreads(),
       api.listMemories(),
       api.getMoodTrend(moodRange.value),
       api.getPrivacySummary(),
+      api.listCompanionStyles(),
     ]);
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
@@ -1123,7 +1123,7 @@ async function loadApp() {
     saveVoiceAudio.value = user.save_voice_audio;
     saveTranscript.value = user.save_transcript;
     privacySummary.value = privacy;
-    syncCustomStyleSelectionFromDefinition(user.companion_style, "当前风格");
+    await loadCompanionStyleLibrary(user, styleLibrary);
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
     memoryError.value = "";
@@ -1196,6 +1196,64 @@ async function refreshPrivacySummary() {
   } catch (error) {
     privacyError.value = error instanceof Error ? error.message : "隐私数据加载失败。";
   }
+}
+
+function applyCompanionStyleLibrary(library: CompanionStyleListResponse, fallbackDefinition = "") {
+  const styles = library.items
+    .map((item): CustomCompanionStyle | null => {
+      const definition = normalizeCompanionStyle(item.definition);
+      const title = normalizeCompanionStyleTitle(item.title);
+      if (!item.style_id || !title || !definition) return null;
+      return { id: item.style_id, title, definition };
+    })
+    .filter((item): item is CustomCompanionStyle => Boolean(item));
+  customStyles.value = styles;
+
+  const selectedId = library.selected_style_id || DEFAULT_STYLE_ID;
+  const selected = styles.find((style) => style.id === selectedId) ?? null;
+  const activeDefinition = normalizeCompanionStyle(library.companion_style || selected?.definition || fallbackDefinition);
+
+  selectedStyle.value = activeDefinition;
+  if (!activeDefinition) {
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
+  } else if (selected) {
+    selectedCustomStyleId.value = selected.id;
+  } else {
+    syncCustomStyleSelectionFromDefinition(activeDefinition, "当前风格");
+  }
+}
+
+function buildLocalCompanionStyleMigrationItems(fallbackDefinition: string) {
+  const styles = readCustomCompanionStyles();
+  const definition = normalizeCompanionStyle(storageText(STYLE_KEY) || fallbackDefinition);
+  if (definition && !styles.some((style) => style.definition === definition)) {
+    styles.unshift({
+      id: createCompanionStyleId(),
+      title: "当前风格",
+      definition,
+    });
+  }
+  return styles;
+}
+
+async function loadCompanionStyleLibrary(user: CurrentUserResponse, serverLibrary: CompanionStyleListResponse) {
+  let library = serverLibrary;
+  if (shouldMigrateLocalCompanionStyles(user.user_id, serverLibrary)) {
+    const migrationStyles = buildLocalCompanionStyleMigrationItems(user.companion_style);
+    const localSelectedStyleId = storageText(SELECTED_CUSTOM_STYLE_ID_KEY);
+    const localSelectedDefinition = normalizeCompanionStyle(storageText(STYLE_KEY));
+    const selectedStyleId = migrationStyles.some((style) => style.id === localSelectedStyleId)
+      ? localSelectedStyleId
+      : migrationStyles.find((style) => style.definition === localSelectedDefinition)?.id ?? DEFAULT_STYLE_ID;
+
+    if (migrationStyles.length > 0) {
+      library = await api.replaceCompanionStyles(buildCompanionStyleReplacePayload(migrationStyles, selectedStyleId));
+    }
+  }
+
+  applyCompanionStyleLibrary(library, user.companion_style);
+  markCustomStylesMigrated(user.user_id);
+  clearLocalCompanionStyleStorage();
 }
 
 function syncCustomStyleSelectionFromDefinition(value: string, fallbackTitle = "当前风格") {
@@ -1302,8 +1360,8 @@ async function saveCompanionStyle() {
 
   try {
     isSettingsSaving.value = true;
-    const response = await api.updateSettings({ companion_style: nextStyle });
-    syncCustomStyleSelectionFromDefinition(response.companion_style, companionStyleTitleDraft.value || "当前风格");
+    const response = await api.replaceCompanionStyles(buildCompanionStyleReplacePayload(nextStyles, nextStyleId));
+    applyCompanionStyleLibrary(response, nextStyle);
     isStyleEditorOpen.value = false;
     apiNotice.value = successMessage;
   } catch (error) {
@@ -1631,6 +1689,7 @@ async function deleteCurrentAccount() {
     clearSession();
     isDemoMode.value = false;
     selectedAge.value = null;
+    customStyles.value = [];
     selectedStyle.value = "";
     selectedCustomStyleId.value = DEFAULT_STYLE_ID;
     selectedGoal.value = null;
@@ -1760,6 +1819,7 @@ function enterDemoMode() {
   isDemoMode.value = true;
   username.value = "小林";
   selectedAge.value = "18-24";
+  customStyles.value = [];
   selectedStyle.value = "";
   selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value ||= "anxiety";
@@ -3028,6 +3088,7 @@ async function logout() {
   clearSession();
   isDemoMode.value = false;
   selectedAge.value = null;
+  customStyles.value = [];
   selectedStyle.value = "";
   selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value = null;

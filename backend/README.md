@@ -41,6 +41,11 @@ psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0006_privacy.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0007_counseling_corpus_milvus.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0008_app_runtime_schema_alignment.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0009_memory_system.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0010_chat_turn_idempotency.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0011_conversation_turn_traces.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0012_pending_memory_jobs.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0013_companion_styles.sql
 ```
 
 Milvus vector search is optional. For local standalone Milvus:
