@@ -43,6 +43,8 @@ class FakeGraphRuntime:
             "should_write_memory": self.should_write_memory,
             "referenced_memories": [],
             "referenced_counseling_examples": [],
+            "rag_used": True,
+            "rag_skipped_reason": "",
             "graph_trace": [
                 {
                     "sequence": 0,
@@ -208,6 +210,7 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.json()["assistant_message"]["memory_job_status"], "pending")
         self.assertEqual(second.json()["assistant_message"]["memory_job_status"], "pending")
+        self.assertEqual(first.json()["assistant_message"]["trace_summary"]["memory"]["job_status"], "pending")
         self.assertEqual(self.memory_job_count(thread), 1)
         self.assertEqual(len(fake_runtime.calls), 1)
 
@@ -333,5 +336,12 @@ class ChatIdempotencyTests(unittest.TestCase):
 
         assistant_message = self.db.get(Message, response.json()["assistant_message_id"])
         turn = self.db.scalar(select(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
+        response_trace = response.json()["assistant_message"]["trace_summary"]
+        self.assertEqual(response_trace["node_count"], 2)
+        self.assertEqual(response_trace["mode"]["risk_level"], "L0")
+        self.assertEqual(response_trace["memory"]["retrieved_count"], 0)
+        self.assertTrue(response_trace["rag"]["used"])
+        self.assertFalse(response_trace["validator"]["blocked"])
+        self.assertEqual(response_trace["steps"][1]["node_name"], "response_validator")
         self.assertEqual(assistant_message.meta["trace_summary"]["node_count"], 2)
         self.assertEqual(turn.response_snapshot["trace_summary"]["node_count"], 2)

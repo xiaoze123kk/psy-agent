@@ -612,6 +612,8 @@ async def _persist_turn_result(
     assistant_result: dict[str, object],
 ) -> tuple[Message | None, dict[str, object]]:
     assistant_result = _coerce_delivery_result(assistant_result, pre_risk_level=context.pre_risk_level)
+    assistant_result["memory_mode"] = context.memory_mode
+    assistant_result["retrieved_memory_count"] = len(context.retrieved_memories)
     delivery_status = str(assistant_result.get("delivery_status", "generated"))
     graph_trace = _pop_graph_trace(assistant_result)
     trace_summary = assistant_result.get("trace_summary", {})
@@ -711,11 +713,22 @@ async def _persist_turn_result(
     assistant_result["memory_write_decisions"] = memory_write_decisions
     assistant_result["memory_job_id"] = memory_job_id
     assistant_result["memory_job_status"] = memory_job_status
+    if isinstance(trace_summary, dict):
+        memory_summary = dict(trace_summary.get("memory") or {}) if isinstance(trace_summary.get("memory"), dict) else {}
+        memory_summary["job_status"] = memory_job_status
+        if memory_job_id is not None:
+            memory_summary["job_id"] = memory_job_id
+        if memory_write_decisions:
+            memory_summary["write_decisions"] = memory_write_decisions
+            memory_summary["write_decision_count"] = len(memory_write_decisions)
+        trace_summary = {**trace_summary, "memory": memory_summary}
+        assistant_result["trace_summary"] = trace_summary
     assistant_message.meta = {
         **assistant_metadata,
         "memory_job_id": memory_job_id,
         "memory_job_status": memory_job_status,
         "memory_write_decisions": memory_write_decisions,
+        "trace_summary": trace_summary,
     }
 
     assistant_result = _complete_turn(

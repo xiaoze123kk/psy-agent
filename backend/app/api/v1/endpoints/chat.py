@@ -70,6 +70,7 @@ def build_send_message_response(
             delivery_status=str(assistant_result.get("delivery_status", "failed_no_reply")),
             failure_reason=assistant_result.get("failure_reason"),
             retryable=bool(assistant_result.get("retryable", False)),
+            trace_summary=assistant_result.get("trace_summary", {}),
         )
 
     return SendMessageResponse(
@@ -96,6 +97,7 @@ def build_send_message_response(
             delivery_status=str(assistant_result.get("delivery_status", "generated")),
             failure_reason=assistant_result.get("failure_reason"),
             retryable=bool(assistant_result.get("retryable", False)),
+            trace_summary=assistant_result.get("trace_summary", {}),
             memory_job_id=assistant_result.get("memory_job_id"),
             memory_job_status=str(assistant_result.get("memory_job_status", "skipped")),
             created_at=assistant_message.created_at,
@@ -103,6 +105,7 @@ def build_send_message_response(
         delivery_status=str(assistant_result.get("delivery_status", "generated")),
         failure_reason=assistant_result.get("failure_reason"),
         retryable=bool(assistant_result.get("retryable", False)),
+        trace_summary=assistant_result.get("trace_summary", {}),
     )
 
 

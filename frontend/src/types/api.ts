@@ -8,6 +8,73 @@ export type TurnStatus = "accepted" | "running" | "completed" | "failed";
 export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type ChatStreamEventName = "accepted" | "graph_update" | "heartbeat" | "token" | "final" | "error";
 
+export interface ChatTraceStep {
+  sequence?: number | null;
+  trace_type?: string;
+  node_name: string;
+  status?: string;
+  duration_ms?: number;
+  reason_codes?: string[];
+  error_code?: string | null;
+  output_summary?: Record<string, unknown>;
+}
+
+export interface ChatTraceModeSummary {
+  intent?: string;
+  control_category?: string;
+  route_priority?: string;
+  risk_level?: RiskLevel | string;
+}
+
+export interface ChatTraceMemorySummary {
+  memory_mode?: MemoryMode | string | null;
+  retrieved_count?: number;
+  referenced_count?: number;
+  referenced_memories?: MemoryReference[];
+  should_write?: boolean;
+  write_decision_count?: number;
+  write_decisions?: Record<string, unknown>[];
+  job_id?: string;
+  job_status?: MemoryJobStatus | string;
+}
+
+export interface ChatTraceRagSummary {
+  used?: boolean;
+  skipped_reason?: string;
+  retrieved_example_count?: number;
+  example_ids?: string[];
+  example_source_keys?: string[];
+}
+
+export interface ChatTraceValidatorSummary {
+  checked?: boolean;
+  blocked?: boolean;
+  reasons?: string[];
+  delivery_status?: DeliveryStatus | string;
+}
+
+export interface ChatTraceFallbackSummary {
+  triggered?: boolean;
+  reason?: string | null;
+  retryable?: boolean;
+}
+
+export interface ChatTraceSummary {
+  node_count?: number;
+  failed_nodes?: string[];
+  slowest_node?: { node_name: string; duration_ms: number } | null;
+  total_graph_duration_ms?: number;
+  delivery_status?: DeliveryStatus | string;
+  failure_reason?: string | null;
+  validator_blocked?: boolean;
+  mode?: ChatTraceModeSummary;
+  memory?: ChatTraceMemorySummary;
+  rag?: ChatTraceRagSummary;
+  validator?: ChatTraceValidatorSummary;
+  fallback?: ChatTraceFallbackSummary;
+  steps?: ChatTraceStep[];
+}
+
 export interface CaptchaResponse {
   captcha_id: string;
   image_data_url: string;
@@ -133,6 +200,7 @@ export interface AssistantMessage {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  trace_summary?: ChatTraceSummary | null;
   memory_job_id?: string | null;
   memory_job_status?: MemoryJobStatus;
   created_at: string;
@@ -149,6 +217,7 @@ export interface SendMessageResponse {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  trace_summary?: ChatTraceSummary | null;
 }
 
 export interface MessageItem {
@@ -181,14 +250,26 @@ export interface ChatStreamGraphUpdateEvent {
   node: string;
   status?: string;
   risk_level?: RiskLevel;
+  risk_source?: string;
+  requires_safety_check?: boolean;
   intent?: string;
   route_priority?: string;
   control_category?: string;
+  memory_policy?: string;
+  memory_policy_reason?: string;
   retrieved_memory_count?: number;
+  retrieved_example_count?: number;
+  memory_candidate_count?: number;
+  memory_write_decision_count?: number;
+  should_write_memory?: boolean;
   rag_used?: boolean;
   rag_skipped_reason?: string;
   validator_blocked?: boolean;
+  validator_reasons?: string[];
   delivery_status?: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable?: boolean;
+  duration_ms?: number;
 }
 
 export interface ChatStreamHeartbeatEvent {
@@ -213,6 +294,7 @@ export interface ChatStreamFinalEvent {
   delivery_status: DeliveryStatus;
   failure_reason?: string | null;
   retryable: boolean;
+  trace_summary?: ChatTraceSummary | null;
   memory_job_id?: string | null;
   memory_job_status?: MemoryJobStatus;
   risk_reasons?: string[];

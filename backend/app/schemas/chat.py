@@ -62,6 +62,7 @@ class AssistantMessageResponse(BaseModel):
     delivery_status: DeliveryStatus = "generated"
     failure_reason: str | None = None
     retryable: bool = False
+    trace_summary: dict[str, object] = Field(default_factory=dict)
     memory_job_id: str | None = None
     memory_job_status: MemoryJobStatus = "skipped"
     created_at: datetime
@@ -78,6 +79,7 @@ class SendMessageResponse(BaseModel):
     delivery_status: DeliveryStatus
     failure_reason: str | None = None
     retryable: bool = False
+    trace_summary: dict[str, object] = Field(default_factory=dict)
 
 
 class MessageItemResponse(BaseModel):

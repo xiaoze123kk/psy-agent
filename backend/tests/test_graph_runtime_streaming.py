@@ -72,6 +72,7 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("response_contract", trace_payload)
         self.assertIn("risk_classifier", progress_payload)
         self.assertTrue(all("duration_ms" in event for event in progress_events))
+        self.assertTrue(any(event.get("retrieved_example_count") == 1 for event in progress_events))
         self.assertEqual(token_events, ["I am "])
         self.assertLess(event_order.index("token"), event_order.index("graph_result"))
         self.assertIsNotNone(final_result)

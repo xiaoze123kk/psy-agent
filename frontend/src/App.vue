@@ -13,6 +13,7 @@ import type {
   ChatStreamGraphUpdateEvent,
   ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
+  ChatTraceSummary,
   CompleteAttemptResponse,
   DeliveryStatus,
   FeedbackCreateRequest,
@@ -47,6 +48,20 @@ import type {
   WeeklySummaryResponse,
   WsServerEvent,
 } from "./types/api";
+import {
+  hasTraceContent,
+  mergeTraceGraphUpdate,
+  mergeTraceSummary,
+  normalizeTraceSummary,
+  traceFallbackText,
+  traceHeadline,
+  traceMemoryRefs,
+  traceMemoryText,
+  traceModeText,
+  traceNodeLabel,
+  traceRagText,
+  traceValidatorText,
+} from "./utils/trace";
 
 type Stage = "auth" | "onboarding" | "app";
 type Tab = "home" | "chat" | "tests" | "knowledge" | "profile";
@@ -80,6 +95,8 @@ interface ChatMessage {
   suggestedActions?: string[];
   referencedMemories?: MemoryReference[];
   memoryRefsExpanded?: boolean;
+  traceSummary?: ChatTraceSummary | null;
+  traceExpanded?: boolean;
   deliveryStatus?: DeliveryStatus;
   failureReason?: string | null;
   retryable?: boolean;
@@ -197,6 +214,35 @@ const demoMessages: Record<string, ChatMessage[]> = {
       referencedMemories: [
         { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
       ],
+      traceSummary: {
+        node_count: 5,
+        delivery_status: "generated",
+        mode: {
+          intent: "soothe",
+          control_category: "normal_support",
+          route_priority: "P2_support",
+          risk_level: "L0",
+        },
+        memory: {
+          memory_mode: "summary_only",
+          retrieved_count: 2,
+          referenced_count: 1,
+          referenced_memories: [
+            { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
+          ],
+          should_write: false,
+          job_status: "skipped",
+        },
+        rag: { used: false, skipped_reason: "demo_no_rag", retrieved_example_count: 0 },
+        validator: { checked: true, blocked: false, reasons: [], delivery_status: "generated" },
+        fallback: { triggered: false, reason: null, retryable: false },
+        steps: [
+          { sequence: 0, trace_type: "graph_update", node_name: "risk_classifier", status: "completed", duration_ms: 4 },
+          { sequence: 1, trace_type: "graph_update", node_name: "memory_retrieval", status: "completed", duration_ms: 8 },
+          { sequence: 2, trace_type: "graph_update", node_name: "soothing_response", status: "completed", duration_ms: 42 },
+          { sequence: 3, trace_type: "graph_update", node_name: "response_validator", status: "completed", duration_ms: 5 },
+        ],
+      },
     },
   ],
   "demo-anxiety": [
@@ -1036,6 +1082,7 @@ function mapMessage(item: MessageItem): ChatMessage | null {
     riskLevel: item.risk_level,
     suggestedActions: deliveryStatus === "failed_no_reply" ? [] : normalizeStringList(item.metadata.suggested_actions),
     referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(item.metadata.referenced_memories) : [],
+    traceSummary: normalizeTraceSummary(item.metadata.trace_summary),
     deliveryStatus,
     failureReason: typeof item.metadata.failure_reason === "string" ? item.metadata.failure_reason : null,
     retryable: Boolean(item.metadata.retryable),
@@ -1607,6 +1654,20 @@ function toggleMemoryReferences(messageId: number) {
   );
 }
 
+function toggleTraceSummary(messageId: number) {
+  messages.value = messages.value.map((message) =>
+    message.id === messageId ? { ...message, traceExpanded: !message.traceExpanded } : message,
+  );
+}
+
+function messageHasTrace(message: ChatMessage) {
+  return hasTraceContent(message.traceSummary);
+}
+
+function getMessageById(messageId: number) {
+  return messages.value.find((message) => message.id === messageId);
+}
+
 async function loadMoodTrend(range: MoodRange = moodRange.value) {
   moodRange.value = range;
   if (isDemoMode.value || !accessToken.value) {
@@ -1937,6 +1998,7 @@ function applySendMessageResponse(
     graphNode: null,
     suggestedActions: actions,
     referencedMemories: deliveryStatus === "generated" ? assistant.referenced_memories ?? [] : [],
+    traceSummary: normalizeTraceSummary(assistant.trace_summary ?? response.trace_summary),
     deliveryStatus,
     failureReason: assistant.failure_reason ?? null,
     retryable: assistant.retryable,
@@ -2015,9 +2077,11 @@ async function submitMessage(text = composerText.value) {
           receivedStreamEvent = true;
           const graphRisk = normalizeRiskLevel(data.risk_level);
           risk = graphRisk ?? risk;
+          const currentTrace = getMessageById(assistantId)?.traceSummary;
           updateMessage(assistantId, {
             graphNode: data.node,
             riskLevel: graphRisk ?? risk,
+            traceSummary: mergeTraceGraphUpdate(currentTrace, data),
             streamError: false,
           });
         }
@@ -2052,12 +2116,14 @@ async function submitMessage(text = composerText.value) {
           const finalActions = normalizeStringList(data.suggested_actions).slice(0, 3);
           quickActions.value = finalActions;
           if (!streamed) streamed = data.assistant_text;
+          const currentTrace = getMessageById(assistantId)?.traceSummary;
           updateMessage(assistantId, {
             text: streamed,
             riskLevel: risk,
             graphNode: null,
             suggestedActions: finalActions,
             referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(data.referenced_memories) : [],
+            traceSummary: mergeTraceSummary(currentTrace, normalizeTraceSummary(data.trace_summary)),
             deliveryStatus,
             failureReason: data.failure_reason ?? null,
             retryable: Boolean(data.retryable),
@@ -3246,6 +3312,42 @@ onMounted(async () => {
                   <span v-for="memory in message.referencedMemories" :key="`${message.id}-${memory.memory_id}`">
                     {{ memoryTypeLabel(memory.memory_type) }}：{{ memory.content }}
                   </span>
+                </div>
+              </div>
+              <div v-if="message.role === 'assistant' && messageHasTrace(message)" class="trace-panel">
+                <button
+                  class="trace-panel__toggle"
+                  type="button"
+                  :aria-expanded="message.traceExpanded ? 'true' : 'false'"
+                  @click="toggleTraceSummary(message.id)"
+                >
+                  <span>回复路径</span>
+                  <small>{{ traceHeadline(message.traceSummary, message.referencedMemories ?? []) }}</small>
+                </button>
+                <div v-if="message.traceExpanded" class="trace-panel__body">
+                  <div class="trace-panel__chips" aria-label="回复路径摘要">
+                    <span>{{ traceModeText(message.traceSummary) }}</span>
+                    <span>{{ traceMemoryText(message.traceSummary, message.referencedMemories ?? []) }}</span>
+                    <span>{{ traceRagText(message.traceSummary) }}</span>
+                    <span>{{ traceValidatorText(message.traceSummary) }}</span>
+                    <span v-if="traceFallbackText(message.traceSummary)" class="trace-panel__chip--warning">
+                      {{ traceFallbackText(message.traceSummary) }}
+                    </span>
+                  </div>
+                  <div v-if="traceMemoryRefs(message.traceSummary, message.referencedMemories ?? []).length" class="trace-panel__memories">
+                    <span
+                      v-for="memory in traceMemoryRefs(message.traceSummary, message.referencedMemories ?? [])"
+                      :key="`${message.id}-trace-${memory.memory_id}`"
+                    >
+                      {{ memoryTypeLabel(memory.memory_type) }}：{{ memory.content }}
+                    </span>
+                  </div>
+                  <ol v-if="message.traceSummary?.steps?.length" class="trace-panel__steps">
+                    <li v-for="step in (message.traceSummary?.steps ?? []).slice(0, 8)" :key="`${message.id}-${step.sequence}-${step.node_name}`">
+                      <strong>{{ traceNodeLabel(step.node_name) }}</strong>
+                      <small>{{ step.duration_ms ?? 0 }}ms</small>
+                    </li>
+                  </ol>
                 </div>
               </div>
               <div
@@ -5155,6 +5257,115 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.trace-panel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(31, 65, 58, 0.08);
+  padding-top: 8px;
+}
+
+.trace-panel__toggle {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfb;
+  color: var(--text-main);
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trace-panel__toggle span {
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.trace-panel__toggle small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-panel__toggle:focus-visible {
+  outline: 3px solid rgba(30, 118, 103, 0.22);
+  outline-offset: 2px;
+}
+
+.trace-panel__body {
+  display: grid;
+  gap: 8px;
+}
+
+.trace-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trace-panel__chips span {
+  border-radius: 8px;
+  background: #f4f7f5;
+  color: var(--text-muted);
+  padding: 5px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.trace-panel__chips .trace-panel__chip--warning {
+  background: #fff6ed;
+  color: #9a4a25;
+}
+
+.trace-panel__memories {
+  display: grid;
+  gap: 5px;
+}
+
+.trace-panel__memories span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.trace-panel__steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-panel__steps li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-left: 2px solid rgba(30, 118, 103, 0.24);
+  padding-left: 8px;
+}
+
+.trace-panel__steps strong {
+  min-width: 0;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.trace-panel__steps small {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .message-actions {

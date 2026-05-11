@@ -82,10 +82,16 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
         "intent",
         "route_priority",
         "control_category",
+        "memory_policy",
+        "memory_policy_reason",
         "rag_used",
         "rag_skipped_reason",
         "validator_blocked",
+        "validator_reasons",
         "delivery_status",
+        "failure_reason",
+        "retryable",
+        "should_write_memory",
     )
     for key in safe_keys:
         value = state.get(key)
@@ -99,6 +105,15 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
         event["validator_blocked"] = bool(node_update.get("validator_blocked", False))
         if node_update.get("delivery_status"):
             event["delivery_status"] = str(node_update["delivery_status"])
+    if isinstance(node_update, dict):
+        if "retrieved_memories" in node_update and isinstance(node_update["retrieved_memories"], list):
+            event["retrieved_memory_count"] = len(node_update["retrieved_memories"])
+        if "retrieved_counseling_examples" in node_update and isinstance(node_update["retrieved_counseling_examples"], list):
+            event["retrieved_example_count"] = len(node_update["retrieved_counseling_examples"])
+        if "memory_candidates" in node_update and isinstance(node_update["memory_candidates"], list):
+            event["memory_candidate_count"] = len(node_update["memory_candidates"])
+        if "memory_write_decisions" in node_update and isinstance(node_update["memory_write_decisions"], list):
+            event["memory_write_decision_count"] = len(node_update["memory_write_decisions"])
     return event
 
 
