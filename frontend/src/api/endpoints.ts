@@ -5,6 +5,8 @@ import type {
   CaptchaResponse,
   CompleteAttemptResponse,
   CurrentUserResponse,
+  FeedbackCreateRequest,
+  FeedbackResponse,
   KnowledgeArticleResponse,
   KnowledgeGapListResponse,
   KnowledgeGapMutationResponse,
@@ -16,10 +18,16 @@ import type {
   LoginRequest,
   LoginResponse,
   LogoutRequest,
+  MemoryMutationResponse,
   MessageListResponse,
   MoodLogRequest,
   MoodLogResponse,
   MoodTrendResponse,
+  AccountDeleteRequest,
+  DataDeleteRequest,
+  PersonalDataExport,
+  PrivacyMutationResponse,
+  PrivacySummaryResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
   RegisterRequest,
@@ -38,6 +46,11 @@ import type {
   TestListItem,
   TestListResponse,
   ThreadListResponse,
+  UpdateMemoryRequest,
+  UserSettingsResponse,
+  UserSettingsUpdateRequest,
+  VoiceSessionResponse,
+  WeeklySummaryResponse,
 } from "../types/api";
 
 export class CounselingApi {
@@ -92,6 +105,46 @@ export class CounselingApi {
 
   listMemories(): Promise<ListMemoriesResponse> {
     return this.client.get<ListMemoriesResponse>("/api/v1/memories");
+  }
+
+  getMemoryDocument(download = false): Promise<string> {
+    const params = new URLSearchParams();
+    if (download) params.set("download", "true");
+    const query = params.toString();
+    const path = `/api/v1/memories/document${query ? `?${query}` : ""}`;
+    return this.client.getText(path);
+  }
+
+  updateMemory(memoryId: string, payload: UpdateMemoryRequest): Promise<MemoryMutationResponse> {
+    return this.client.patch<MemoryMutationResponse, UpdateMemoryRequest>(`/api/v1/memories/${memoryId}`, payload);
+  }
+
+  deleteMemory(memoryId: string): Promise<MemoryMutationResponse> {
+    return this.client.delete<MemoryMutationResponse>(`/api/v1/memories/${memoryId}`);
+  }
+
+  clearMemories(): Promise<{ status: string }> {
+    return this.client.delete<{ status: string }>("/api/v1/memories");
+  }
+
+  getPrivacySummary(): Promise<PrivacySummaryResponse> {
+    return this.client.get<PrivacySummaryResponse>("/api/v1/me/privacy-summary");
+  }
+
+  exportPersonalData(): Promise<PersonalDataExport> {
+    return this.client.get<PersonalDataExport>("/api/v1/me/data-export?format=json");
+  }
+
+  deletePersonalData(payload: DataDeleteRequest): Promise<PrivacyMutationResponse> {
+    return this.client.delete<PrivacyMutationResponse, DataDeleteRequest>("/api/v1/me/data", payload);
+  }
+
+  deleteAccount(payload: AccountDeleteRequest): Promise<PrivacyMutationResponse> {
+    return this.client.delete<PrivacyMutationResponse, AccountDeleteRequest>("/api/v1/me/account", payload);
+  }
+
+  updateSettings(payload: UserSettingsUpdateRequest): Promise<UserSettingsResponse> {
+    return this.client.patch<UserSettingsResponse, UserSettingsUpdateRequest>("/api/v1/me/settings", payload);
   }
 
   searchKnowledge(query: string, options: { category?: string; audience?: string } = {}): Promise<KnowledgeSearchResponse> {
@@ -167,5 +220,26 @@ export class CounselingApi {
 
   getAttemptResult(attemptId: string): Promise<CompleteAttemptResponse> {
     return this.client.get<CompleteAttemptResponse>(`/api/v1/tests/attempts/${attemptId}/result`);
+  }
+
+  // --- Sprint 3: Voice MVP ---
+
+  createVoiceSession(threadId?: string, mode = "companion"): Promise<VoiceSessionResponse> {
+    return this.client.post<VoiceSessionResponse, { thread_id?: string; mode: string }>(
+      "/api/v1/voice/sessions",
+      { thread_id: threadId, mode },
+    );
+  }
+
+  // --- Sprint 3: Feedback ---
+
+  submitFeedback(payload: FeedbackCreateRequest): Promise<FeedbackResponse> {
+    return this.client.post<FeedbackResponse, FeedbackCreateRequest>("/api/v1/feedback", payload);
+  }
+
+  // --- Sprint 3: Weekly Summary ---
+
+  getWeeklySummary(): Promise<WeeklySummaryResponse> {
+    return this.client.get<WeeklySummaryResponse>("/api/v1/moods/weekly-summary");
   }
 }

@@ -8,6 +8,7 @@
   "status": "published",
   "questions": [
     {
+      "id": "state-q-0",
       "index": 0,
       "text": "过去一周你的情绪状态整体如何？",
       "options": [
@@ -27,10 +28,10 @@
           "id": "D",
           "text": "几乎每天都很难受"
         }
-      ],
-      "id": "state-q-0"
+      ]
     },
     {
+      "id": "state-q-1",
       "index": 1,
       "text": "过去一周你感到焦虑或紧张的程度？",
       "options": [
@@ -50,10 +51,10 @@
           "id": "D",
           "text": "大部分时间都很焦虑，难以放松"
         }
-      ],
-      "id": "state-q-1"
+      ]
     },
     {
+      "id": "state-q-2",
       "index": 2,
       "text": "过去一周你对生活的整体满意度？",
       "options": [
@@ -73,8 +74,7 @@
           "id": "D",
           "text": "几乎没有什么让我满意的"
         }
-      ],
-      "id": "state-q-2"
+      ]
     }
   ]
 }

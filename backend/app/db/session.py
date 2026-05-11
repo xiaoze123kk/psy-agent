@@ -15,6 +15,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _apply_knowledge_beta_compat_migrations()
+    _apply_user_settings_style_compat_migrations()
     if engine.dialect.name == "sqlite":
         _apply_sqlite_compat_migrations()
 
@@ -53,6 +54,32 @@ def _apply_knowledge_beta_compat_migrations() -> None:
                 connection.execute(text("ALTER TABLE knowledge_gaps ALTER COLUMN thread_id TYPE VARCHAR(128) USING thread_id::text"))
 
 
+def _apply_user_settings_style_compat_migrations() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "user_settings" not in inspector.get_table_names():
+            return
+
+        settings_columns = {column["name"] for column in inspector.get_columns("user_settings")}
+        if "companion_style" not in settings_columns:
+            return
+
+        if engine.dialect.name == "postgresql":
+            connection.execute(text("ALTER TABLE user_settings ALTER COLUMN companion_style TYPE TEXT"))
+            connection.execute(text("ALTER TABLE user_settings ALTER COLUMN companion_style SET DEFAULT ''"))
+
+        connection.execute(
+            text(
+                """
+                UPDATE user_settings
+                SET companion_style = ''
+                WHERE companion_style IS NULL
+                   OR companion_style IN ('gentle', 'rational', 'reflective', 'action')
+                """
+            )
+        )
+
+
 def _apply_sqlite_compat_migrations() -> None:
     """Keep local SQLite dev databases compatible with SQL-first migrations."""
     with engine.begin() as connection:
@@ -73,6 +100,21 @@ def _apply_sqlite_compat_migrations() -> None:
                 )
             )
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
+
+        if "user_settings" in inspector.get_table_names():
+            settings_columns = {column["name"] for column in inspector.get_columns("user_settings")}
+            if "save_transcript" not in settings_columns:
+                connection.execute(text("ALTER TABLE user_settings ADD COLUMN save_transcript BOOLEAN NOT NULL DEFAULT 1"))
+
+        if "privacy_action_logs" in inspector.get_table_names():
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_privacy_action_logs_user_created_at
+                    ON privacy_action_logs (user_id, created_at DESC)
+                    """
+                )
+            )
 
 
 def get_db_session():

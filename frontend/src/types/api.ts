@@ -2,7 +2,11 @@
 export type InputType = "text" | "voice" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 export type RiskLevel = "L0" | "L1" | "L2" | "L3";
-export type ChatStreamEventName = "token" | "graph_update" | "final";
+export type MemoryMode = "off" | "summary_only" | "long_term";
+export type DeliveryStatus = "generated" | "failed_no_reply" | "safety_fallback";
+export type TurnStatus = "accepted" | "running" | "completed" | "failed";
+export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type ChatStreamEventName = "accepted" | "graph_update" | "heartbeat" | "token" | "final" | "error";
 
 export interface CaptchaResponse {
   captcha_id: string;
@@ -73,9 +77,11 @@ export interface CurrentUserResponse {
   user_mode: UserMode;
   usage_goals: string[];
   onboarding_completed: boolean;
-  memory_mode: string;
+  memory_mode: MemoryMode;
   companion_style: string;
   voice_enabled: boolean;
+  save_voice_audio: boolean;
+  save_transcript: boolean;
 }
 
 export interface StartThreadRequest {
@@ -106,6 +112,7 @@ export interface ThreadListResponse {
 
 export interface SendMessageRequest {
   user_id?: string;
+  client_message_id?: string;
   content: string;
   input_type?: InputType;
   user_mode?: UserMode;
@@ -121,14 +128,27 @@ export interface AssistantMessage {
   suggested_actions: string[];
   session_summary: string;
   should_write_memory: boolean;
+  referenced_memories: MemoryReference[];
+  referenced_counseling_examples?: Record<string, unknown>[];
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   created_at: string;
 }
 
 export interface SendMessageResponse {
   thread_id: string;
   message_id: string;
-  assistant_message_id: string;
-  assistant_message: AssistantMessage;
+  assistant_message_id: string | null;
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status: TurnStatus;
+  assistant_message: AssistantMessage | null;
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
 }
 
 export interface MessageItem {
@@ -145,30 +165,74 @@ export interface MessageListResponse {
   items: MessageItem[];
 }
 
+export interface ChatStreamAcceptedEvent {
+  thread_id: string;
+  status: "accepted";
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status?: TurnStatus;
+}
+
 export interface ChatStreamTokenEvent {
   text: string;
 }
 
 export interface ChatStreamGraphUpdateEvent {
   node: string;
+  status?: string;
   risk_level?: RiskLevel;
+  intent?: string;
+  route_priority?: string;
+  control_category?: string;
+  retrieved_memory_count?: number;
+  rag_used?: boolean;
+  rag_skipped_reason?: string;
+  validator_blocked?: boolean;
+  delivery_status?: DeliveryStatus;
+}
+
+export interface ChatStreamHeartbeatEvent {
+  status: "running";
+  elapsed_ms: number;
 }
 
 export interface ChatStreamFinalEvent {
   thread_id: string;
   message_id: string;
-  assistant_message_id: string;
+  assistant_message_id: string | null;
+  client_message_id?: string | null;
+  turn_id?: string | null;
+  turn_status: TurnStatus;
   assistant_text: string;
   risk_level: RiskLevel;
   intent: string;
   suggested_actions: string[];
   session_summary: string;
   should_write_memory: boolean;
+  referenced_memories: MemoryReference[];
+  delivery_status: DeliveryStatus;
+  failure_reason?: string | null;
+  retryable: boolean;
+  memory_job_id?: string | null;
+  memory_job_status?: MemoryJobStatus;
   risk_reasons?: string[];
   memory_candidates?: unknown[];
 }
 
-export type ChatStreamEventData = ChatStreamTokenEvent | ChatStreamGraphUpdateEvent | ChatStreamFinalEvent;
+export interface ChatStreamErrorEvent {
+  message: string;
+  retryable: boolean;
+  code?: string;
+  turn_status?: TurnStatus;
+}
+
+export type ChatStreamEventData =
+  | ChatStreamAcceptedEvent
+  | ChatStreamTokenEvent
+  | ChatStreamGraphUpdateEvent
+  | ChatStreamHeartbeatEvent
+  | ChatStreamFinalEvent
+  | ChatStreamErrorEvent;
 
 export interface MemoryItem {
   memory_id: string;
@@ -178,8 +242,86 @@ export interface MemoryItem {
   updated_at?: string;
 }
 
+export interface MemoryReference {
+  memory_id: string;
+  memory_type: string;
+  content: string;
+}
+
 export interface ListMemoriesResponse {
   items: MemoryItem[];
+}
+
+export interface UpdateMemoryRequest {
+  content: string;
+}
+
+export interface MemoryMutationResponse {
+  memory_id?: string;
+  content?: string | null;
+  status: string;
+}
+
+export interface StatusResponse {
+  status: string;
+}
+
+export type PrivacyDataScope = "memories" | "chat" | "moods" | "feedback" | "voice" | "all_non_account";
+
+export interface PrivacyDataCounts {
+  memories: number;
+  chat_threads: number;
+  chat_messages: number;
+  mood_logs: number;
+  test_history: number;
+  feedback: number;
+  voice_sessions: number;
+  risk_events: number;
+}
+
+export interface PrivacySummaryResponse {
+  user_id: string;
+  user_mode: UserMode;
+  settings: {
+    memory_mode: MemoryMode;
+    voice_enabled: boolean;
+    save_voice_audio: boolean;
+    save_transcript: boolean;
+  };
+  data_counts: PrivacyDataCounts;
+  latest_activity_at: string | null;
+}
+
+export interface DataDeleteRequest {
+  scope: PrivacyDataScope;
+}
+
+export interface AccountDeleteRequest {
+  confirmation: "DELETE";
+}
+
+export interface PrivacyMutationResponse {
+  status: string;
+  scope: string;
+  affected_counts: Record<string, number>;
+}
+
+export type PersonalDataExport = Record<string, unknown>;
+
+export interface UserSettingsUpdateRequest {
+  memory_mode?: MemoryMode;
+  companion_style?: string;
+  voice_enabled?: boolean;
+  save_voice_audio?: boolean;
+  save_transcript?: boolean;
+}
+
+export interface UserSettingsResponse {
+  memory_mode: MemoryMode;
+  companion_style: string;
+  voice_enabled: boolean;
+  save_voice_audio: boolean;
+  save_transcript: boolean;
 }
 
 export interface MoodLogRequest {
@@ -479,4 +621,118 @@ export interface KnowledgeQuizBankStatsResponse {
   total: number;
   by_type: Record<string, number>;
   by_topic: Record<string, number>;
+}
+
+// --- Sprint 3: Voice MVP ---
+
+export interface VoiceSessionResponse {
+  voice_session_id: string;
+  thread_id: string;
+  ws_url: string;
+  protocol: string;
+}
+
+export type VoiceState = "idle" | "connecting" | "ready" | "listening" | "processing" | "responding" | "error";
+
+export type WsServerEventType =
+  | "session_ready"
+  | "listening"
+  | "processing"
+  | "assistant_delta"
+  | "assistant_final"
+  | "session_ended"
+  | "error"
+  | "safety_escalation";
+
+export interface WsSessionReadyEvent {
+  type: "session_ready";
+  voice_session_id: string;
+  thread_id: string;
+}
+
+export interface WsListeningEvent {
+  type: "listening";
+  message: string;
+}
+
+export interface WsProcessingEvent {
+  type: "processing";
+  client_event_id: string;
+}
+
+export interface WsAssistantDeltaEvent {
+  type: "assistant_delta";
+  text: string;
+}
+
+export interface WsAssistantFinalEvent {
+  type: "assistant_final";
+  text: string;
+  risk_level: RiskLevel;
+  suggested_actions: string[];
+}
+
+export interface WsSessionEndedEvent {
+  type: "session_ended";
+  voice_session_id: string;
+}
+
+export interface WsErrorEvent {
+  type: "error";
+  error_code: string;
+  message: string;
+}
+
+export interface WsSafetyEscalationEvent {
+  type: "safety_escalation";
+  risk_level: RiskLevel;
+  message: string;
+}
+
+export type WsServerEvent =
+  | WsSessionReadyEvent
+  | WsListeningEvent
+  | WsProcessingEvent
+  | WsAssistantDeltaEvent
+  | WsAssistantFinalEvent
+  | WsSessionEndedEvent
+  | WsErrorEvent
+  | WsSafetyEscalationEvent;
+
+// --- Sprint 3: Feedback ---
+
+export interface FeedbackCreateRequest {
+  target_type: "assistant_message" | "knowledge_answer" | "test_result";
+  target_id: string;
+  rating: number;
+  tags?: string[];
+  note?: string | null;
+}
+
+export interface FeedbackResponse {
+  feedback_id: string;
+  status: string;
+}
+
+// --- Sprint 3: Weekly Summary ---
+
+export interface WeeklySummaryResponse {
+  range: string;
+  summary: string;
+  top_tags: string[];
+  suggested_actions: string[];
+  generated_by: string;
+}
+
+// --- Sprint 3: Share Card ---
+
+export interface ShareCardData {
+  testType: "mood_check" | "sixteen_type";
+  title: string;
+  subtitle: string;
+  resultLabel: string;
+  summary: string;
+  highlights: string[];
+  disclaimer: string;
+  sixteenTypeCode: string | null;
 }

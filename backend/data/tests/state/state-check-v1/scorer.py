@@ -25,8 +25,7 @@ def compute(test: dict, answers: dict[int, str]) -> dict:
     scoring = score_data.get("scoring", {})
     option_scores = scoring.get("option_scores", {})
     total = 0
-    for idx_str, opt_id in answers.items():
-        idx = int(idx_str)
+    for idx, opt_id in answers.items():
         scores_for_q = option_scores.get(str(idx), {})
         total += scores_for_q.get(opt_id, 0)
 

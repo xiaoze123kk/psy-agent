@@ -1,15 +1,22 @@
 ﻿﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import html2canvas from "html2canvas";
 
 import { ApiClient } from "./api/client";
 import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  ChatStreamAcceptedEvent,
+  ChatStreamErrorEvent,
   ChatStreamFinalEvent,
   ChatStreamGraphUpdateEvent,
+  ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
   CompleteAttemptResponse,
+  DeliveryStatus,
+  FeedbackCreateRequest,
+  FeedbackResponse,
   KnowledgeArticleResponse,
   KnowledgeQuizBankStatsResponse,
   KnowledgeQuizMode,
@@ -17,17 +24,28 @@ import type {
   KnowledgeQuizResultResponse,
   KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
+  MemoryJobStatus,
   MemoryItem,
+  MemoryMode,
+  MemoryReference,
   MessageItem,
   MoodLogRequest,
   MoodTrendResponse,
+  PersonalDataExport,
+  PrivacyDataScope,
+  PrivacySummaryResponse,
+  SendMessageRequest,
   SendMessageResponse,
+  ShareCardData,
   StartAttemptResponse,
   TestDetailResponse,
   TestHistoryItem,
   TestListItem,
   ThreadListItem,
   UserMode,
+  VoiceSessionResponse,
+  WeeklySummaryResponse,
+  WsServerEvent,
 } from "./types/api";
 
 type Stage = "auth" | "onboarding" | "app";
@@ -46,6 +64,12 @@ interface SelectOption {
   description: string;
 }
 
+interface CustomCompanionStyle {
+  id: string;
+  title: string;
+  definition: string;
+}
+
 interface ChatMessage {
   id: number;
   role: ChatRole;
@@ -54,8 +78,19 @@ interface ChatMessage {
   riskLevel?: RiskLevel | null;
   graphNode?: string | null;
   suggestedActions?: string[];
+  referencedMemories?: MemoryReference[];
+  memoryRefsExpanded?: boolean;
+  deliveryStatus?: DeliveryStatus;
+  failureReason?: string | null;
+  retryable?: boolean;
   streaming?: boolean;
   streamError?: boolean;
+}
+
+interface FailedReplyStatus {
+  userText: string;
+  failureReason?: string | null;
+  retryable: boolean;
 }
 
 interface KnowledgeChatMessage {
@@ -86,22 +121,23 @@ const USER_ID_KEY = "counseling_user_id";
 const USERNAME_KEY = "counseling_username";
 const THREAD_ID_KEY = "counseling_thread_id";
 const STYLE_KEY = "counseling_style";
+const CUSTOM_STYLES_KEY = "counseling_custom_styles";
+const SELECTED_CUSTOM_STYLE_ID_KEY = "counseling_selected_custom_style_id";
 const GOAL_KEY = "counseling_goal";
+const NEW_THREAD_TITLE = "新的对话";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_STYLE_ID = "default";
+const NEW_STYLE_ID = "new";
+const LEGACY_STYLE_IDS = new Set(["gentle", "rational", "reflective", "action"]);
+const MAX_COMPANION_STYLE_TITLE_LENGTH = 24;
+const MAX_COMPANION_STYLE_LENGTH = 500;
 
 const ageOptions: Array<SelectOption & { id: AgeOptionId }> = [
   { id: "13-15", label: "13-15 岁", description: "青少年保护模式" },
   { id: "16-17", label: "16-17 岁", description: "青少年保护模式" },
   { id: "18-24", label: "18-24 岁", description: "标准陪伴模式" },
   { id: "25+", label: "25 岁及以上", description: "标准陪伴模式" },
-];
-
-const styleOptions: SelectOption[] = [
-  { id: "gentle", label: "温柔安抚型", description: "先接住情绪，再慢慢放松。" },
-  { id: "rational", label: "理性分析型", description: "把困扰拆开，理清头绪。" },
-  { id: "reflective", label: "陪你梳理型", description: "一起整理感受和触发点。" },
-  { id: "action", label: "轻量行动型", description: "给出一两个可执行步骤。" },
 ];
 
 const goalOptions: SelectOption[] = [
@@ -111,7 +147,6 @@ const goalOptions: SelectOption[] = [
   { id: "relationships", label: "想理清关系", description: "关于家人、朋友或亲密关系。" },
 ];
 
-const defaultQuickActions = ["继续听我说", "帮我梳理", "给我一点建议", "先做个呼吸"];
 const knowledgePromptChips = ["焦虑发作时怎么办", "睡前脑子停不下来", "什么是边界感", "我是不是太敏感了"];
 const quizModeOptions: Array<{ id: KnowledgeQuizMode; label: string; description: string }> = [
   { id: "10", label: "10 题", description: "快测" },
@@ -159,6 +194,9 @@ const demoMessages: Record<string, ChatMessage[]> = {
       text: "那我们先把目标从“立刻睡着”调成“让大脑慢下来一点”。你愿意先一起找出睡前最容易开始转动的那类念头吗？",
       createdAt: new Date().toISOString(),
       riskLevel: "L0",
+      referencedMemories: [
+        { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
+      ],
     },
   ],
   "demo-anxiety": [
@@ -174,7 +212,7 @@ const demoMessages: Record<string, ChatMessage[]> = {
 
 const demoMemories: MemoryItem[] = [
   { memory_id: "m1", memory_type: "preference", content: "睡眠波动时更希望先被安抚，再进入分析。" },
-  { memory_id: "m2", memory_type: "support", content: "高压场景前适合先做 60 秒呼吸。" },
+  { memory_id: "m2", memory_type: "support_strategy", content: "高压场景前适合先做 60 秒呼吸。" },
 ];
 
 const demoMoodTrend: MoodTrendResponse = {
@@ -293,10 +331,65 @@ const moodRangeOptions: Array<{ id: MoodRange; label: string }> = [
   { id: "7d", label: "7天" },
   { id: "30d", label: "30天" },
 ];
+const memoryModeOptions: Array<{ id: MemoryMode; label: string; description: string }> = [
+  { id: "off", label: "关闭", description: "不读取也不新增可见记忆" },
+  { id: "summary_only", label: "只记摘要", description: "只保存对话摘要" },
+  { id: "long_term", label: "长期记忆", description: "保存偏好、触发点和支持方式" },
+];
+const privacyDeleteOptions: Array<{ id: PrivacyDataScope; label: string; description: string }> = [
+  { id: "memories", label: "清除记忆", description: "删除可见和内部记忆，不影响账号。" },
+  { id: "chat", label: "清除聊天", description: "归档会话并删除消息内容。" },
+  { id: "moods", label: "清除情绪", description: "删除情绪记录和趋势来源。" },
+  { id: "feedback", label: "清除反馈", description: "删除评分、标签和备注。" },
+  { id: "voice", label: "清除语音", description: "删除语音会话元数据。" },
+  { id: "all_non_account", label: "清除全部数据", description: "保留账号，清空主要个人数据。" },
+];
 
 
 function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
+}
+
+function normalizeCompanionStyle(value: string) {
+  const normalized = value.trim();
+  if (LEGACY_STYLE_IDS.has(normalized)) return "";
+  return normalized.slice(0, MAX_COMPANION_STYLE_LENGTH);
+}
+
+function normalizeCompanionStyleTitle(value: string) {
+  return value.trim().slice(0, MAX_COMPANION_STYLE_TITLE_LENGTH);
+}
+
+function createCompanionStyleId() {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function previewCompanionStyle(value: string, maxLength = 58) {
+  const normalized = normalizeCompanionStyle(value);
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function readCustomCompanionStyles() {
+  try {
+    const parsed = JSON.parse(storageText(CUSTOM_STYLES_KEY)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    return parsed
+      .map((item, index): CustomCompanionStyle | null => {
+        if (!item || typeof item !== "object") return null;
+        const record = item as Record<string, unknown>;
+        const rawId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : createCompanionStyleId();
+        if (seen.has(rawId) || rawId === DEFAULT_STYLE_ID || rawId === NEW_STYLE_ID) return null;
+        const definition = normalizeCompanionStyle(typeof record.definition === "string" ? record.definition : "");
+        if (!definition) return null;
+        const title = normalizeCompanionStyleTitle(typeof record.title === "string" ? record.title : "") || `自定义风格 ${index + 1}`;
+        seen.add(rawId);
+        return { id: rawId, title, definition };
+      })
+      .filter((item): item is CustomCompanionStyle => Boolean(item));
+  } catch {
+    return [];
+  }
 }
 
 function storageOption(key: string, options: SelectOption[]) {
@@ -317,6 +410,8 @@ const isSending = ref(false);
 const isMoodSubmitting = ref(false);
 const isMoodTrendLoading = ref(false);
 const isSafetyOpen = ref(false);
+const isThreadDrawerOpen = ref(false);
+const isCreatingThread = ref(false);
 
 const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
 const refreshToken = ref(storageText(REFRESH_TOKEN_KEY));
@@ -335,12 +430,37 @@ const apiError = ref("");
 const apiNotice = ref("");
 
 const selectedAge = ref<AgeOptionId | null>(null);
-const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
+const customStyles = ref<CustomCompanionStyle[]>(readCustomCompanionStyles());
+const selectedStyle = ref(normalizeCompanionStyle(storageText(STYLE_KEY)));
+const selectedCustomStyleId = ref(storageText(SELECTED_CUSTOM_STYLE_ID_KEY) || DEFAULT_STYLE_ID);
 const selectedGoal = ref<string | null>(storageOption(GOAL_KEY, goalOptions));
 
 const threads = ref<ThreadListItem[]>([]);
 const messages = ref<ChatMessage[]>([]);
 const memories = ref<MemoryItem[]>([]);
+const currentMemoryMode = ref<MemoryMode>("summary_only");
+const saveVoiceAudio = ref(false);
+const saveTranscript = ref(true);
+const isMemoryDocOpen = ref(false);
+const isMemoryDocLoading = ref(false);
+const memoryDocContent = ref("");
+const memoryDocError = ref("");
+const memoryError = ref("");
+const isSettingsSaving = ref(false);
+const isStyleEditorOpen = ref(false);
+const editingStyleId = ref(DEFAULT_STYLE_ID);
+const companionStyleTitleDraft = ref("");
+const companionStyleDraft = ref("");
+const companionStyleError = ref("");
+const privacySummary = ref<PrivacySummaryResponse | null>(null);
+const privacyExportPreview = ref("");
+const privacyExportData = ref<PersonalDataExport | null>(null);
+const isPrivacyExportOpen = ref(false);
+const isPrivacyLoading = ref(false);
+const privacyError = ref("");
+const privacyNotice = ref("");
+const pendingPrivacyScope = ref<PrivacyDataScope | null>(null);
+const deleteAccountConfirm = ref("");
 const moodTrend = ref<MoodTrendResponse | null>(null);
 const moodRange = ref<MoodRange>("7d");
 const moodDraft = ref<MoodLogRequest>({
@@ -361,8 +481,10 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
     text: "今天想弄清楚哪件事？焦虑、睡眠、关系、情绪调节，都可以慢慢说。",
   },
 ]);
-const quickActions = ref([...defaultQuickActions]);
+const quickActions = ref<string[]>([]);
+const failedReplyStatus = ref<FailedReplyStatus | null>(null);
 const composerText = ref("");
+const threadSearchQuery = ref("");
 const knowledgeDraft = ref("");
 const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
 const quizMode = ref<KnowledgeQuizMode>("10");
@@ -375,6 +497,37 @@ const isQuizLoading = ref(false);
 const safetyAction = ref<SafetyAction>(null);
 const messageSeed = ref(1);
 const knowledgeMessageSeed = ref(2);
+
+// --- Sprint 3: Voice ASR (Speech Recognition) ---
+const xfWs = ref<WebSocket | null>(null);
+const isRecording = ref(false);
+const xfRecognizedText = ref("");
+const xfRecognizing = ref(false);
+const voiceError = ref("");
+let xfAudioContext: AudioContext | null = null;
+let xfMediaStream: MediaStream | null = null;
+let xfScriptProcessor: ScriptProcessorNode | null = null;
+let xfSourceNode: MediaStreamAudioSourceNode | null = null;
+
+// --- Sprint 3: Share Card ---
+const shareCardVisible = ref(false);
+const shareCardData = ref<ShareCardData | null>(null);
+const shareCardCopied = ref(false);
+const shareCardSaving = ref(false);
+
+// --- Sprint 3: Feedback ---
+const feedbackVisible = ref(false);
+const feedbackTargetType = ref<"assistant_message" | "knowledge_answer" | "test_result">("assistant_message");
+const feedbackTargetId = ref<string>("");
+const feedbackRating = ref(0);
+const feedbackNote = ref("");
+const isFeedbackSubmitting = ref(false);
+const feedbackDone = ref(false);
+
+// --- Sprint 3: Weekly Summary ---
+const weeklySummary = ref<WeeklySummaryResponse | null>(null);
+const isWeeklySummaryLoading = ref(false);
+const isWeeklySummaryOpen = ref(false);
 const messageListRef = ref<HTMLElement | null>(null);
 const knowledgeListRef = ref<HTMLElement | null>(null);
 const demoMessagesByThread = ref<Record<string, ChatMessage[]>>({});
@@ -391,10 +544,32 @@ const isTeenMode = computed(() => selectedAge.value === "13-15" || selectedAge.v
 const modeLabel = computed(() => (isDemoMode.value ? "演示模式" : isTeenMode.value ? "青少年模式" : "标准模式"));
 const userName = computed(() => username.value || "朋友");
 const selectedAgeLabel = computed(() => ageOptions.find((option) => option.id === selectedAge.value)?.label ?? "未设置");
-const selectedStyleLabel = computed(
-  () => styleOptions.find((option) => option.id === selectedStyle.value)?.label ?? "未设置",
+const selectedCustomStyle = computed(
+  () => customStyles.value.find((style) => style.id === selectedCustomStyleId.value) ?? null,
 );
+const selectedStyleLabel = computed(() => selectedCustomStyle.value?.title ?? "未启用自定义风格");
+const companionStylePreview = computed(() => {
+  if (!selectedCustomStyle.value) return "可添加并切换多套自定义回复风格。";
+  return previewCompanionStyle(selectedCustomStyle.value.definition);
+});
 const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
+const companionSettingsSummary = computed(() =>
+  selectedCustomStyle.value ? `${selectedStyleLabel.value} · ${selectedGoalLabel.value}` : selectedGoalLabel.value,
+);
+const memoryModeLabel = computed(() => memoryModeOptions.find((option) => option.id === currentMemoryMode.value)?.label ?? "只记摘要");
+const privacyCounts = computed(() => privacySummary.value?.data_counts ?? {
+  memories: memories.value.length,
+  chat_threads: threads.value.length,
+  chat_messages: messages.value.length,
+  mood_logs: moodTrendPoints.value.length,
+  test_history: testHistory.value.length,
+  feedback: 0,
+  voice_sessions: 0,
+  risk_events: 0,
+});
+const privacyLatestActivity = computed(() =>
+  privacySummary.value?.latest_activity_at ? formatMemoryDocumentTimestamp(privacySummary.value.latest_activity_at) : "暂无记录",
+);
 const canSubmitAuth = computed(
   () =>
     Boolean(authUsername.value.trim()) &&
@@ -407,7 +582,17 @@ const canSubmitMood = computed(
     [moodDraft.value.mood_score, moodDraft.value.anxiety_score, moodDraft.value.energy_score, moodDraft.value.sleep_quality]
       .every((score) => typeof score === "number" && score >= 1 && score <= 5) && !isMoodSubmitting.value,
 );
-const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const canContinueOnboarding = computed(() => Boolean(selectedGoal.value));
+const isEditingDefaultStyle = computed(() => editingStyleId.value === DEFAULT_STYLE_ID);
+const isEditingNewStyle = computed(() => editingStyleId.value === NEW_STYLE_ID);
+const canSaveCompanionStyle = computed(() => {
+  if (isEditingDefaultStyle.value) return !isSettingsSaving.value;
+  return (
+    !isSettingsSaving.value &&
+    Boolean(normalizeCompanionStyleTitle(companionStyleTitleDraft.value)) &&
+    Boolean(normalizeCompanionStyle(companionStyleDraft.value))
+  );
+});
 const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
 const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
   () => quizSession.value?.questions[activeQuizIndex.value] ?? null,
@@ -420,6 +605,23 @@ const canSubmitQuiz = computed(() => Boolean(quizSession.value && quizAnsweredCo
 const quizWrongCount = computed(() => quizResult.value?.review.filter((item) => !item.is_correct).length ?? 0);
 const activeReviewItem = computed(() => quizResult.value?.review[activeReviewIndex.value] ?? null);
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
+const visibleThreads = computed(() => {
+  let hasReusableNewThread = false;
+  return threads.value.filter((thread) => {
+    if (!isReusableNewThread(thread)) return true;
+    if (hasReusableNewThread) return false;
+    hasReusableNewThread = true;
+    return true;
+  });
+});
+const filteredThreads = computed(() => {
+  const query = threadSearchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return visibleThreads.value;
+  return visibleThreads.value.filter((thread) => {
+    const searchable = `${thread.title} ${thread.last_summary ?? ""}`.toLocaleLowerCase();
+    return searchable.includes(query);
+  });
+});
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const testHeaderTitle = computed(() => {
   if (testView.value !== "result" || !testResult.value) return testView.value === "taking" && currentTest.value ? currentTest.value.title : "测试中心";
@@ -438,6 +640,8 @@ const contextText = computed(() =>
     .filter(Boolean)
     .join(" "),
 );
+
+syncCustomStyleSelectionFromDefinition(selectedStyle.value, "当前风格");
 
 watch(
   () => messages.value.map((message) => `${message.id}:${message.text}`).join("\n"),
@@ -459,15 +663,35 @@ watch(
   },
 );
 
-watch([selectedStyle, selectedGoal], ([style, goal]) => {
-  style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
-  goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
-});
+watch(
+  [selectedStyle, selectedGoal, selectedCustomStyleId],
+  ([style, goal, styleId]) => {
+    style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
+    goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+    styleId && styleId !== DEFAULT_STYLE_ID
+      ? localStorage.setItem(SELECTED_CUSTOM_STYLE_ID_KEY, styleId)
+      : localStorage.removeItem(SELECTED_CUSTOM_STYLE_ID_KEY);
+  },
+  { immediate: true },
+);
+
+watch(
+  customStyles,
+  (styles) => {
+    if (styles.length > 0) {
+      localStorage.setItem(CUSTOM_STYLES_KEY, JSON.stringify(styles));
+    } else {
+      localStorage.removeItem(CUSTOM_STYLES_KEY);
+    }
+  },
+  { deep: true, immediate: true },
+);
 
 watch(activeTab, (tab) => {
 
   // 这里单独给演示模式做了一个分支，后续看看能不能合并
 
+  if (tab !== "chat") closeThreadDrawer();
   if (tab === "tests" && testItems.value.length === 0) {
     if (isDemoMode.value || !accessToken.value) {
       testItems.value = demoTests;
@@ -642,15 +866,52 @@ function normalizeRiskLevel(value: unknown): RiskLevel | null {
   return value === "L0" || value === "L1" || value === "L2" || value === "L3" ? value : null;
 }
 
+function normalizeDeliveryStatus(value: unknown): DeliveryStatus {
+  return value === "failed_no_reply" || value === "safety_fallback" ? value : "generated";
+}
+
 function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeMemoryReferences(value: unknown): MemoryReference[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => isObjectRecord(item))
+    .map((item) => ({
+      memory_id: String(item.memory_id ?? ""),
+      memory_type: String(item.memory_type ?? ""),
+      content: String(item.content ?? "").trim(),
+    }))
+    .filter((item) => Boolean(item.memory_id && item.content));
+}
+
+function memoryTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    session_summary: "对话摘要",
+    preference: "陪伴偏好",
+    recurring_trigger: "触发点",
+    support_strategy: "支持方式",
+    state: "长期状态",
+    relationship: "关系记忆",
+  };
+  return labels[type] ?? "记忆";
+}
+
 function graphStatusLabel(node?: string | null) {
+  if (node === "accepted") return "已接收";
   if (node === "risk_classifier") return "正在识别风险";
+  if (node === "load_user_profile") return "正在读取设置";
+  if (node === "control_plane") return "正在确认边界";
   if (node === "intent_classifier") return "正在理解意图";
   if (node === "memory_retrieval") return "正在整理上下文";
-  if (node === "summary_memory_node") return "正在整理摘要";
+  if (node === "example_retriever") return "正在检索参考";
+  if (node === "companion_response" || node === "soothing_response" || node === "counseling_response") return "正在生成回复";
+  if (node === "crisis_response" || node === "clinical_red_flag_response" || node === "boundary_response") return "正在生成安全回复";
+  if (node === "response_validator") return "正在校验安全";
+  if (node === "summarize_turn" || node === "memory_candidate_extract" || node === "write_memory" || node === "summary_memory_node") return "正在整理摘要";
+  if (node === "saving_record") return "正在保存记录";
+  if (node === "heartbeat") return "仍在处理中";
   if (node) return "正在推进对话";
   return "";
 }
@@ -663,8 +924,20 @@ function isTokenEventData(data: unknown): data is ChatStreamTokenEvent {
   return isObjectRecord(data) && typeof data.text === "string";
 }
 
+function isAcceptedEventData(data: unknown): data is ChatStreamAcceptedEvent {
+  return isObjectRecord(data) && data.status === "accepted" && typeof data.thread_id === "string";
+}
+
 function isGraphUpdateEventData(data: unknown): data is ChatStreamGraphUpdateEvent {
   return isObjectRecord(data) && typeof data.node === "string";
+}
+
+function isHeartbeatEventData(data: unknown): data is ChatStreamHeartbeatEvent {
+  return isObjectRecord(data) && data.status === "running" && typeof data.elapsed_ms === "number";
+}
+
+function isErrorEventData(data: unknown): data is ChatStreamErrorEvent {
+  return isObjectRecord(data) && typeof data.message === "string";
 }
 
 function isFinalEventData(data: unknown): data is ChatStreamFinalEvent {
@@ -676,6 +949,7 @@ function sortThreads(items: ThreadListItem[]) {
 }
 
 function setMessages(items: ChatMessage[]) {
+  failedReplyStatus.value = null;
   messages.value = items.map((message, index) => ({ ...message, id: index + 1 }));
   messageSeed.value = messages.value.length + 1;
 }
@@ -695,6 +969,30 @@ function clearSession() {
   currentUserId.value = "";
   username.value = "";
   activeThreadId.value = "";
+  currentMemoryMode.value = "summary_only";
+  saveVoiceAudio.value = false;
+  saveTranscript.value = true;
+  isMemoryDocOpen.value = false;
+  isMemoryDocLoading.value = false;
+  memoryDocContent.value = "";
+  memoryDocError.value = "";
+  memoryError.value = "";
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+  isCreatingThread.value = false;
+  isStyleEditorOpen.value = false;
+  editingStyleId.value = DEFAULT_STYLE_ID;
+  companionStyleTitleDraft.value = "";
+  companionStyleDraft.value = "";
+  companionStyleError.value = "";
+  privacySummary.value = null;
+  privacyExportPreview.value = "";
+  privacyExportData.value = null;
+  isPrivacyExportOpen.value = false;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  pendingPrivacyScope.value = null;
+  deleteAccountConfirm.value = "";
   [ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_ID_KEY, USERNAME_KEY, THREAD_ID_KEY].forEach((key) => localStorage.removeItem(key));
 }
 
@@ -729,13 +1027,18 @@ async function refreshAccessToken(): Promise<boolean> {
 
 function mapMessage(item: MessageItem): ChatMessage | null {
   if (item.role !== "assistant" && item.role !== "user") return null;
+  const deliveryStatus = normalizeDeliveryStatus(item.metadata.delivery_status);
   return {
     id: 0,
     role: item.role,
     text: item.content,
     createdAt: item.created_at,
     riskLevel: item.risk_level,
-    suggestedActions: normalizeStringList(item.metadata.suggested_actions),
+    suggestedActions: deliveryStatus === "failed_no_reply" ? [] : normalizeStringList(item.metadata.suggested_actions),
+    referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(item.metadata.referenced_memories) : [],
+    deliveryStatus,
+    failureReason: typeof item.metadata.failure_reason === "string" ? item.metadata.failure_reason : null,
+    retryable: Boolean(item.metadata.retryable),
   };
 }
 
@@ -759,24 +1062,32 @@ async function loadApp() {
   }
   try {
     isLoadingApp.value = true;
-    const [user, threadList, memoryList, mood] = await Promise.all([
+    const [user, threadList, memoryList, mood, privacy] = await Promise.all([
       api.getCurrentUser(),
       api.listThreads(),
       api.listMemories(),
       api.getMoodTrend(moodRange.value),
+      api.getPrivacySummary(),
     ]);
     username.value = user.nickname || user.username;
     localStorage.setItem(USERNAME_KEY, username.value);
     applyAgeRange(user.age_range);
+    currentMemoryMode.value = user.memory_mode;
+    saveVoiceAudio.value = user.save_voice_audio;
+    saveTranscript.value = user.save_transcript;
+    privacySummary.value = privacy;
+    syncCustomStyleSelectionFromDefinition(user.companion_style, "当前风格");
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
+    memoryError.value = "";
+    privacyError.value = "";
     moodTrend.value = mood;
     activeThreadId.value = activeThreadId.value || threads.value[0]?.thread_id || "";
     if (activeThreadId.value) {
       localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
       await loadThreadMessages(activeThreadId.value);
     }
-    stage.value = selectedStyle.value && selectedGoal.value ? "app" : "onboarding";
+    stage.value = selectedGoal.value ? "app" : "onboarding";
   } catch (error) {
     clearSession();
     authError.value = error instanceof Error ? error.message : "登录状态已失效，请重新登录。";
@@ -785,6 +1096,515 @@ async function loadApp() {
   } finally {
     isLoadingApp.value = false;
   }
+}
+
+async function refreshMemories() {
+  if (isDemoMode.value || !accessToken.value) return;
+  const memoryList = await api.listMemories();
+  memories.value = memoryList.items;
+}
+
+function refreshMemoriesForJob(status?: MemoryJobStatus | null) {
+  if (status === "pending" || status === "running") {
+    window.setTimeout(() => {
+      void refreshMemories();
+    }, 2500);
+    return;
+  }
+  void refreshMemories();
+}
+
+function buildLocalPrivacySummary(): PrivacySummaryResponse {
+  return {
+    user_id: currentUserId.value || "demo-user",
+    user_mode: isTeenMode.value ? "teen" : "adult",
+    settings: {
+      memory_mode: currentMemoryMode.value,
+      voice_enabled: true,
+      save_voice_audio: saveVoiceAudio.value,
+      save_transcript: saveTranscript.value,
+    },
+    data_counts: {
+      memories: memories.value.length,
+      chat_threads: threads.value.length,
+      chat_messages: Object.values(demoMessagesByThread.value).reduce((count, items) => count + items.length, 0),
+      mood_logs: demoMoodLogs.value.length,
+      test_history: testHistory.value.length,
+      feedback: 0,
+      voice_sessions: 0,
+      risk_events: 0,
+    },
+    latest_activity_at: new Date().toISOString(),
+  };
+}
+
+async function refreshPrivacySummary() {
+  if (isDemoMode.value || !accessToken.value) {
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+  try {
+    privacySummary.value = await api.getPrivacySummary();
+    privacyError.value = "";
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "隐私数据加载失败。";
+  }
+}
+
+function syncCustomStyleSelectionFromDefinition(value: string, fallbackTitle = "当前风格") {
+  const definition = normalizeCompanionStyle(value);
+  selectedStyle.value = definition;
+  if (!definition) {
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
+    return;
+  }
+  const existing = customStyles.value.find((style) => style.definition === definition);
+  if (existing) {
+    selectedCustomStyleId.value = existing.id;
+    return;
+  }
+  const style: CustomCompanionStyle = {
+    id: createCompanionStyleId(),
+    title: normalizeCompanionStyleTitle(fallbackTitle) || "当前风格",
+    definition,
+  };
+  customStyles.value = [style, ...customStyles.value];
+  selectedCustomStyleId.value = style.id;
+}
+
+function selectCompanionStyleDraft(styleId: string) {
+  companionStyleError.value = "";
+  if (styleId === DEFAULT_STYLE_ID) {
+    editingStyleId.value = DEFAULT_STYLE_ID;
+    companionStyleTitleDraft.value = "";
+    companionStyleDraft.value = "";
+    return;
+  }
+  const style = customStyles.value.find((item) => item.id === styleId);
+  if (!style) return;
+  editingStyleId.value = style.id;
+  companionStyleTitleDraft.value = style.title;
+  companionStyleDraft.value = style.definition;
+}
+
+function startNewCompanionStyleDraft() {
+  companionStyleError.value = "";
+  editingStyleId.value = NEW_STYLE_ID;
+  companionStyleTitleDraft.value = `自定义风格 ${customStyles.value.length + 1}`;
+  companionStyleDraft.value = "";
+}
+
+function openCompanionStyleEditor() {
+  companionStyleError.value = "";
+  isStyleEditorOpen.value = true;
+  if (selectedCustomStyle.value) {
+    selectCompanionStyleDraft(selectedCustomStyle.value.id);
+  } else {
+    selectCompanionStyleDraft(DEFAULT_STYLE_ID);
+  }
+}
+
+async function saveCompanionStyle() {
+  if (isSettingsSaving.value) return;
+  const previousStyle = selectedStyle.value;
+  const previousStyleId = selectedCustomStyleId.value;
+  const previousStyles = customStyles.value.map((style) => ({ ...style }));
+  companionStyleError.value = "";
+
+  let nextStyle = "";
+  let nextStyleId = DEFAULT_STYLE_ID;
+  let nextStyles = customStyles.value.map((style) => ({ ...style }));
+  let successMessage = "已关闭自定义回复风格。";
+
+  if (!isEditingDefaultStyle.value) {
+    const title = normalizeCompanionStyleTitle(companionStyleTitleDraft.value);
+    const definition = normalizeCompanionStyle(companionStyleDraft.value);
+    if (!title) {
+      companionStyleError.value = "请填写风格标题。";
+      return;
+    }
+    if (!definition) {
+      companionStyleError.value = "请填写具体风格定义，或选择默认。";
+      return;
+    }
+    if (isEditingNewStyle.value) {
+      nextStyleId = createCompanionStyleId();
+      nextStyles = [{ id: nextStyleId, title, definition }, ...nextStyles];
+    } else {
+      nextStyleId = editingStyleId.value;
+      const styleIndex = nextStyles.findIndex((style) => style.id === nextStyleId);
+      const nextRecord = { id: nextStyleId, title, definition };
+      nextStyles = styleIndex >= 0
+        ? nextStyles.map((style, index) => (index === styleIndex ? nextRecord : style))
+        : [nextRecord, ...nextStyles];
+    }
+    nextStyle = definition;
+    successMessage = "回复风格已保存。";
+  }
+
+  customStyles.value = nextStyles;
+  selectedCustomStyleId.value = nextStyleId;
+  selectedStyle.value = nextStyle;
+  companionStyleDraft.value = nextStyle;
+
+  if (isDemoMode.value || !accessToken.value) {
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings({ companion_style: nextStyle });
+    syncCustomStyleSelectionFromDefinition(response.companion_style, companionStyleTitleDraft.value || "当前风格");
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+  } catch (error) {
+    customStyles.value = previousStyles;
+    selectedCustomStyleId.value = previousStyleId;
+    selectedStyle.value = previousStyle;
+    companionStyleDraft.value = previousStyle;
+    companionStyleError.value = error instanceof Error ? error.message : "回复风格保存失败。";
+  } finally {
+    isSettingsSaving.value = false;
+  }
+}
+
+async function changeMemoryMode(mode: MemoryMode) {
+  if (mode === currentMemoryMode.value || isSettingsSaving.value) return;
+  const previousMode = currentMemoryMode.value;
+  currentMemoryMode.value = mode;
+  memoryError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    apiNotice.value = `记忆模式已切换为${memoryModeLabel.value}。`;
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings({ memory_mode: mode });
+    currentMemoryMode.value = response.memory_mode;
+    saveVoiceAudio.value = response.save_voice_audio;
+    saveTranscript.value = response.save_transcript;
+    await refreshPrivacySummary();
+    apiNotice.value = `记忆模式已切换为${memoryModeLabel.value}。`;
+  } catch (error) {
+    currentMemoryMode.value = previousMode;
+    memoryError.value = error instanceof Error ? error.message : "记忆模式更新失败。";
+  } finally {
+    isSettingsSaving.value = false;
+  }
+}
+
+function formatMemoryDocumentTimestamp(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatMarkdownBullet(content: string) {
+  const normalized = content.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized ? normalized.split("\n") : ["(空)"];
+  return [`- ${lines[0]}`, ...lines.slice(1).map((line) => `  ${line}`)];
+}
+
+function buildMemoryDocumentMarkdown(items: MemoryItem[]) {
+  const lines = ["# 记忆文档", "", `生成时间：${formatMemoryDocumentTimestamp(new Date())}`, `记忆模式：${memoryModeLabel.value}`, ""];
+  if (items.length === 0) {
+    lines.push("当前没有可见记忆。");
+    return `${lines.join("\n")}\n`;
+  }
+
+  const grouped = new Map<string, MemoryItem[]>();
+  items.forEach((item) => {
+    grouped.set(item.memory_type, [...(grouped.get(item.memory_type) ?? []), item]);
+  });
+
+  const knownOrder = ["session_summary", "preference", "recurring_trigger", "support_strategy", "state", "relationship", "safety_summary"];
+  const knownTypes = knownOrder.filter((type) => grouped.has(type));
+  const unknownTypes = [...grouped.keys()].filter((type) => !knownOrder.includes(type)).sort();
+
+  [...knownTypes, ...unknownTypes].forEach((type) => {
+    const list = grouped.get(type) ?? [];
+    if (list.length === 0) return;
+    lines.push(`## ${memoryTypeLabel(type)}`);
+    list
+      .slice()
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())
+      .forEach((item) => {
+        lines.push(...formatMarkdownBullet(item.content));
+        lines.push(`  - 更新时间：${formatMemoryDocumentTimestamp(item.updated_at || item.created_at || new Date())}`);
+      });
+    lines.push("");
+  });
+
+  return `${lines.join("\n").trim()}\n`;
+}
+
+async function fetchMemoryDocument() {
+  memoryDocError.value = "";
+  if (isDemoMode.value || !accessToken.value) {
+    return buildMemoryDocumentMarkdown(memories.value);
+  }
+  try {
+    return await api.getMemoryDocument();
+  } catch (error) {
+    memoryDocError.value = error instanceof Error ? error.message : "记忆文档加载失败。";
+    return "";
+  }
+}
+
+async function openMemoryDocument() {
+  if (isMemoryDocLoading.value) return;
+  isMemoryDocOpen.value = true;
+  isMemoryDocLoading.value = true;
+  memoryDocContent.value = "";
+  const content = await fetchMemoryDocument();
+  memoryDocContent.value = content;
+  isMemoryDocLoading.value = false;
+}
+
+function closeMemoryDocument() {
+  isMemoryDocOpen.value = false;
+  memoryDocError.value = "";
+  memoryDocContent.value = "";
+}
+
+async function downloadMemoryDocument() {
+  if (isMemoryDocLoading.value) return;
+  let content = memoryDocContent.value;
+  if (!content) {
+    isMemoryDocLoading.value = true;
+    content = await fetchMemoryDocument();
+    isMemoryDocLoading.value = false;
+    memoryDocContent.value = content;
+  }
+  if (!content) return;
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `memories-${new Date().toISOString().slice(0, 10)}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildPrivacyExportMarkdown(data: PersonalDataExport | null) {
+  const summary = privacySummary.value ?? buildLocalPrivacySummary();
+  const counts = summary.data_counts;
+  const lines = [
+    "# 个人数据摘要",
+    "",
+    `生成时间：${formatMemoryDocumentTimestamp(new Date())}`,
+    `用户模式：${summary.user_mode === "teen" ? "青少年模式" : "标准模式"}`,
+    "",
+    "## 保存设置",
+    `- 记忆模式：${memoryModeLabel.value}`,
+    `- 保存语音转写：${saveTranscript.value ? "开启" : "关闭"}`,
+    `- 保存原始音频：${saveVoiceAudio.value ? "开启" : "关闭"}`,
+    "",
+    "## 数据数量",
+    `- 可见记忆：${counts.memories}`,
+    `- 会话：${counts.chat_threads}`,
+    `- 消息：${counts.chat_messages}`,
+    `- 情绪记录：${counts.mood_logs}`,
+    `- 测试历史：${counts.test_history}`,
+    `- 反馈记录：${counts.feedback}`,
+    `- 语音会话：${counts.voice_sessions}`,
+    `- 安全事件：${counts.risk_events}`,
+  ];
+  if (data) {
+    lines.push("", "JSON 导出已准备好，下载文件中包含更完整的个人数据。");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function buildDemoPersonalDataExport(): PersonalDataExport {
+  return {
+    exported_at: new Date().toISOString(),
+    account: { user_id: currentUserId.value || "demo-user", username: username.value, status: "demo" },
+    profile: { nickname: username.value, user_mode: isTeenMode.value ? "teen" : "adult" },
+    settings: {
+      memory_mode: currentMemoryMode.value,
+      save_voice_audio: saveVoiceAudio.value,
+      save_transcript: saveTranscript.value,
+    },
+    memories: memories.value,
+    chat_threads: threads.value,
+    mood_logs: demoMoodLogs.value,
+    test_history: testHistory.value,
+    feedback: [],
+    voice_sessions: [],
+  };
+}
+
+async function openPrivacyExport() {
+  if (isPrivacyLoading.value) return;
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  try {
+    const data = isDemoMode.value || !accessToken.value ? buildDemoPersonalDataExport() : await api.exportPersonalData();
+    privacyExportData.value = data;
+    privacyExportPreview.value = buildPrivacyExportMarkdown(data);
+    isPrivacyExportOpen.value = true;
+    await refreshPrivacySummary();
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "个人数据导出失败。";
+  } finally {
+    isPrivacyLoading.value = false;
+  }
+}
+
+function closePrivacyExport() {
+  isPrivacyExportOpen.value = false;
+}
+
+function downloadPrivacyJson() {
+  const data = privacyExportData.value ?? buildDemoPersonalDataExport();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function reloadPrivacyAffectedData() {
+  if (isDemoMode.value || !accessToken.value) {
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+  const [threadList, memoryList, mood] = await Promise.all([
+    api.listThreads(),
+    api.listMemories(),
+    api.getMoodTrend(moodRange.value),
+  ]);
+  threads.value = sortThreads(threadList.items);
+  memories.value = memoryList.items;
+  moodTrend.value = mood;
+  if (!threads.value.some((thread) => thread.thread_id === activeThreadId.value)) {
+    activeThreadId.value = threads.value[0]?.thread_id ?? "";
+    if (activeThreadId.value) localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
+    else localStorage.removeItem(THREAD_ID_KEY);
+  }
+  if (activeThreadId.value) await loadThreadMessages(activeThreadId.value);
+  else setMessages([]);
+  await refreshPrivacySummary();
+}
+
+async function deletePrivacyScope(scope: PrivacyDataScope) {
+  if (pendingPrivacyScope.value !== scope) {
+    pendingPrivacyScope.value = scope;
+    privacyNotice.value = "再次点击同一按钮确认清除。";
+    privacyError.value = "";
+    return;
+  }
+
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  privacyNotice.value = "";
+  try {
+    if (isDemoMode.value || !accessToken.value) {
+      if (scope === "memories" || scope === "all_non_account") memories.value = [];
+      if (scope === "chat" || scope === "all_non_account") {
+        threads.value = [];
+        demoMessagesByThread.value = {};
+        activeThreadId.value = "";
+        setMessages([]);
+      }
+      if (scope === "moods" || scope === "all_non_account") {
+        demoMoodLogs.value = [];
+        moodTrend.value = buildLocalMoodTrend(moodRange.value, []);
+      }
+      privacyNotice.value = "演示数据已清除。";
+    } else {
+      const response = await api.deletePersonalData({ scope });
+      const total = Object.values(response.affected_counts).reduce((sum, count) => sum + count, 0);
+      privacyNotice.value = `已清除 ${total} 项数据。`;
+      await reloadPrivacyAffectedData();
+    }
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "数据清除失败。";
+  } finally {
+    pendingPrivacyScope.value = null;
+    isPrivacyLoading.value = false;
+    await refreshPrivacySummary();
+  }
+}
+
+async function updatePrivacySetting(payload: { save_voice_audio?: boolean; save_transcript?: boolean }) {
+  if (isSettingsSaving.value) return;
+  const previousSaveAudio = saveVoiceAudio.value;
+  const previousSaveTranscript = saveTranscript.value;
+  if (typeof payload.save_voice_audio === "boolean") saveVoiceAudio.value = payload.save_voice_audio;
+  if (typeof payload.save_transcript === "boolean") saveTranscript.value = payload.save_transcript;
+  privacyError.value = "";
+
+  if (isDemoMode.value || !accessToken.value) {
+    if (isTeenMode.value) saveVoiceAudio.value = false;
+    privacySummary.value = buildLocalPrivacySummary();
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings(payload);
+    saveVoiceAudio.value = response.save_voice_audio;
+    saveTranscript.value = response.save_transcript;
+    currentMemoryMode.value = response.memory_mode;
+    await refreshPrivacySummary();
+  } catch (error) {
+    saveVoiceAudio.value = previousSaveAudio;
+    saveTranscript.value = previousSaveTranscript;
+    privacyError.value = error instanceof Error ? error.message : "隐私设置更新失败。";
+  } finally {
+    isSettingsSaving.value = false;
+  }
+}
+
+async function deleteCurrentAccount() {
+  if (deleteAccountConfirm.value !== "DELETE" || isPrivacyLoading.value) return;
+  isPrivacyLoading.value = true;
+  privacyError.value = "";
+  try {
+    if (!isDemoMode.value && accessToken.value) {
+      await api.deleteAccount({ confirmation: "DELETE" });
+    }
+    clearSession();
+    isDemoMode.value = false;
+    selectedAge.value = null;
+    selectedStyle.value = "";
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
+    selectedGoal.value = null;
+    threads.value = [];
+    memories.value = [];
+    moodTrend.value = null;
+    demoMoodLogs.value = [];
+    setMessages([]);
+    stage.value = "auth";
+    await refreshCaptcha();
+  } catch (error) {
+    privacyError.value = error instanceof Error ? error.message : "账号注销失败。";
+  } finally {
+    isPrivacyLoading.value = false;
+  }
+}
+
+function toggleMemoryReferences(messageId: number) {
+  messages.value = messages.value.map((message) =>
+    message.id === messageId ? { ...message, memoryRefsExpanded: !message.memoryRefsExpanded } : message,
+  );
 }
 
 async function loadMoodTrend(range: MoodRange = moodRange.value) {
@@ -828,6 +1648,7 @@ async function submitMoodCheckIn() {
       apiNotice.value = "今日状态已记录。";
       resetMoodDraft();
       await loadMoodTrend(moodRange.value);
+      await refreshPrivacySummary();
       return;
     }
 
@@ -835,6 +1656,7 @@ async function submitMoodCheckIn() {
     apiNotice.value = "今日状态已记录。";
     resetMoodDraft();
     await loadMoodTrend(moodRange.value);
+    await refreshPrivacySummary();
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "情绪记录提交失败。";
   } finally {
@@ -877,8 +1699,19 @@ function enterDemoMode() {
   isDemoMode.value = true;
   username.value = "小林";
   selectedAge.value = "18-24";
-  selectedStyle.value ||= "gentle";
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value ||= "anxiety";
+  currentMemoryMode.value = "summary_only";
+  saveVoiceAudio.value = false;
+  saveTranscript.value = true;
+  memoryError.value = "";
+  privacyError.value = "";
+  privacyNotice.value = "";
+  isMemoryDocOpen.value = false;
+  isMemoryDocLoading.value = false;
+  memoryDocContent.value = "";
+  memoryDocError.value = "";
   threads.value = sortThreads(demoThreads.map((thread) => ({ ...thread })));
   demoMessagesByThread.value = Object.fromEntries(Object.entries(demoMessages).map(([key, value]) => [key, [...value]]));
   memories.value = demoMemories.map((item) => ({ ...item }));
@@ -886,6 +1719,7 @@ function enterDemoMode() {
   moodTrend.value = buildLocalMoodTrend(moodRange.value, demoMoodLogs.value);
   activeThreadId.value = threads.value[0]?.thread_id ?? "";
   setMessages(demoMessagesByThread.value[activeThreadId.value] ?? []);
+  privacySummary.value = buildLocalPrivacySummary();
   stage.value = "onboarding";
 }
 
@@ -900,10 +1734,33 @@ async function selectThread(threadId: string) {
   localStorage.setItem(THREAD_ID_KEY, threadId);
   activeTab.value = "chat";
   await loadThreadMessages(threadId);
-  quickActions.value = inferContextualActions();
+  quickActions.value = [];
 }
 
-async function createThread(title = "新的对话") {
+function openThreadDrawer() {
+  activeTab.value = "chat";
+  isThreadDrawerOpen.value = true;
+}
+
+function closeThreadDrawer() {
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+}
+
+async function selectThreadFromDrawer(threadId: string) {
+  await selectThread(threadId);
+  closeThreadDrawer();
+}
+
+function isReusableNewThread(thread: ThreadListItem) {
+  return thread.title.trim() === NEW_THREAD_TITLE && !thread.last_summary?.trim();
+}
+
+function findReusableNewThread() {
+  return threads.value.find(isReusableNewThread);
+}
+
+async function createThread(title = NEW_THREAD_TITLE) {
   if (isDemoMode.value || !accessToken.value) {
     const threadId = `local-${Date.now()}`;
     threads.value = sortThreads([
@@ -939,6 +1796,29 @@ async function createThread(title = "新的对话") {
   setMessages([]);
 }
 
+async function createChatThread() {
+  if (isCreatingThread.value) return;
+  try {
+    isCreatingThread.value = true;
+    clearApiFeedback();
+    composerText.value = "";
+    const reusableThread = findReusableNewThread();
+    if (reusableThread) {
+      await selectThread(reusableThread.thread_id);
+    } else {
+      await createThread();
+    }
+    quickActions.value = [];
+    threadSearchQuery.value = "";
+    activeTab.value = "chat";
+    closeThreadDrawer();
+  } catch (error) {
+    apiError.value = error instanceof Error ? `新建会话失败：${error.message}` : "新建会话失败。";
+  } finally {
+    isCreatingThread.value = false;
+  }
+}
+
 function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = null, streaming = false) {
   const id = messageSeed.value;
   messages.value = [...messages.value, { id, role, text, riskLevel, streaming, createdAt: new Date().toISOString() }];
@@ -948,6 +1828,10 @@ function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = 
 
 function updateMessage(id: number, patch: Partial<Omit<ChatMessage, "id">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
+}
+
+function removeMessage(id: number) {
+  messages.value = messages.value.filter((message) => message.id !== id);
 }
 
 function appendMessageText(id: number, text: string) {
@@ -963,57 +1847,48 @@ function inferRisk(message: string): RiskLevel | null {
   return null;
 }
 
-function inferActions(message: string, risk: RiskLevel | null) {
-  if (risk === "L2" || risk === "L3") return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
-  if (message.includes("睡")) return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
-  if (message.includes("焦虑") || message.includes("慌")) return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
-  return [...defaultQuickActions];
+interface LocalSafetyFallback {
+  reply: string;
+  actions: string[];
 }
 
-function inferContextualActions(message = "", risk: RiskLevel | null = null) {
-  if (risk === "L2" || risk === "L3") {
-    return ["打开 SOS", "联系可信任的人", "陪我撑过 10 分钟", "离开危险环境"];
-  }
-
-  const joinedContext = `${contextText.value} ${message}`;
-
-  if (joinedContext.includes("开会") || joinedContext.includes("发言") || joinedContext.includes("被点名")) {
-    if (message.includes("梳理")) {
-      return ["拆成会前步骤", "找最怕的场景", "准备一句开口", "先稳住身体"];
-    }
-
-    if (message.includes("建议")) {
-      return ["会前 3 分钟怎么做", "准备备用句子", "降低发言压力", "会后怎么恢复"];
-    }
-
-    return ["先稳住身体", "找最怕的场景", "准备一句发言", "拆成会前步骤"];
-  }
-
-  if (joinedContext.includes("睡") || joinedContext.includes("失眠") || joinedContext.includes("睡不着")) {
-    if (message.includes("梳理")) {
-      return ["找睡前触发点", "分清担心和事实", "写下明天待办", "做睡前收尾"];
-    }
-
-    return ["找睡不着的原因", "睡前放松", "明天怎么恢复", "继续聊睡眠"];
-  }
-
-  if (joinedContext.includes("关系") || joinedContext.includes("家人") || joinedContext.includes("朋友")) {
-    return ["理清对方的话", "说出我的感受", "准备一句边界", "看我真正想要什么"];
-  }
-
-  if (joinedContext.includes("焦虑") || joinedContext.includes("慌") || joinedContext.includes("紧张")) {
-    return ["稳定 60 秒", "找触发点", "给我小步骤", "陪我待一会"];
-  }
-
-  return inferActions(message, risk);
+function buildLocalSafetyFallback(): LocalSafetyFallback {
+  return {
+    reply: "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；如果马上有危险，请立刻拨打当地紧急电话。",
+    actions: ["我现在不安全", "我能联系谁", "先陪我稳住"],
+  };
 }
 
-function buildReply(message: string) {
-  if (message.includes("睡")) return "睡不好的时候，很多情绪都会被放大。我们先不急着解决全部，只分开看看：是入睡难、半夜醒，还是醒来后很累？";
-  if (message.includes("焦虑") || message.includes("慌")) return "焦虑来的时候，身体常常比想法更快。我们先让身体退一步，再看事情本身。";
-  if (message.includes("关系") || message.includes("家人")) return "关系里的难受，通常不只是一句话，而是那句话碰到了你很在意的东西。你最怕哪种感受被忽略？";
-  if (message.includes("呼吸")) return "现在先把注意力放回身体。吸气四拍，停一拍，呼气六拍。先做三轮，不用追求标准。";
-  return "我在这里。你不用一下子说得很完整，先把压在胸口最重的那一小块说出来就够了。";
+function createClientMessageId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isTurnStateError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("turn_running") || message.includes("idempotency_key_conflict");
+}
+
+async function refreshAfterTurnStateError(assistantId: number, message: string) {
+  apiNotice.value = message;
+  updateMessage(assistantId, { streaming: false, streamError: true });
+  if (activeThreadId.value) await loadThreadMessages(activeThreadId.value);
+}
+
+function showFailedNoReply(assistantId: number | null, userText: string, failureReason?: string | null) {
+  if (assistantId !== null) removeMessage(assistantId);
+  failedReplyStatus.value = {
+    userText,
+    failureReason: failureReason ?? null,
+    retryable: true,
+  };
+  quickActions.value = [];
+}
+
+async function retryFailedReply() {
+  const userText = failedReplyStatus.value?.userText;
+  if (!userText || isSending.value) return;
+  await submitMessage(userText);
 }
 
 function syncLocalThread(summary: string, risk: RiskLevel | null) {
@@ -1028,21 +1903,50 @@ function syncLocalThread(summary: string, risk: RiskLevel | null) {
   demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
 }
 
-function applySendMessageResponse(assistantId: number, userContent: string, response: SendMessageResponse) {
+function syncFailedNoReplyThread(risk: RiskLevel | null) {
+  if (!activeThreadId.value) return;
+  threads.value = sortThreads(
+    threads.value.map((thread) =>
+      thread.thread_id === activeThreadId.value
+        ? { ...thread, last_risk_level: risk ?? thread.last_risk_level, updated_at: new Date().toISOString() }
+        : thread,
+    ),
+  );
+  demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
+}
+
+function applySendMessageResponse(
+  assistantId: number,
+  userContent: string,
+  response: SendMessageResponse,
+  fallbackRisk: RiskLevel | null = null,
+) {
   const assistant = response.assistant_message;
+  if (response.delivery_status === "failed_no_reply" || !assistant) {
+    showFailedNoReply(assistantId, userContent, response.failure_reason);
+    syncFailedNoReplyThread(fallbackRisk);
+    return;
+  }
+  const deliveryStatus = normalizeDeliveryStatus(assistant.delivery_status);
   const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
   const reply = assistant.assistant_text || assistant.content;
-  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : inferContextualActions(userContent, risk);
+  const actions = assistant.suggested_actions.slice(0, 3);
   updateMessage(assistantId, {
     text: reply,
     riskLevel: risk,
     graphNode: null,
     suggestedActions: actions,
+    referencedMemories: deliveryStatus === "generated" ? assistant.referenced_memories ?? [] : [],
+    deliveryStatus,
+    failureReason: assistant.failure_reason ?? null,
+    retryable: assistant.retryable,
     streaming: false,
     streamError: false,
   });
-  quickActions.value = actions.slice(0, 4);
+  failedReplyStatus.value = null;
+  quickActions.value = actions;
   syncLocalThread(reply, risk);
+  if (assistant.should_write_memory) refreshMemoriesForJob(assistant.memory_job_status);
   if (risk === "L2" || risk === "L3") openSafety();
 }
 
@@ -1051,32 +1955,62 @@ async function submitMessage(text = composerText.value) {
   if (!content || isSending.value) return;
   composerText.value = "";
   clearApiFeedback();
+  failedReplyStatus.value = null;
+  quickActions.value = [];
   activeTab.value = "chat";
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
   const localRisk = inferRisk(content);
-  quickActions.value = inferContextualActions(content, localRisk);
 
   if (isDemoMode.value || !accessToken.value || activeThreadId.value.startsWith("local-")) {
-    const reply = buildReply(content);
-    addMessage("assistant", reply, localRisk);
-    syncLocalThread(reply, localRisk);
-    if (localRisk === "L2" || localRisk === "L3") openSafety();
+    if (localRisk === "L2" || localRisk === "L3") {
+      const safetyFallback = buildLocalSafetyFallback();
+      addMessage("assistant", safetyFallback.reply, localRisk, false);
+      quickActions.value = safetyFallback.actions;
+      syncLocalThread(safetyFallback.reply, localRisk);
+      openSafety();
+      return;
+    }
+    showFailedNoReply(null, content, "local_generation_unavailable");
+    syncFailedNoReplyThread(localRisk);
     return;
   }
 
-  const payload = { user_id: currentUserId.value, content, input_type: "text" as const, user_mode: selectedUserMode() };
+  const payload: SendMessageRequest = {
+    user_id: currentUserId.value,
+    client_message_id: createClientMessageId(),
+    content,
+    input_type: "text",
+    user_mode: selectedUserMode(),
+  };
   const assistantId = addMessage("assistant", "", null, true);
   let streamed = "";
   let risk: RiskLevel | null = null;
   let receivedStreamEvent = false;
   let receivedFinalEvent = false;
+  let failedNoReply = false;
   try {
     isSending.value = true;
     await api.streamMessage(
       activeThreadId.value,
       payload,
       (event, data) => {
+        if (event === "accepted" && isAcceptedEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "accepted",
+            streamError: false,
+          });
+        }
+
+        if (event === "heartbeat" && isHeartbeatEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "heartbeat",
+            streamError: false,
+          });
+        }
+
         if (event === "graph_update" && isGraphUpdateEventData(data)) {
           receivedStreamEvent = true;
           const graphRisk = normalizeRiskLevel(data.risk_level);
@@ -1088,26 +2022,49 @@ async function submitMessage(text = composerText.value) {
           });
         }
 
+        if (event === "error" && isErrorEventData(data)) {
+          receivedStreamEvent = true;
+          apiNotice.value = data.code === "turn_running"
+            ? "这轮消息仍在服务端处理中，正在刷新记录。"
+            : data.message || "流式连接异常，正在刷新服务端记录。";
+          updateMessage(assistantId, {
+            streaming: false,
+            streamError: true,
+          });
+        }
+
         if (event === "token" && isTokenEventData(data)) {
           receivedStreamEvent = true;
           streamed += data.text;
           appendMessageText(assistantId, data.text);
         }
-        if (event === "final") {
+        if (event === "final" && isFinalEventData(data)) {
           receivedStreamEvent = true;
           receivedFinalEvent = true;
           risk = normalizeRiskLevel(data.risk_level) ?? "L0";
-          const actions = normalizeStringList(data.suggested_actions);
-          const finalActions = actions.length ? actions : inferContextualActions(content, risk);
-          quickActions.value = finalActions.slice(0, 4);
-          if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
+          const deliveryStatus = normalizeDeliveryStatus(data.delivery_status);
+          if (deliveryStatus === "failed_no_reply") {
+            failedNoReply = true;
+            showFailedNoReply(assistantId, content, data.failure_reason ?? null);
+            syncFailedNoReplyThread(risk);
+            return;
+          }
+          const finalActions = normalizeStringList(data.suggested_actions).slice(0, 3);
+          quickActions.value = finalActions;
+          if (!streamed) streamed = data.assistant_text;
           updateMessage(assistantId, {
             text: streamed,
             riskLevel: risk,
             graphNode: null,
             suggestedActions: finalActions,
+            referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(data.referenced_memories) : [],
+            deliveryStatus,
+            failureReason: data.failure_reason ?? null,
+            retryable: Boolean(data.retryable),
+            streaming: false,
             streamError: false,
           });
+          if (Boolean(data.should_write_memory)) refreshMemoriesForJob(data.memory_job_status);
         }
       },
     );
@@ -1121,14 +2078,32 @@ async function submitMessage(text = composerText.value) {
 
     if (!receivedStreamEvent) {
       apiNotice.value = "流式连接无返回，已切换到稳定发送。";
-      const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      try {
+        const response = await api.sendMessage(activeThreadId.value, payload);
+        applySendMessageResponse(assistantId, content, response, localRisk);
+      } catch (fallbackError) {
+        if (isTurnStateError(fallbackError)) {
+          await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+          return;
+        }
+        showFailedNoReply(
+          assistantId,
+          content,
+          fallbackError instanceof Error ? fallbackError.message : "send_failed",
+        );
+        syncFailedNoReplyThread(localRisk);
+      }
       return;
     }
 
-    if (!streamed) {
-      streamed = buildReply(content);
-      updateMessage(assistantId, { text: streamed, riskLevel: risk });
+    if (failedNoReply) {
+      return;
+    }
+
+    if (!streamed.trim()) {
+      showFailedNoReply(assistantId, content, "empty_stream_reply");
+      syncFailedNoReplyThread(risk ?? localRisk);
+      return;
     }
     syncLocalThread(streamed, risk);
     if (risk === "L2" || risk === "L3") openSafety();
@@ -1140,30 +2115,31 @@ async function submitMessage(text = composerText.value) {
       return;
     }
 
+    if (isTurnStateError(error)) {
+      await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+      return;
+    }
+
     try {
       apiNotice.value = "流式连接失败，已切换到稳定发送。";
       const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      applySendMessageResponse(assistantId, content, response, localRisk);
     } catch (fallbackError) {
-      apiError.value =
-        fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
-      const reply = buildReply(content);
-      const actions = inferContextualActions(content, localRisk);
-      quickActions.value = actions;
-      updateMessage(assistantId, {
-        text: reply,
-        riskLevel: localRisk,
-        graphNode: null,
-        suggestedActions: actions,
-        streaming: false,
-        streamError: true,
-      });
-      syncLocalThread(reply, localRisk);
-      if (localRisk === "L2" || localRisk === "L3") openSafety();
+      if (isTurnStateError(fallbackError)) {
+        await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+        return;
+      }
+      showFailedNoReply(
+        assistantId,
+        content,
+        fallbackError instanceof Error ? fallbackError.message : "send_failed",
+      );
+      syncFailedNoReplyThread(localRisk);
     }
   } finally {
     updateMessage(assistantId, { streaming: false });
     isSending.value = false;
+    await refreshPrivacySummary();
   }
 }
 
@@ -1513,6 +2489,405 @@ function riskNoteForCode(code: string): string {
   }
 }
 
+// --- Sprint 3: Voice MVP ---
+
+const wsBaseUrl = computed(() => {
+  const url = apiBaseUrl.replace(/^http/, "ws");
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+});
+
+// --- Sprint 3: Speech Recording (Xunfei / Browser Speech) ---
+
+// Cleans up all recording resources
+function cleanupRecording(): void {
+  isRecording.value = false;
+  xfRecognizedText.value = "";
+  xfRecognizing.value = false;
+  stopBrowserSpeech();
+  if (xfWs.value) {
+    try { xfWs.value.close(); } catch {}
+    xfWs.value = null;
+  }
+  try {
+    xfScriptProcessor?.disconnect();
+    xfSourceNode?.disconnect();
+    xfAudioContext?.close();
+  } catch {}
+  xfScriptProcessor = null;
+  xfSourceNode = null;
+  xfAudioContext = null;
+  xfMediaStream?.getTracks().forEach((t) => t.stop());
+  xfMediaStream = null;
+}
+
+// Start recording via browser Web Speech API (or Xunfei if configured)
+async function startSpeechRecording(): Promise<void> {
+  if (isRecording.value) return;
+
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  if (apiKey && apiSecret) {
+    await startXfRecording();
+  } else {
+    startBrowserSpeech();
+  }
+}
+
+function stopSpeechRecording(): void {
+  cleanupRecording();
+}
+// Falls back to browser Web Speech API if no Xunfei credentials configured
+
+async function buildXfAuthUrl(): Promise<string> {
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  const host = "iat-api.xfyun.cn";
+  const path = "/v2/iat";
+  const date = new Date().toUTCString();
+  const signatureOrigin = `host: ${host}\ndate: ${date}\nGET ${path} HTTP/1.1`;
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(apiSecret);
+  const messageData = encoder.encode(signatureOrigin);
+
+  return crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+    .then((key) => crypto.subtle.sign("HMAC", key, messageData))
+    .then((signature) => {
+      const sigStr = btoa(String.fromCharCode(...new Uint8Array(signature)));
+      const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${sigStr}"`;
+      const auth = btoa(authorizationOrigin);
+      return `wss://${host}${path}?authorization=${encodeURIComponent(auth)}&date=${encodeURIComponent(date)}&host=${host}`;
+    });
+}
+
+async function startXfRecording(): Promise<void> {
+  if (isRecording.value) return;
+
+  const apiKey = import.meta.env.VITE_XF_API_KEY as string;
+  const apiSecret = import.meta.env.VITE_XF_API_SECRET as string;
+
+  // If no Xunfei credentials, use browser Web Speech API directly
+  if (!apiKey || !apiSecret) {
+    startBrowserSpeech();
+    return;
+  }
+
+  try {
+    const wsUrl = await buildXfAuthUrl();
+    xfRecognizedText.value = "";
+    xfRecognizing.value = false;
+    voiceError.value = "";
+
+    xfMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    xfAudioContext = new AudioContext({ sampleRate: 16000 });
+    const source = xfAudioContext.createMediaStreamSource(xfMediaStream);
+
+    xfScriptProcessor = xfAudioContext.createScriptProcessor(4096, 1, 1);
+    xfSourceNode = source;
+
+    source.connect(xfScriptProcessor);
+    xfScriptProcessor.connect(xfAudioContext.destination);
+
+    xfWs.value = new WebSocket(wsUrl);
+
+    xfWs.value.onopen = () => {
+      isRecording.value = true;
+      const appId = import.meta.env.VITE_XF_APP_ID as string;
+      xfWs.value!.send(JSON.stringify({
+        common: { app_id: appId },
+        business: {
+          language: "zh_cn",
+          domain: "iat",
+          accent: "mandarin",
+          vad_eos: 3000,
+          dwa: "wpgs",
+          ptt: 0,
+        },
+        data: { status: 0, format: "audio/L16;rate=16000", encoding: "raw", audio: "" },
+      }));
+    };
+
+    xfWs.value.onmessage = (event) => {
+      try {
+        const resp = JSON.parse(event.data as string);
+        if (resp.code !== 0) {
+          voiceError.value = `讯飞识别错误: ${resp.message || "未知错误"} (code=${resp.code})`;
+          cleanupRecording();
+          return;
+        }
+        if (resp.data?.result) {
+          const ws = resp.data.result.ws || [];
+          const words = ws.map((w: any) => (w.cw || []).map((c: any) => c.w).join("")).join("");
+          if (words) {
+            xfRecognizedText.value = words;
+            xfRecognizing.value = true;
+            if (resp.data.status === 2) {
+              xfRecognizing.value = false;
+              cleanupRecording();
+              submitMessage(words);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    xfWs.value.onerror = () => {
+      voiceError.value = "讯飞连接失败，请手动输入文字。";
+      cleanupRecording();
+    };
+
+    xfWs.value.onclose = () => {
+      if (isRecording.value) {
+        cleanupRecording();
+      }
+    };
+
+    xfScriptProcessor.onaudioprocess = (event) => {
+      if (!isRecording.value || !xfWs.value || xfWs.value.readyState !== WebSocket.OPEN) return;
+      const inputData = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      xfWs.value.send(JSON.stringify({
+        data: { status: 1, format: "audio/L16;rate=16000", encoding: "raw", audio: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) },
+      }));
+    };
+
+  } catch (err: any) {
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      voiceError.value = "麦克风权限被拒绝，请允许麦克风访问或手动输入文字。";
+    } else {
+      startBrowserSpeech();
+    }
+    cleanupRecording();
+  }
+}
+
+function startBrowserSpeech(): void {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    voiceError.value = "浏览器不支持语音识别，请使用 Chrome 或 Edge，或手动输入文字。";
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "zh-CN";
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isRecording.value = true;
+    xfRecognizedText.value = "";
+    xfRecognizing.value = true;
+    voiceError.value = "";
+  };
+
+  recognition.onresult = (event: any) => {
+    let final = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) {
+        final += result[0].transcript;
+      } else {
+        xfRecognizedText.value += result[0].transcript;
+      }
+    }
+    if (final) {
+      xfRecognizing.value = false;
+      // Send recognized text directly to the chat pipeline
+      cleanupRecording();
+      submitMessage(final);
+    }
+  };
+
+  recognition.onerror = (event: any) => {
+    if (event.error === "not-allowed") {
+      voiceError.value = "麦克风权限被拒绝，请允许麦克风访问或手动输入文字。";
+    } else if (event.error !== "aborted") {
+      voiceError.value = `语音识别失败: ${event.error}`;
+    }
+    cleanupRecording();
+  };
+
+  recognition.onend = () => {
+    if (isRecording.value) {
+      cleanupRecording();
+    }
+  };
+
+  recognition.start();
+  (window as any).__xfRecognition = recognition;
+}
+
+function stopBrowserSpeech(): void {
+  const rec = (window as any).__xfRecognition;
+  if (rec) {
+    try { rec.stop(); } catch {}
+    (window as any).__xfRecognition = null;
+  }
+}
+
+// --- Sprint 3: Share Card ---
+
+function generateShareCard() {
+  if (!testResult.value) return;
+  const r = testResult.value;
+  const testType = r.test_type === "state" ? "mood_check" as const : "sixteen_type" as const;
+  const title = testType === "mood_check" ? "我的今日状态观察" : "我的16型人格镜像";
+  const highlights = [
+    ...r.strengths.slice(0, 2),
+    ...r.blind_spots.slice(0, 1),
+  ];
+  shareCardData.value = {
+    testType,
+    title,
+    subtitle: "这是一面镜子，不是诊断",
+    resultLabel: r.result_title,
+    summary: r.summary,
+    highlights,
+    disclaimer: "结果仅供自我观察，不代表临床诊断或心理治疗结论。",
+    sixteenTypeCode: r.profile.sixteen_type_code ?? null,
+  };
+  shareCardVisible.value = true;
+  shareCardCopied.value = false;
+}
+
+function closeShareCard() {
+  shareCardVisible.value = false;
+  shareCardData.value = null;
+}
+
+async function copyShareCard() {
+  if (!shareCardData.value) return;
+  const d = shareCardData.value;
+  const lines = [
+    `${d.title} · ${d.resultLabel}`,
+    `—— ${d.subtitle}`,
+    "",
+    d.summary,
+    d.highlights.length > 0 ? `要点：${d.highlights.join(" / ")}` : "",
+    "",
+    d.disclaimer,
+  ].filter(Boolean);
+  const text = lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    shareCardCopied.value = true;
+    setTimeout(() => { shareCardCopied.value = false; }, 2000);
+  } catch {
+    // Clipboard API not available
+  }
+}
+
+async function downloadShareImage() {
+  if (!shareCardData.value) return;
+  shareCardSaving.value = true;
+  const el = document.querySelector(".share-card") as HTMLElement | null;
+  if (!el) {
+    shareCardSaving.value = false;
+    return;
+  }
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      backgroundColor: null,
+      useCORS: true,
+      logging: false,
+    });
+    const dataUrl = canvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.download = `share-${shareCardData.value.testType}-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
+  } catch {
+    // html2canvas failed silently
+  } finally {
+    shareCardSaving.value = false;
+  }
+}
+
+// --- Sprint 3: Feedback ---
+
+function openFeedback(type: "assistant_message" | "knowledge_answer" | "test_result", targetId: string) {
+  feedbackTargetType.value = type;
+  feedbackTargetId.value = targetId;
+  feedbackRating.value = 0;
+  feedbackNote.value = "";
+  feedbackDone.value = false;
+  feedbackVisible.value = true;
+}
+
+async function submitFeedback() {
+  if (feedbackRating.value < 1 || feedbackRating.value > 5) return;
+  isFeedbackSubmitting.value = true;
+  try {
+    const payload: FeedbackCreateRequest = {
+      target_type: feedbackTargetType.value,
+      target_id: feedbackTargetId.value,
+      rating: feedbackRating.value,
+      note: feedbackNote.value || null,
+    };
+    await api.submitFeedback(payload);
+    feedbackDone.value = true;
+    await refreshPrivacySummary();
+  } catch {
+    // silently fail
+  } finally {
+    isFeedbackSubmitting.value = false;
+  }
+}
+
+function closeFeedback() {
+  feedbackVisible.value = false;
+}
+
+// --- Sprint 3: Weekly Summary ---
+
+async function loadWeeklySummary() {
+  isWeeklySummaryLoading.value = true;
+  isWeeklySummaryOpen.value = true;
+  const rangeLabel = moodRange.value === "30d" ? "30天" : "近7天";
+  try {
+    if (isDemoMode.value || !accessToken.value) {
+      weeklySummary.value = {
+        range: rangeLabel,
+        summary: moodTrend.value?.summary || "这周你记录了情绪变化，继续关照自己。",
+        top_tags: moodTrend.value?.top_tags || [],
+        suggested_actions: ["试试记下今天的情绪", "给自己一个轻松的时段"],
+        generated_by: "fallback",
+      };
+      return;
+    }
+    const result = await api.getWeeklySummary();
+    weeklySummary.value = {
+      ...result,
+      range: rangeLabel,
+    };
+  } catch {
+    weeklySummary.value = {
+      range: rangeLabel,
+      summary: "暂时无法生成周小结，请稍后再试。",
+      top_tags: [],
+      suggested_actions: [],
+      generated_by: "fallback",
+    };
+  } finally {
+    isWeeklySummaryLoading.value = false;
+  }
+}
+
+function closeWeeklySummary() {
+  isWeeklySummaryOpen.value = false;
+}
+
+// --- End Sprint 3 ---
+
 async function loadTestHistory() {
   isHistoryLoading.value = true;
   try {
@@ -1587,7 +2962,8 @@ async function logout() {
   clearSession();
   isDemoMode.value = false;
   selectedAge.value = null;
-  selectedStyle.value = null;
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value = null;
   threads.value = [];
   memories.value = [];
@@ -1680,22 +3056,8 @@ onMounted(async () => {
         <header class="screen-header">
           <span class="top-label">{{ selectedAgeLabel }} · {{ modeLabel }}</span>
           <h1>你希望我怎么陪你？</h1>
-          <p>先选一种交流语气，再选一个这段时间更需要的方向。</p>
+          <p>先选一个这段时间更需要的方向。</p>
         </header>
-
-        <div class="choice-section">
-          <h2>陪伴风格</h2>
-          <button
-            v-for="option in styleOptions"
-            :key="option.id"
-            :class="['choice-row', { active: selectedStyle === option.id }]"
-            type="button"
-            @click="selectedStyle = option.id"
-          >
-            <strong>{{ option.label }}</strong>
-            <span>{{ option.description }}</span>
-          </button>
-        </div>
 
         <div class="choice-section">
           <h2>当前目标</h2>
@@ -1816,15 +3178,18 @@ onMounted(async () => {
               <span v-for="tag in moodTrendTags" :key="tag">{{ tag }}</span>
             </div>
             <small v-if="moodTrendPoints.length === 0" class="empty-copy">暂无趋势数据。</small>
+            <button class="text-action weekly-summary-btn" type="button" :disabled="isWeeklySummaryLoading" @click="loadWeeklySummary">
+              {{ isWeeklySummaryLoading ? '加载中...' : moodRange === '30d' ? '查看近30天小结' : '查看本周情绪小结' }}
+            </button>
           </section>
 
           <section class="section-block">
             <div class="section-title">
               <h2>继续聊</h2>
-              <button type="button" @click="createThread()">新建</button>
+              <button type="button" :disabled="isCreatingThread" @click="createChatThread">新建</button>
             </div>
             <button
-              v-for="thread in threads"
+              v-for="thread in visibleThreads"
               :key="thread.thread_id"
               class="thread-card"
               type="button"
@@ -1836,20 +3201,17 @@ onMounted(async () => {
               </div>
               <span :class="['risk-pill', riskClass(thread.last_risk_level)]">{{ riskLabel(thread.last_risk_level) }}</span>
             </button>
-            <p v-if="threads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
+            <p v-if="visibleThreads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
           </section>
         </section>
 
         <section v-else-if="activeTab === 'chat'" class="tab-page chat-page">
-          <div v-if="threads.length > 0" class="thread-tabs">
-            <button
-              v-for="thread in threads"
-              :key="thread.thread_id"
-              :class="{ active: activeThreadId === thread.thread_id }"
-              type="button"
-              @click="selectThread(thread.thread_id)"
-            >
-              {{ thread.title }}
+          <div class="chat-thread-toolbar" role="group" aria-label="会话操作">
+            <button class="thread-menu-button" type="button" @click="openThreadDrawer">
+              会话
+            </button>
+            <button class="thread-new-button" type="button" :disabled="isCreatingThread" @click="createChatThread">
+              {{ isCreatingThread ? "创建中..." : "新建" }}
             </button>
           </div>
 
@@ -1876,6 +3238,16 @@ onMounted(async () => {
                 </span>
                 <span v-if="message.streamError" class="stream-status">已切换到稳定回复</span>
               </div>
+              <div v-if="message.role === 'assistant' && message.referencedMemories?.length" class="memory-reference">
+                <button type="button" @click="toggleMemoryReferences(message.id)">
+                  引用了 {{ message.referencedMemories.length }} 条记忆
+                </button>
+                <div v-if="message.memoryRefsExpanded" class="memory-reference__list">
+                  <span v-for="memory in message.referencedMemories" :key="`${message.id}-${memory.memory_id}`">
+                    {{ memoryTypeLabel(memory.memory_type) }}：{{ memory.content }}
+                  </span>
+                </div>
+              </div>
               <div
                 v-if="message.role === 'assistant' && message.suggestedActions?.length"
                 class="message-actions"
@@ -1890,20 +3262,52 @@ onMounted(async () => {
                   {{ action }}
                 </button>
               </div>
+              <div v-if="message.role === 'assistant'" class="message-feedback">
+                <button type="button" class="feedback-btn" title="有帮助" @click="openFeedback('assistant_message', String(message.id))">有帮助</button>
+              </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
+            <div v-if="failedReplyStatus" class="retry-status-row" role="status">
+              <span>这次没有生成成功，可以重试。</span>
+              <button type="button" :disabled="isSending || !failedReplyStatus.retryable" @click="retryFailedReply">
+                重试
+              </button>
+            </div>
           </div>
 
-          <div class="quick-actions">
+          <div v-if="quickActions.length" class="quick-actions">
             <button v-for="action in quickActions" :key="action" type="button" :disabled="isSending" @click="submitMessage(action)">
               {{ action }}
             </button>
           </div>
 
           <form class="composer" @submit.prevent="submitMessage()">
-            <input v-model="composerText" type="text" placeholder="写下此刻的感受..." />
-            <button type="submit" :disabled="!composerText.trim() || isSending">{{ isSending ? "..." : "发送" }}</button>
+            <input v-model="composerText" type="text" :placeholder="isRecording ? '正在录音...' : '写下此刻的感受...'" />
+            <button
+              v-if="!isRecording"
+              type="button"
+              class="voice-record-btn"
+              title="语音输入"
+              @click="startSpeechRecording"
+            >语音</button>
+            <button
+              v-else
+              type="button"
+              class="voice-record-btn voice-record-btn--active"
+              title="停止录音"
+              @click="stopSpeechRecording"
+            >停止</button>
+            <button type="submit" :disabled="(!composerText.trim() && !isRecording) || isSending">{{ isSending ? "..." : "发送" }}</button>
           </form>
+          <div v-if="xfRecognizing || voiceError" class="voice-status-bar">
+            <template v-if="xfRecognizing">
+              <span class="voice-status-bar__dot voice-status-bar__dot--active"></span>
+              <span>{{ xfRecognizedText || '正在听...' }}</span>
+            </template>
+            <template v-else-if="voiceError">
+              <span>{{ voiceError }}</span>
+            </template>
+          </div>
         </section>
 
           <!-- 以下是测试中心页面 -->
@@ -2094,7 +3498,9 @@ onMounted(async () => {
 
             <footer class="sticky-actions">
               <button class="primary-action" type="button" @click="continueTestChat">继续聊聊这个结果</button>
+              <button class="secondary-action" type="button" @click="generateShareCard()">生成分享卡</button>
               <button class="secondary-action" type="button" @click="backToTestList">返回测试列表</button>
+              <button class="text-action" type="button" @click="openFeedback('test_result', testResult?.attempt_id ?? null)">评价结果</button>
             </footer>
           </div>
 
@@ -2204,6 +3610,7 @@ onMounted(async () => {
                     {{ item.title }}
                   </button>
                 </section>
+                <button class="text-action knowledge-feedback" type="button" @click="openFeedback('knowledge_answer', String(message.id))">评价答案</button>
                 <button class="text-action knowledge-continue" type="button" @click="continueKnowledgeChat">
                   带到咨询对话里聊
                 </button>
@@ -2399,29 +3806,210 @@ onMounted(async () => {
               <h2>陪伴设置</h2>
               <span>自动保存</span>
             </div>
-            <p>{{ selectedStyleLabel }} · {{ selectedGoalLabel }}</p>
+            <p>{{ companionSettingsSummary }}</p>
           </section>
 
-          <div class="choice-section compact">
-            <h2>风格</h2>
-            <button
-              v-for="option in styleOptions"
-              :key="option.id"
-              :class="['choice-row', { active: selectedStyle === option.id }]"
-              type="button"
-              @click="selectedStyle = option.id"
-            >
-              <strong>{{ option.label }}</strong>
-              <span>{{ option.description }}</span>
+          <section class="style-settings">
+            <button class="style-setting-card" type="button" @click="openCompanionStyleEditor">
+              <div>
+                <h2>自定义回复风格</h2>
+                <strong>{{ selectedStyleLabel }}</strong>
+                <p>{{ companionStylePreview }}</p>
+              </div>
+              <span>管理</span>
             </button>
-          </div>
 
-          <section class="section-block">
-            <div class="section-title">
-              <h2>记忆摘要</h2>
+            <div v-if="isStyleEditorOpen" class="style-editor">
+              <div class="style-switcher" role="radiogroup" aria-label="回复风格切换">
+                <button
+                  :class="{ active: editingStyleId === DEFAULT_STYLE_ID }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(DEFAULT_STYLE_ID)"
+                >
+                  <strong>默认</strong>
+                  <span>未启用自定义</span>
+                </button>
+                <button
+                  v-for="style in customStyles"
+                  :key="style.id"
+                  :class="{ active: editingStyleId === style.id }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(style.id)"
+                >
+                  <strong>{{ style.title }}</strong>
+                  <span>{{ previewCompanionStyle(style.definition, 28) }}</span>
+                </button>
+                <button
+                  :class="{ active: editingStyleId === NEW_STYLE_ID }"
+                  type="button"
+                  @click="startNewCompanionStyleDraft"
+                >
+                  <strong>新建</strong>
+                  <span>添加一套风格</span>
+                </button>
+              </div>
+              <template v-if="!isEditingDefaultStyle">
+                <label class="field">
+                  <span>标题</span>
+                  <input
+                    v-model="companionStyleTitleDraft"
+                    type="text"
+                    maxlength="24"
+                    placeholder="例如：先安抚再行动"
+                  />
+                </label>
+                <label class="field">
+                  <span>具体风格定义</span>
+                  <textarea
+                    v-model="companionStyleDraft"
+                    rows="5"
+                    maxlength="500"
+                    placeholder="例如：先短短安抚我，再给一个可执行的小步骤。"
+                  ></textarea>
+                </label>
+                <div class="style-editor-meta">
+                  <span>{{ companionStyleTitleDraft.trim().length }}/24</span>
+                  <span>{{ companionStyleDraft.trim().length }}/500</span>
+                </div>
+              </template>
+              <p v-if="companionStyleError" class="notice notice--error">{{ companionStyleError }}</p>
+              <div class="style-editor-actions">
+                <button class="secondary-action" type="button" :disabled="isSettingsSaving" @click="isStyleEditorOpen = false">
+                  取消
+                </button>
+                <button class="primary-action" type="button" :disabled="!canSaveCompanionStyle" @click="saveCompanionStyle">
+                  {{ isSettingsSaving ? "保存中..." : "保存" }}
+                </button>
+              </div>
             </div>
-            <article v-for="item in memories" :key="item.memory_id" class="memory-item">{{ item.content }}</article>
-            <p v-if="memories.length === 0" class="empty-copy">还没有记忆摘要。</p>
+          </section>
+
+          <section class="section-block memory-center">
+            <div class="section-title">
+              <h2>记忆中心</h2>
+              <span>{{ memoryModeLabel }}</span>
+            </div>
+
+            <div class="memory-mode-control" role="radiogroup" aria-label="记忆模式">
+              <button
+                v-for="option in memoryModeOptions"
+                :key="option.id"
+                :class="{ active: currentMemoryMode === option.id }"
+                type="button"
+                :disabled="isSettingsSaving"
+                @click="changeMemoryMode(option.id)"
+              >
+                <strong>{{ option.label }}</strong>
+                <span>{{ option.description }}</span>
+              </button>
+            </div>
+
+            <p v-if="memoryError" class="notice notice--error">{{ memoryError }}</p>
+
+            <article class="memory-document-card">
+              <div class="memory-document-main">
+                <h3>记忆文档</h3>
+                <p>把当前可见的记忆集中在一个文档里查看与下载。</p>
+                <small v-if="memories.length">当前可见记忆：{{ memories.length }} 条</small>
+                <small v-else>当前没有可见记忆。</small>
+              </div>
+              <div class="memory-document-actions">
+                <button class="secondary-action" type="button" :disabled="isMemoryDocLoading" @click="openMemoryDocument">
+                  查看
+                </button>
+                <button class="text-action" type="button" :disabled="isMemoryDocLoading" @click="downloadMemoryDocument">
+                  下载 .md
+                </button>
+              </div>
+            </article>
+          </section>
+
+          <section class="section-block privacy-center">
+            <div class="section-title">
+              <h2>隐私与数据</h2>
+              <span>{{ privacyLatestActivity }}</span>
+            </div>
+
+            <div class="privacy-settings-grid">
+              <article class="privacy-setting-card">
+                <strong>语音转写</strong>
+                <span>{{ saveTranscript ? "保存" : "不保存" }}</span>
+                <button
+                  class="text-action"
+                  type="button"
+                  :disabled="isSettingsSaving"
+                  @click="updatePrivacySetting({ save_transcript: !saveTranscript })"
+                >
+                  {{ saveTranscript ? "关闭" : "开启" }}
+                </button>
+              </article>
+              <article class="privacy-setting-card">
+                <strong>原始音频</strong>
+                <span>{{ isTeenMode ? "青少年默认关闭" : saveVoiceAudio ? "保存" : "不保存" }}</span>
+                <button
+                  class="text-action"
+                  type="button"
+                  :disabled="isSettingsSaving || isTeenMode"
+                  @click="updatePrivacySetting({ save_voice_audio: !saveVoiceAudio })"
+                >
+                  {{ saveVoiceAudio ? "关闭" : "开启" }}
+                </button>
+              </article>
+            </div>
+
+            <div class="privacy-count-grid">
+              <span>记忆 {{ privacyCounts.memories }}</span>
+              <span>会话 {{ privacyCounts.chat_threads }}</span>
+              <span>消息 {{ privacyCounts.chat_messages }}</span>
+              <span>情绪 {{ privacyCounts.mood_logs }}</span>
+              <span>测试 {{ privacyCounts.test_history }}</span>
+              <span>反馈 {{ privacyCounts.feedback }}</span>
+              <span>语音 {{ privacyCounts.voice_sessions }}</span>
+              <span>安全 {{ privacyCounts.risk_events }}</span>
+            </div>
+
+            <article class="privacy-export-card">
+              <div>
+                <h3>个人数据导出</h3>
+                <p>JSON 文件包含账号资料、记忆、聊天、情绪、测试历史、反馈和语音会话元数据。</p>
+              </div>
+              <button class="secondary-action" type="button" :disabled="isPrivacyLoading" @click="openPrivacyExport">
+                导出
+              </button>
+            </article>
+
+            <div class="privacy-delete-grid">
+              <button
+                v-for="option in privacyDeleteOptions"
+                :key="option.id"
+                type="button"
+                :class="['privacy-delete-btn', { confirm: pendingPrivacyScope === option.id }]"
+                :disabled="isPrivacyLoading"
+                @click="deletePrivacyScope(option.id)"
+              >
+                <strong>{{ pendingPrivacyScope === option.id ? '确认清除' : option.label }}</strong>
+                <span>{{ option.description }}</span>
+              </button>
+            </div>
+
+            <div class="account-delete-card">
+              <div>
+                <h3>注销账号</h3>
+                <p>输入 DELETE 后注销账号并退出登录。</p>
+              </div>
+              <input v-model="deleteAccountConfirm" type="text" autocomplete="off" placeholder="DELETE" />
+              <button
+                class="danger-action"
+                type="button"
+                :disabled="deleteAccountConfirm !== 'DELETE' || isPrivacyLoading"
+                @click="deleteCurrentAccount"
+              >
+                注销
+              </button>
+            </div>
+
+            <p v-if="privacyNotice" class="notice">{{ privacyNotice }}</p>
+            <p v-if="privacyError" class="notice notice--error">{{ privacyError }}</p>
           </section>
 
           <button class="secondary-action logout-action" type="button" @click="logout">
@@ -2436,6 +4024,181 @@ onMounted(async () => {
           <button :class="{ active: activeTab === 'knowledge' }" type="button" @click="activeTab = 'knowledge'">知识</button>
           <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
         </nav>
+      </section>
+
+      <section
+        v-if="isThreadDrawerOpen"
+        class="thread-drawer-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="会话列表"
+        @click.self="closeThreadDrawer"
+      >
+        <aside class="thread-drawer">
+          <header class="thread-drawer__header">
+            <div>
+              <h2>会话</h2>
+              <span>{{ visibleThreads.length }} 个会话</span>
+            </div>
+            <button class="thread-drawer__close" type="button" @click="closeThreadDrawer">关闭</button>
+          </header>
+
+          <input
+            v-model="threadSearchQuery"
+            class="thread-search-input"
+            type="search"
+            placeholder="搜索会话"
+            aria-label="搜索会话"
+          />
+
+          <button class="thread-drawer__new" type="button" :disabled="isCreatingThread" @click="createChatThread">
+            {{ isCreatingThread ? "创建中..." : "新建会话" }}
+          </button>
+
+          <div class="thread-drawer__list">
+            <p v-if="visibleThreads.length === 0" class="thread-drawer__empty">还没有会话</p>
+            <p v-else-if="filteredThreads.length === 0" class="thread-drawer__empty">没有找到相关会话</p>
+            <button
+              v-for="thread in filteredThreads"
+              :key="thread.thread_id"
+              :class="['thread-drawer__item', { active: activeThreadId === thread.thread_id }]"
+              type="button"
+              @click="selectThreadFromDrawer(thread.thread_id)"
+            >
+              <span class="thread-drawer__item-main">
+                <strong>{{ thread.title }}</strong>
+                <span>{{ thread.last_summary || "还没有摘要，打开后继续。" }}</span>
+              </span>
+              <span class="thread-drawer__item-meta">
+                <small>{{ formatTime(thread.updated_at) }}</small>
+                <span :class="['risk-pill', riskClass(thread.last_risk_level)]">
+                  {{ riskLabel(thread.last_risk_level) }}
+                </span>
+              </span>
+            </button>
+          </div>
+        </aside>
+      </section>
+
+      <section v-if="isMemoryDocOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
+        <div class="memory-document-panel">
+          <header class="memory-document-header">
+            <div>
+              <h3>记忆文档</h3>
+              <small>{{ memoryModeLabel }}</small>
+            </div>
+            <button class="text-action" type="button" @click="closeMemoryDocument">关闭</button>
+          </header>
+          <div class="memory-document-body">
+            <p v-if="isMemoryDocLoading" class="empty-copy">正在生成记忆文档...</p>
+            <p v-else-if="memoryDocError" class="notice notice--error">{{ memoryDocError }}</p>
+            <pre v-else class="memory-document-content">{{ memoryDocContent }}</pre>
+          </div>
+          <footer class="memory-document-footer">
+            <button class="secondary-action" type="button" :disabled="isMemoryDocLoading" @click="downloadMemoryDocument">
+              下载 .md
+            </button>
+          </footer>
+        </div>
+      </section>
+
+      <section v-if="isPrivacyExportOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
+        <div class="memory-document-panel">
+          <header class="memory-document-header">
+            <div>
+              <h3>个人数据摘要</h3>
+              <small>JSON 导出</small>
+            </div>
+            <button class="text-action" type="button" @click="closePrivacyExport">关闭</button>
+          </header>
+          <div class="memory-document-body">
+            <pre class="memory-document-content">{{ privacyExportPreview }}</pre>
+          </div>
+          <footer class="memory-document-footer">
+            <button class="secondary-action" type="button" @click="downloadPrivacyJson">
+              下载 .json
+            </button>
+          </footer>
+        </div>
+      </section>
+
+      <!-- 分享卡弹层 -->
+      <section v-if="shareCardVisible && shareCardData" class="share-card-overlay" role="dialog" aria-modal="true" @click.self="closeShareCard">
+        <div class="share-card" :class="'share-card--' + shareCardData.testType">
+          <header class="share-card__header">
+            <h2 class="share-card__title">{{ shareCardData.resultLabel }}</h2>
+            <p class="share-card__subtitle">{{ shareCardData.title }}</p>
+          </header>
+          <p class="share-card__tagline">—— {{ shareCardData.subtitle }}</p>
+          <p class="share-card__type-badge" v-if="shareCardData.sixteenTypeCode">{{ shareCardData.sixteenTypeCode }}</p>
+          <p class="share-card__summary">{{ shareCardData.summary }}</p>
+          <div v-if="shareCardData.highlights.length" class="share-card__highlights">
+            <span v-for="h in shareCardData.highlights" :key="h">{{ h }}</span>
+          </div>
+          <p class="share-card__disclaimer">{{ shareCardData.disclaimer }}</p>
+          <div class="share-card__actions">
+            <button class="primary-action" type="button" :disabled="shareCardSaving" @click="downloadShareImage">
+              {{ shareCardSaving ? '生成中...' : '保存图片' }}
+            </button>
+            <button class="secondary-action" type="button" @click="copyShareCard">
+              {{ shareCardCopied ? '已复制' : '复制文案' }}
+            </button>
+            <button class="text-action" type="button" @click="closeShareCard">关闭</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 反馈弹层 -->
+      <section v-if="feedbackVisible" class="feedback-overlay" role="dialog" aria-modal="true" @click.self="closeFeedback">
+        <div class="feedback-panel">
+          <h2>{{ feedbackDone ? '感谢反馈' : '给这个回复评分' }}</h2>
+          <template v-if="!feedbackDone">
+            <div class="feedback-stars" aria-label="评分">
+              <button
+                v-for="n in 5"
+                :key="n"
+                :class="{ active: feedbackRating >= n }"
+                type="button"
+                @click="feedbackRating = n"
+              >
+                {{ feedbackRating >= n ? '★' : '☆' }}
+              </button>
+            </div>
+            <textarea v-model="feedbackNote" class="feedback-note" rows="3" maxlength="300" placeholder="补充说明（选填）"></textarea>
+            <div class="feedback-actions">
+              <button class="primary-action" type="button" :disabled="feedbackRating === 0" @click="submitFeedback">
+                提交
+              </button>
+              <button class="text-action" type="button" @click="closeFeedback">取消</button>
+            </div>
+          </template>
+          <template v-else>
+            <p class="feedback-done-msg">你的反馈帮助我做得更好。</p>
+            <button class="text-action" type="button" @click="closeFeedback">关闭</button>
+          </template>
+        </div>
+      </section>
+
+      <!-- 每周情绪小结弹层 -->
+      <section v-if="isWeeklySummaryOpen && weeklySummary" class="weekly-summary-overlay" role="dialog" aria-modal="true" @click.self="closeWeeklySummary">
+        <div class="weekly-summary-panel">
+          <h2>{{ moodRange === '30d' ? '近30天情绪小结' : '本周情绪小结' }}</h2>
+          <p class="weekly-summary__range">{{ weeklySummary.range }} 回顾</p>
+          <p class="weekly-summary__text">{{ weeklySummary.summary }}</p>
+          <div v-if="weeklySummary.top_tags.length" class="weekly-summary__tags">
+            <span>最常出现</span>
+            <div>
+              <span v-for="tag in weeklySummary.top_tags" :key="tag" class="weekly-summary-tag">{{ tag }}</span>
+            </div>
+          </div>
+          <div v-if="weeklySummary.suggested_actions.length" class="weekly-summary__actions">
+            <span>建议</span>
+            <ul>
+              <li v-for="action in weeklySummary.suggested_actions" :key="action">{{ action }}</li>
+            </ul>
+          </div>
+          <button class="text-action" type="button" @click="closeWeeklySummary">关闭</button>
+        </div>
       </section>
 
       <section v-if="isSafetyOpen" class="safety-screen" role="dialog" aria-modal="true">
@@ -2548,7 +4311,7 @@ onMounted(async () => {
 .safety-content p,
 .empty-copy,
 .empty-chat p,
-.memory-item {
+.memory-document-card {
   margin: 0;
   color: var(--text-muted);
   line-height: 1.65;
@@ -2604,6 +4367,7 @@ onMounted(async () => {
 }
 
 .field input,
+.field textarea,
 .composer input,
 .knowledge-composer input {
   min-height: 52px;
@@ -2965,7 +4729,7 @@ onMounted(async () => {
 .summary-card,
 .profile-card,
 .thread-card,
-.memory-item {
+.memory-document-card {
   border-radius: 22px;
   background: #ffffff;
   padding: 16px;
@@ -2981,6 +4745,7 @@ onMounted(async () => {
 }
 
 .card-title span,
+.section-title span,
 .section-title button {
   color: var(--text-muted);
   background: transparent;
@@ -3009,6 +4774,154 @@ onMounted(async () => {
   font-weight: 900;
 }
 
+.thread-drawer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  display: flex;
+  align-items: stretch;
+  background: rgba(15, 20, 18, 0.42);
+}
+
+.thread-drawer {
+  width: min(90%, 360px);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px 14px;
+  background: #fbfdfb;
+  box-shadow: 18px 0 42px rgba(38, 57, 52, 0.2);
+  animation: threadDrawerIn 0.18s ease-out;
+}
+
+.thread-drawer__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.thread-drawer__header h2 {
+  margin: 0 0 4px;
+  color: var(--text-main);
+  font-size: 20px;
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-main span,
+.thread-drawer__item-meta small,
+.thread-drawer__empty {
+  color: var(--text-muted);
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-meta small {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thread-drawer__close {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.thread-search-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0 12px;
+  color: var(--text-main);
+}
+
+.field textarea {
+  min-height: 132px;
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.thread-drawer__new {
+  min-height: 44px;
+  border-radius: 14px;
+  background: var(--teal);
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.thread-drawer__list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.thread-drawer__item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  padding: 11px 10px;
+  text-align: left;
+}
+
+.thread-drawer__item.active {
+  border-color: rgba(15, 118, 110, 0.26);
+  background: var(--mint-soft);
+}
+
+.thread-drawer__item-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.thread-drawer__item-main strong,
+.thread-drawer__item-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-drawer__item-main strong {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.thread-drawer__item-main span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.thread-drawer__item-meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.thread-drawer__empty {
+  margin: 20px 4px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
 .risk--steady {
   background: #e8f4ee;
   color: #28745d;
@@ -3032,32 +4945,95 @@ onMounted(async () => {
 .chat-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
 }
 
-.thread-tabs,
-.quick-actions,
-.knowledge-prompts {
+.chat-thread-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.thread-menu-button,
+.thread-new-button {
+  min-height: 38px;
+  border-radius: 14px;
+  padding: 0 15px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.thread-menu-button {
+  flex: 1;
+  min-width: 0;
+  background: #ffffff;
+  color: var(--text-main);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.thread-new-button {
+  flex: 0 0 auto;
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.thread-new-button:disabled,
+.thread-drawer__new:disabled {
+  background: #c7d5cf;
+  color: #f8faf8;
+  cursor: not-allowed;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 10px 0 4px;
+}
+
+.quick-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-actions button {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #ffffff;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.quick-actions button:active {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  border-color: var(--teal);
+}
+
+.quick-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.thread-tabs {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
-}
-
-.thread-tabs,
-.quick-actions,
-.knowledge-prompts {
   scrollbar-width: none;
 }
 
-.thread-tabs::-webkit-scrollbar,
-.quick-actions::-webkit-scrollbar,
-.knowledge-prompts::-webkit-scrollbar {
+.thread-tabs::-webkit-scrollbar {
   display: none;
 }
 
-.thread-tabs button,
-.quick-actions button {
+.thread-tabs button {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 9px 12px;
@@ -3066,11 +5042,6 @@ onMounted(async () => {
   border: 1px solid var(--line);
   font-weight: 800;
   font-size: 12px;
-}
-
-.quick-actions button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .thread-tabs button.active {
@@ -3124,6 +5095,68 @@ onMounted(async () => {
   color: #9a4a25;
 }
 
+.retry-status-row {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8faf8;
+  color: var(--text-muted);
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.retry-status-row button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.retry-status-row button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-reference {
+  display: grid;
+  gap: 7px;
+  border-radius: 14px;
+  background: #f5faf7;
+  border: 1px solid rgba(30, 118, 103, 0.14);
+  padding: 8px;
+}
+
+.memory-reference button {
+  justify-self: start;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  color: var(--teal-dark);
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.memory-reference__list {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-reference__list span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .message-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3171,8 +5204,8 @@ onMounted(async () => {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
 }
 
 .composer button {
@@ -3893,6 +5926,411 @@ onMounted(async () => {
   margin: 0 0 4px;
 }
 
+.style-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.style-setting-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 16px;
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-setting-card h2,
+.style-setting-card p {
+  margin: 0;
+}
+
+.style-setting-card div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.style-setting-card h2 {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.style-setting-card strong {
+  color: var(--teal-dark);
+  font-size: 14px;
+}
+
+.style-setting-card p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.style-setting-card > span {
+  color: var(--teal);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.style-editor {
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-switcher {
+  display: grid;
+  gap: 8px;
+}
+
+.style-switcher button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.style-switcher button.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.style-switcher strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.style-switcher button.active strong {
+  color: var(--teal-dark);
+}
+
+.style-switcher span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.style-editor-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.style-editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.memory-center {
+  padding-bottom: 4px;
+}
+
+.memory-mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.memory-mode-control button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  min-height: 78px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text-muted);
+  padding: 10px;
+  text-align: left;
+}
+
+.memory-mode-control button.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.memory-mode-control button:disabled,
+.memory-document-actions button:disabled,
+.memory-document-footer button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-mode-control strong {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.memory-mode-control span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.memory-document-card {
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.memory-document-main {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-document-main h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.memory-document-main p,
+.memory-document-main small {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.memory-document-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.memory-document-actions .secondary-action {
+  min-height: 44px;
+}
+
+.memory-document-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  align-items: center;
+  padding: 18px;
+  background: rgba(15, 20, 18, 0.38);
+}
+
+.memory-document-panel {
+  width: 100%;
+  max-height: min(82dvh, 760px);
+  border-radius: 22px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.memory-document-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.memory-document-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.memory-document-header small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.memory-document-body {
+  min-height: 0;
+  display: grid;
+}
+
+.memory-document-content {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbfdfb;
+  padding: 12px 14px;
+  color: var(--text-main);
+  font: inherit;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.memory-document-footer {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.privacy-center {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 6px;
+}
+
+.privacy-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.privacy-setting-card,
+.privacy-export-card,
+.account-delete-card {
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.privacy-setting-card {
+  display: grid;
+  gap: 6px;
+}
+
+.privacy-setting-card strong,
+.privacy-export-card h3,
+.account-delete-card h3 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.privacy-setting-card span,
+.privacy-export-card p,
+.account-delete-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.privacy-count-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.privacy-count-grid span {
+  min-height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.privacy-export-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.privacy-delete-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.privacy-delete-btn {
+  min-width: 0;
+  min-height: 72px;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 10px;
+  text-align: left;
+}
+
+.privacy-delete-btn strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.privacy-delete-btn span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.privacy-delete-btn.confirm {
+  border-color: rgba(154, 74, 37, 0.36);
+  background: #fff0e8;
+}
+
+.account-delete-card {
+  display: grid;
+  gap: 10px;
+}
+
+.account-delete-card input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: var(--text-main);
+  font: inherit;
+}
+
+.danger-action {
+  min-height: 44px;
+  border-radius: 14px;
+  background: #9a4a25;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.danger-action:disabled,
+.privacy-delete-btn:disabled,
+.privacy-setting-card button:disabled,
+.privacy-export-card button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .logout-action {
   margin-top: 4px;
 }
@@ -3946,9 +6384,21 @@ onMounted(async () => {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid rgba(15, 118, 110, 0.45);
   outline-offset: 2px;
+}
+
+@keyframes threadDrawerIn {
+  from {
+    transform: translateX(-16px);
+    opacity: 0.88;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 @keyframes blink {
@@ -4294,5 +6744,412 @@ input:focus-visible {
   .knowledge-page {
     height: calc(100dvh - 268px);
   }
+
+  .memory-document-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .memory-document-viewer {
+    align-items: end;
+  }
 }
+
+/* ==================== Sprint 3: Voice/ASR inline ==================== */
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.voice-record-btn {
+  min-height: 44px;
+  min-width: 56px;
+  border-radius: 14px;
+  padding: 0 12px;
+  font-weight: 700;
+  font-size: 14px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.voice-record-btn:hover:not(:disabled) {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.voice-record-btn--active {
+  background: #ef4444;
+  color: #fff;
+  animation: pulse 1.2s infinite;
+}
+
+.voice-record-btn--active:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
+.voice-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.voice-status-bar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.voice-status-bar__dot--active {
+  background: #22c55e;
+  animation: pulse 1.2s infinite;
+}
+
+/* ==================== Sprint 3: Share Card ==================== */
+
+.share-card-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.share-card {
+  max-width: 380px;
+  width: 100%;
+  padding: 32px 26px 26px;
+  border-radius: 20px;
+  color: #fff;
+  display: grid;
+  gap: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.share-card--mood_check {
+  background: linear-gradient(145deg, #0d9488 0%, #0f766e 55%, #115e59 100%);
+}
+
+.share-card--sixteen_type {
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
+}
+
+.share-card__header {
+  display: grid;
+  gap: 6px;
+}
+
+.share-card__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+}
+
+.share-card__subtitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+}
+
+.share-card__tagline {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  opacity: 0.8;
+  border-left: 3px solid rgba(255, 255, 255, 0.45);
+  padding-left: 10px;
+}
+
+.share-card__type-badge {
+  margin: 0;
+  display: inline-block;
+  font-size: 36px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  opacity: 0.3;
+  justify-self: end;
+  line-height: 1;
+}
+
+.share-card__summary {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.7;
+  opacity: 0.95;
+}
+
+.share-card__highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-card__highlights span {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.share-card__disclaimer {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  opacity: 0.65;
+  line-height: 1.55;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 14px;
+}
+
+.share-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.share-card__actions .primary-action {
+  flex: 1;
+  min-width: 90px;
+  padding: 10px 18px;
+  border-radius: 14px;
+  font-weight: 700;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1e293b;
+}
+
+.share-card__actions .secondary-action {
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.share-card__actions .text-action {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+/* ==================== Sprint 3: Feedback ==================== */
+
+.message-feedback {
+  padding: 4px 0 8px;
+}
+
+.feedback-btn {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.feedback-btn:hover {
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+}
+
+.feedback-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.feedback-panel {
+  max-width: 340px;
+  width: 100%;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(38, 57, 52, 0.22);
+  display: grid;
+  gap: 18px;
+}
+
+.feedback-panel h2 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text-main);
+}
+
+.feedback-stars {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.feedback-stars button {
+  font-size: 36px;
+  background: none;
+  color: #d1d5db;
+  transition: color 0.15s;
+  padding: 0;
+}
+
+.feedback-stars button.active {
+  color: var(--amber);
+}
+
+.feedback-note {
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  resize: vertical;
+  color: var(--text-main);
+  font-family: inherit;
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.feedback-actions .primary-action {
+  flex: 1;
+}
+
+.feedback-done-msg {
+  margin: 0;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ==================== Sprint 3: Weekly Summary ==================== */
+
+.weekly-summary-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--teal);
+}
+
+.weekly-summary-btn:disabled {
+  opacity: 0.5;
+}
+
+.weekly-summary-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.weekly-summary-panel {
+  max-width: 360px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(38, 57, 52, 0.22);
+  display: grid;
+  gap: 16px;
+}
+
+.weekly-summary-panel h2 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-main);
+}
+
+.weekly-summary__range {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.weekly-summary__text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-main);
+}
+
+.weekly-summary__tags {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-summary__tags > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.weekly-summary__tags div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.weekly-summary-tag {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--teal-dark);
+  font-weight: 600;
+}
+
+.weekly-summary__actions {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-summary__actions > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.weekly-summary__actions ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-summary__actions li {
+  font-size: 14px;
+  color: var(--text-main);
+  line-height: 1.5;
+}
+
 </style>

@@ -26,6 +26,7 @@ from app.services.chat_service import (
     list_messages_for_thread,
     list_threads_for_user,
     process_message_turn,
+    process_message_turn_stream,
 )
 
 
@@ -48,6 +49,61 @@ def iter_stream_chunks(text: str, *, chunk_size: int = 6):
 
     if buffer:
         yield buffer
+
+
+def build_send_message_response(
+    *,
+    thread_id: str,
+    user_message_id: str,
+    assistant_message,
+    assistant_result: dict[str, object],
+) -> SendMessageResponse:
+    if assistant_message is None:
+        return SendMessageResponse(
+            thread_id=thread_id,
+            message_id=user_message_id,
+            assistant_message_id=None,
+            client_message_id=assistant_result.get("client_message_id"),
+            turn_id=assistant_result.get("turn_id"),
+            turn_status=str(assistant_result.get("turn_status", "completed")),
+            assistant_message=None,
+            delivery_status=str(assistant_result.get("delivery_status", "failed_no_reply")),
+            failure_reason=assistant_result.get("failure_reason"),
+            retryable=bool(assistant_result.get("retryable", False)),
+        )
+
+    return SendMessageResponse(
+        thread_id=thread_id,
+        message_id=user_message_id,
+        assistant_message_id=assistant_message.id,
+        client_message_id=assistant_result.get("client_message_id"),
+        turn_id=assistant_result.get("turn_id"),
+        turn_status=str(assistant_result.get("turn_status", "completed")),
+        assistant_message=AssistantMessageResponse(
+            id=assistant_message.id,
+            role=assistant_message.role,
+            content=assistant_message.content,
+            assistant_text=assistant_message.content,
+            risk_level=assistant_result["risk_level"],
+            intent=str(assistant_result.get("intent", "other")),
+            suggested_actions=list(assistant_result.get("suggested_actions", [])),
+            session_summary=str(assistant_result.get("session_summary", "")),
+            should_write_memory=bool(assistant_result.get("should_write_memory", False)),
+            referenced_memories=list(assistant_result.get("referenced_memories", [])),
+            referenced_counseling_examples=list(
+                assistant_result.get("referenced_counseling_examples", [])
+            ),
+            delivery_status=str(assistant_result.get("delivery_status", "generated")),
+            failure_reason=assistant_result.get("failure_reason"),
+            retryable=bool(assistant_result.get("retryable", False)),
+            memory_job_id=assistant_result.get("memory_job_id"),
+            memory_job_status=str(assistant_result.get("memory_job_status", "skipped")),
+            created_at=assistant_message.created_at,
+        ),
+        delivery_status=str(assistant_result.get("delivery_status", "generated")),
+        failure_reason=assistant_result.get("failure_reason"),
+        retryable=bool(assistant_result.get("retryable", False)),
+    )
 
 
 @router.post("/threads", response_model=StartThreadResponse)
@@ -142,22 +198,11 @@ async def send_message(
         thread=thread,
         payload=payload,
     )
-    return SendMessageResponse(
+    return build_send_message_response(
         thread_id=thread.id,
-        message_id=user_message.id,
-        assistant_message_id=assistant_message.id,
-        assistant_message=AssistantMessageResponse(
-            id=assistant_message.id,
-            role=assistant_message.role,
-            content=assistant_message.content,
-            assistant_text=assistant_message.content,
-            risk_level=assistant_result["risk_level"],
-            intent=str(assistant_result.get("intent", "other")),
-            suggested_actions=list(assistant_result.get("suggested_actions", [])),
-            session_summary=str(assistant_result.get("session_summary", "")),
-            should_write_memory=bool(assistant_result.get("should_write_memory", False)),
-            created_at=assistant_message.created_at,
-        ),
+        user_message_id=user_message.id,
+        assistant_message=assistant_message,
+        assistant_result=assistant_result,
     )
 
 
@@ -177,30 +222,13 @@ async def stream_message(
     thread = get_thread_for_user(db, current_user.id, thread_id)
 
     async def event_generator():
-        user_message, assistant_message, assistant_result = await process_message_turn(
+        async for event, data in process_message_turn_stream(
             db,
             user=current_user,
             thread=thread,
             payload=payload,
-        )
-        yield format_sse_event(
-            "graph_update",
-            {
-                "node": "risk_classifier",
-                "risk_level": assistant_result["risk_level"],
-            },
-        )
-        for chunk in iter_stream_chunks(assistant_message.content):
-            yield format_sse_event("token", {"text": chunk})
-        yield format_sse_event(
-            "final",
-            {
-                "thread_id": thread.id,
-                "message_id": user_message.id,
-                "assistant_message_id": assistant_message.id,
-                **assistant_result,
-            },
-        )
+        ):
+            yield format_sse_event(event, data)
 
     return StreamingResponse(
         event_generator(),

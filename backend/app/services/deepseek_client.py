@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -9,6 +11,7 @@ from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
+STREAM_DONE = object()
 
 
 class DeepSeekClient:
@@ -19,28 +22,62 @@ class DeepSeekClient:
         self.chat_model = settings.deepseek_chat_model
         self.knowledge_model = settings.deepseek_knowledge_model
         self.timeout_seconds = settings.deepseek_timeout_seconds
+        self.chat_temperature = settings.deepseek_chat_temperature
+        self.chat_max_tokens = settings.deepseek_chat_max_tokens
+        self.knowledge_temperature = settings.deepseek_knowledge_temperature
+        self.knowledge_max_tokens = settings.deepseek_knowledge_max_tokens
+        self.thinking_enabled = settings.deepseek_thinking_enabled
 
     @property
     def is_configured(self) -> bool:
         return bool(self.api_key)
+
+    def _chat_payload(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        effective_thinking_enabled = self.thinking_enabled if thinking_enabled is None else thinking_enabled
+        payload: dict[str, Any] = {
+            "model": model or self.chat_model or self.model,
+            "messages": messages,
+            "temperature": self.chat_temperature if temperature is None else temperature,
+            "max_tokens": self.chat_max_tokens if max_tokens is None else max_tokens,
+            "thinking": {"type": "enabled" if effective_thinking_enabled else "disabled"},
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if stream:
+            payload["stream"] = True
+        return payload
 
     async def chat(
         self,
         messages: list[dict[str, str]],
         *,
         model: str | None = None,
-        temperature: float = 0.6,
-        max_tokens: int = 420,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
     ) -> str | None:
         if not self.is_configured:
             return None
 
-        payload: dict[str, Any] = {
-            "model": model or self.chat_model or self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        payload = self._chat_payload(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            thinking_enabled=thinking_enabled,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -67,6 +104,78 @@ class DeepSeekClient:
         if not isinstance(content, str):
             return None
         return content.strip() or None
+
+    @staticmethod
+    def _stream_delta_from_line(line: str) -> str | object | None:
+        line = line.strip()
+        if not line or line.startswith(":") or not line.startswith("data:"):
+            return None
+
+        data = line[5:].strip()
+        if data == "[DONE]":
+            return STREAM_DONE
+
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            logger.debug("Ignoring malformed DeepSeek stream line: %s", line)
+            return None
+
+        choices = payload.get("choices") or []
+        if not choices:
+            return None
+
+        delta = choices[0].get("delta") or {}
+        content = delta.get("content")
+        if not isinstance(content, str) or not content:
+            return None
+        return content
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        thinking_enabled: bool | None = None,
+    ) -> AsyncIterator[str]:
+        if not self.is_configured:
+            return
+
+        payload = self._chat_payload(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            thinking_enabled=thinking_enabled,
+            stream=True,
+        )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        delta = self._stream_delta_from_line(line)
+                        if delta is STREAM_DONE:
+                            break
+                        if isinstance(delta, str):
+                            yield delta
+        except httpx.HTTPError as exc:
+            logger.warning("DeepSeek streaming chat request failed: %s", exc)
+            return
 
 
 deepseek_client = DeepSeekClient()

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.db.models import KnowledgeArticle, KnowledgeChunk, KnowledgeGap, KnowledgeSource, utcnow
-from app.graphs.nodes import risk_classifier
+from app.graphs.nodes import risk_classifier, sync_risk_classify
 from app.schemas.knowledge import (
     AskKnowledgeResponse,
     ContinueChatPayload,
@@ -26,6 +26,7 @@ from app.schemas.knowledge import (
     KnowledgeSourceRefResponse,
 )
 from app.services.deepseek_client import deepseek_client
+from app.services.embedding_service import embedding_client
 from app.services.knowledge_taxonomy import (
     ExpandedKnowledgeQuery,
     KnowledgeScopeStatus,
@@ -38,6 +39,7 @@ from app.services.knowledge_taxonomy import (
     normalize_knowledge_text,
 )
 from app.services.knowledge_seed_expansion import EXPANDED_SEED_ARTICLES
+from app.services.milvus_service import milvus_store
 
 
 @dataclass(frozen=True)
@@ -751,6 +753,59 @@ def _search_chunk_hits(
     return hits[:limit]
 
 
+async def _search_chunk_hits_semantic(
+    db: Session,
+    *,
+    query: str,
+    category: str | None = None,
+    audience: str | None = None,
+    limit: int = 8,
+) -> list[ChunkHit]:
+    ensure_seed_articles(db)
+    if not milvus_store.is_enabled:
+        return []
+    vector = await embedding_client.embed_query(query)
+    if vector is None:
+        return []
+
+    vector_hits = milvus_store.search_knowledge(vector, limit=max(limit * 2, 8))
+    chunk_ids = [str(hit.entity.get("chunk_id") or hit.id) for hit in vector_hits]
+    chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id]
+    if not chunk_ids:
+        return []
+
+    rows = db.execute(
+        select(KnowledgeChunk, KnowledgeArticle)
+        .join(KnowledgeArticle, KnowledgeChunk.article_id == KnowledgeArticle.id)
+        .options(joinedload(KnowledgeArticle.source))
+        .where(
+            KnowledgeChunk.id.in_(chunk_ids),
+            KnowledgeArticle.status == "published",
+            KnowledgeArticle.review_status == "published",
+            KnowledgeChunk.status == "published",
+        )
+    ).all()
+    row_by_chunk_id = {chunk.id: (chunk, article) for chunk, article in rows}
+
+    hits: list[ChunkHit] = []
+    for vector_hit in vector_hits:
+        chunk_id = str(vector_hit.entity.get("chunk_id") or vector_hit.id)
+        row = row_by_chunk_id.get(chunk_id)
+        if row is None:
+            continue
+        chunk, article = row
+        if category and article.category != category:
+            continue
+        if audience and article.audience not in {"all", audience}:
+            continue
+        semantic_score = int(max(0.0, min(vector_hit.score, 1.0)) * 100)
+        lexical_score = _score_chunk(chunk, article, query)
+        hits.append(ChunkHit(article=article, chunk=chunk, score=max(semantic_score, lexical_score, 1)))
+
+    hits.sort(key=lambda hit: (-hit.score, hit.article.title, hit.chunk.chunk_index))
+    return hits[:limit]
+
+
 def _published_chunk_rows(db: Session) -> list[tuple[KnowledgeChunk, KnowledgeArticle]]:
     bind_id = id(db.get_bind())
     cached = _CHUNK_INDEX_BY_BIND.get(bind_id)
@@ -1139,6 +1194,10 @@ def search_articles(
 ) -> KnowledgeSearchResponse:
     ensure_seed_articles(db)
     if query.strip():
+        risk_level = sync_risk_classify(query)
+        if risk_level in {"L2", "L3"}:
+            # 高风险查询不返回知识内容
+            return KnowledgeSearchResponse(items=[])
         hits = _search_chunk_hits(db, query=query, category=category, audience=audience, limit=max(limit * 2, 8))
         articles = _unique_articles_from_hits(hits, limit=limit)
         return KnowledgeSearchResponse(items=[article_to_search_item(article) for article in articles])
@@ -1307,8 +1366,8 @@ async def _generate_knowledge_answer(
             {"role": "user", "content": user_prompt},
         ],
         model=deepseek_client.knowledge_model,
-        temperature=0.35,
-        max_tokens=760,
+        temperature=settings.deepseek_knowledge_temperature,
+        max_tokens=settings.deepseek_knowledge_max_tokens,
     )
     if not reply:
         return GeneratedKnowledgeAnswer(answer=fallback)
@@ -1402,7 +1461,9 @@ async def ask_knowledge(
             risk_level=risk_level,
         )
 
-    hits = _search_chunk_hits(db, query=effective_question, limit=8)
+    hits = await _search_chunk_hits_semantic(db, query=effective_question, limit=8)
+    if not hits:
+        hits = _search_chunk_hits(db, query=effective_question, limit=8)
     coverage_status, confidence, top_score = _coverage_from_hits(hits)
     if coverage_status == "insufficient" and question_guess is None:
         fuzzy_guess = _fuzzy_question_guess(db, effective_question)
@@ -1410,7 +1471,9 @@ async def ask_knowledge(
             question_guess = fuzzy_guess
             effective_question = fuzzy_guess.guessed_question
             question_suggestion = _suggestion_response(question, question_guess)
-            hits = _search_chunk_hits(db, query=effective_question, limit=8)
+            hits = await _search_chunk_hits_semantic(db, query=effective_question, limit=8)
+            if not hits:
+                hits = _search_chunk_hits(db, query=effective_question, limit=8)
             coverage_status, confidence, top_score = _coverage_from_hits(hits)
 
     source_refs = _source_refs_from_hits(hits)

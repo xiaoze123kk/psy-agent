@@ -58,7 +58,7 @@ _TRAD_DIM_NEGATIVE = {"E-I": "I", "S-N": "N", "T-F": "F", "J-P": "P"}
 
 
 def _load_score_data() -> dict:
-    score_files = list(_SCORE_DIR.glob("*_score_*.json"))
+    score_files = list(_SCORE_DIR.glob("*score*.json"))
     if not score_files:
         logger.error("No score file found in %s", _SCORE_DIR)
         return {}
@@ -105,9 +105,9 @@ def _score_items(score_items: list, answers: dict[int, str]) -> int:
     for item in score_items:
         idx_1based = item["index"]
         idx_0based = idx_1based - 1
-        if idx_0based not in answers:
+        answer = answers.get(idx_0based)
+        if answer is None:
             continue
-        answer = answers[idx_0based]
         normalized = item.get("scoring", {}).get("normalized", "")
         scoring = _parse_normalized(normalized)
         total += scoring.get(answer, 0)
