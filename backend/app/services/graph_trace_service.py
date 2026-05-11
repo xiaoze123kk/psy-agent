@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db.models import ConversationTurn, ConversationTurnTrace, utcnow
+from app.services.tooling import summarize_tool_events
 
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,15 @@ def summarize_node_output(node_name: str, node_output: object) -> dict[str, obje
         decisions = _summarize_memory_write_decisions(node_output["memory_write_decisions"])
         if decisions:
             summary["memory_write_decisions"] = decisions
+    if "tool_events" in node_output:
+        tool_summary = summarize_tool_events(node_output.get("tool_events"))
+        if int(tool_summary.get("tool_count") or 0) > 0:
+            summary["tool_event_count"] = tool_summary["tool_count"]
+            summary["tool_names"] = tool_summary.get("tool_names", [])
+            summary["tool_status_counts"] = tool_summary.get("status_counts", {})
+            summary["tool_error_count"] = tool_summary.get("error_count", 0)
+    if isinstance(node_output.get("tool_trace_summary"), dict):
+        summary["tool_trace_summary"] = _sanitize_summary(node_output["tool_trace_summary"])
 
     summary["node_name"] = _trim_string(node_name)
     return _sanitize_summary(summary)
@@ -375,6 +385,9 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
     if validator_blocked is None:
         validator_blocked = _latest_trace_bool(graph_trace, "validator_blocked") or False
     steps = [_safe_step(record) for record in graph_trace[:MAX_TRACE_STEPS]]
+    tooling = _sanitize_summary(result.get("tool_trace_summary") or {})
+    if not tooling:
+        tooling = summarize_tool_events(result.get("tool_events"))
 
     summary = {
         "node_count": len(graph_trace),
@@ -429,6 +442,7 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
             "reasons": validator_reasons,
             "delivery_status": delivery_status,
         },
+        "tooling": tooling,
         "fallback": {
             "triggered": delivery_status != "generated" or bool(failure_reason),
             "reason": failure_reason,

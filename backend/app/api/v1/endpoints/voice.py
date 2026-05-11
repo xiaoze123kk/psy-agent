@@ -107,6 +107,7 @@ async def voice_session_ws(websocket: WebSocket, voice_session_id: str) -> None:
                 user_mode = user.profile.user_mode if user.profile else "adult"
                 companion_style = user.settings.companion_style if user.settings else ""
                 memory_mode = user.settings.memory_mode if user.settings else "summary_only"
+                crisis_resource_region = user.settings.crisis_resource_region if user.settings else "CN"
 
                 result = await graph_runtime.invoke_turn(
                     thread_id=thread.id,
@@ -117,6 +118,7 @@ async def voice_session_ws(websocket: WebSocket, voice_session_id: str) -> None:
                     memory_mode=memory_mode,
                     companion_style=companion_style,
                     nickname=user.profile.nickname if user.profile else None,
+                    crisis_resource_region=crisis_resource_region,
                 )
 
                 risk_level = str(result.get("risk_level", "L0"))

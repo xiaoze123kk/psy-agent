@@ -23,6 +23,8 @@ class AgentState(TypedDict, total=False):
     profile: dict
     companion_preferences: dict
     memory_mode: Literal["off", "summary_only", "long_term"]
+    crisis_resource_region: str
+    tooling_enabled: bool
 
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -70,6 +72,8 @@ class AgentState(TypedDict, total=False):
 
     assistant_text: str
     suggested_actions: list[str]
+    tool_events: list[dict]
+    tool_trace_summary: dict
 
     session_summary: str
     memory_candidates: list[dict]

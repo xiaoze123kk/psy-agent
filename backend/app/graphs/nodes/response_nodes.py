@@ -8,6 +8,7 @@ from langgraph.config import get_stream_writer
 from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, recent_context, safe_trim
 from app.graphs.nodes.control_nodes import base_contract
 from app.graphs.nodes.rag_nodes import example_hit_to_dict
+from app.services import tooling as dialogue_tooling
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 
@@ -63,6 +64,14 @@ def _write_assistant_token(writer: Callable[[dict[str, object]], None], text: st
     if not text:
         return
     writer({"type": "assistant_token", "text": text})
+
+
+def _write_final_visible_text(text: str, *, chunk_size: int = 8) -> None:
+    writer = _assistant_stream_writer()
+    if writer is None or not text:
+        return
+    for start in range(0, len(text), chunk_size):
+        _write_assistant_token(writer, text[start : start + chunk_size])
 
 
 async def _non_streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[str, list[str]]:
@@ -151,36 +160,64 @@ async def _model_reply_with_actions(
     return await _streamed_reply_with_actions(reply_messages)
 
 
+async def _model_reply_state_update(
+    state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
+) -> AgentState:
+    response_contract = state.get("response_contract", {}) or base_contract(allow_rag=False)
+    prompt_parts = build_dialogue_prompt_parts(
+        state,
+        mode=mode,
+        response_contract=response_contract,
+        examples_text=examples_text_from_state(state),
+        memory_text=memory_context(state.get("retrieved_memories", [])),
+        recent_text=recent_context(state),
+    )
+    tool_plan = dialogue_tooling.build_dialogue_tool_plan(state)
+    if tool_plan.tools:
+        result = await dialogue_tooling.run_dialogue_reply_with_tools(
+            state,
+            system_prompt=prompt_parts.system_prompt,
+            user_prompt=prompt_parts.user_prompt,
+            tool_plan=tool_plan,
+        )
+        _write_final_visible_text(str(result.get("assistant_text") or ""))
+        return result
+
+    reply_messages = [
+        {"role": "system", "content": prompt_parts.system_prompt},
+        {"role": "user", "content": prompt_parts.user_prompt},
+    ]
+    assistant_text, suggested_actions = await _streamed_reply_with_actions(reply_messages)
+    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
+
+
 async def companion_response(state: AgentState) -> AgentState:
     intent = state.get("intent", "other")
     mode = "vent" if intent == "vent" else "companion"
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode=mode,
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def soothing_response(state: AgentState) -> AgentState:
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode="soothe",
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def counseling_response(state: AgentState) -> AgentState:
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode="counseling",
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def crisis_response(state: AgentState) -> AgentState:

@@ -97,6 +97,28 @@ uvicorn app.main:app --reload --port 8000
 - Health: `GET /health`
 - API v1 root: `GET /api/v1`
 
+## Terminal Chat
+
+For local dialog testing without the frontend, run:
+
+```bash
+python scripts/terminal_chat.py
+```
+
+Useful commands:
+
+- `/new [title]`
+- `/threads`
+- `/use <thread_id>`
+- `/history [n]`
+- `/exit`
+
+For a one-shot smoke test:
+
+```bash
+python scripts/terminal_chat.py --message "我最近有点累"
+```
+
 ## Structure
 
 - `app/api/v1/endpoints`: API route skeletons

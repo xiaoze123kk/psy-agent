@@ -15,6 +15,7 @@ from app.schemas.safety import (
     SafetyResourcesResponse,
 )
 from app.services.chat_service import create_or_get_risk_event, get_thread_for_user
+from app.services.safety_service import build_safety_resources
 
 
 router = APIRouter(prefix="/safety", tags=["safety"])
@@ -59,11 +60,7 @@ async def safety_resources(
     region: str = "CN",
     audience: SafetyAudience = SafetyAudience.all,
 ) -> SafetyResourcesResponse:
-    return SafetyResourcesResponse(
-        region=region,
-        audience=audience,
-        items=_build_resources(region, audience),
-    )
+    return build_safety_resources(region=region, audience=audience)
 
 
 @router.post("/crisis-events", response_model=CrisisEventResponse)

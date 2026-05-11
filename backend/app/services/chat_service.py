@@ -212,6 +212,7 @@ async def _invoke_graph_with_fallback(
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
+                crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
                 retrieved_memories=retrieved_memories,
                 memory_index=memory_index,
             ),
@@ -656,6 +657,7 @@ async def _persist_turn_result(
         "delivery_status": delivery_status,
         "failure_reason": assistant_result.get("failure_reason"),
         "retryable": bool(assistant_result.get("retryable", False)),
+        "tool_trace_summary": assistant_result.get("tool_trace_summary", {}),
         "trace_summary": trace_summary,
     }
     assistant_message = Message(
@@ -865,6 +867,7 @@ async def process_message_turn_stream(
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
+            crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
             retrieved_memories=context.retrieved_memories,
             memory_index=context.memory_index,
         )

@@ -7,6 +7,10 @@ async def summarize_turn(state: AgentState) -> AgentState:
     if state.get("delivery_status") == "failed_no_reply":
         return {"session_summary": ""}
 
+    existing_summary = str(state.get("session_summary") or "").strip()
+    if existing_summary:
+        return {"session_summary": existing_summary}
+
     text = state.get("normalized_text", "")
     risk_level = state.get("risk_level", "L0")
     intent = state.get("intent", "other")
@@ -37,6 +41,16 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
     summary = state.get("session_summary", "")
     if not summary:
         return {"memory_candidates": [], "memory_policy_reason": "empty_summary"}
+    existing_candidates = [
+        dict(candidate)
+        for candidate in (state.get("memory_candidates") or [])
+        if isinstance(candidate, dict) and str(candidate.get("content") or "").strip()
+    ]
+    if existing_candidates:
+        return {
+            "memory_candidates": existing_candidates[:8],
+            "memory_policy_reason": "tool_provided",
+        }
     if memory_policy == "crisis_audit_only":
         return {
             "memory_candidates": [

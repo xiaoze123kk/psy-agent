@@ -165,6 +165,7 @@ class GraphRuntime:
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
     ) -> dict[str, object]:
@@ -177,6 +178,8 @@ class GraphRuntime:
             "recent_messages": recent_messages or [],
             "last_summary": last_summary or "",
             "memory_mode": memory_mode,
+            "crisis_resource_region": crisis_resource_region or "CN",
+            "tooling_enabled": True,
             "profile": {
                 "user_mode": user_mode,
                 "nickname": nickname or "user",
@@ -263,6 +266,8 @@ class GraphRuntime:
             "delivery_status": delivery_status,
             "failure_reason": result.get("failure_reason"),
             "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
+            "tool_events": result.get("tool_events", []),
+            "tool_trace_summary": result.get("tool_trace_summary", {}),
         }
         if graph_trace is not None:
             mapped["graph_trace"] = graph_trace
@@ -300,6 +305,7 @@ class GraphRuntime:
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
     ) -> dict[str, object]:
@@ -314,6 +320,7 @@ class GraphRuntime:
             memory_mode=memory_mode,
             companion_style=companion_style,
             nickname=nickname,
+            crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
         )
@@ -335,6 +342,7 @@ class GraphRuntime:
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
     ):
@@ -349,6 +357,7 @@ class GraphRuntime:
             memory_mode=memory_mode,
             companion_style=companion_style,
             nickname=nickname,
+            crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
         )
