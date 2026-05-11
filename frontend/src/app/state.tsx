@@ -8,8 +8,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { buildAgeModeProfile, type AgeModeProfile } from "./ageMode";
 import { useSession } from "./session";
-import type { CurrentUserResponse, MemoryMode, UserMode } from "../types/api";
+import type { AgeRange, CurrentUserResponse, MemoryMode, UserMode } from "../types/api";
 
 export type ThemeMode = "day" | "night";
 
@@ -27,6 +28,8 @@ export interface PrivacySettingsState {
 
 export interface AppStateContextValue {
   currentUser: CurrentUserResponse | null;
+  ageRange: AgeRange;
+  ageModeProfile: AgeModeProfile;
   userMode: UserMode;
   memoryMode: MemoryMode;
   voiceSettings: VoiceSettingsState;
@@ -77,6 +80,7 @@ function buildPrivacySettings(currentUser: CurrentUserResponse | null): PrivacyS
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useSession();
   const [themeMode, setThemeModeState] = useState<ThemeMode>(readInitialThemeMode);
+  const [ageRange, setAgeRangeState] = useState<AgeRange>(currentUser?.age_range ?? "16_17");
   const [userMode, setUserModeState] = useState<UserMode>(currentUser?.user_mode ?? "teen");
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>(currentUser?.memory_mode ?? "off");
   const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettingsState>(() => buildVoiceSettings(currentUser));
@@ -90,6 +94,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
 
     setUserModeState(currentUser.user_mode);
+    setAgeRangeState(currentUser.age_range);
     setMemoryModeState(currentUser.memory_mode);
     setVoiceSettingsState(buildVoiceSettings(currentUser));
     setPrivacySettingsState(buildPrivacySettings(currentUser));
@@ -137,6 +142,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppStateContextValue>(
     () => ({
       currentUser,
+      ageRange,
+      ageModeProfile: buildAgeModeProfile(ageRange, userMode),
       userMode,
       memoryMode,
       voiceSettings,
@@ -151,6 +158,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updatePrivacySettings,
     }),
     [
+      ageRange,
       currentUser,
       memoryMode,
       privacySettings,

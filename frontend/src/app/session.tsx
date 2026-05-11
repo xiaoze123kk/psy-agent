@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, clearAuthTokens, tokenStore } from "../api";
-import type { CurrentUserResponse } from "../types/api";
+import { api, clearAuthTokens, persistAuthTokens, tokenStore } from "../api";
+import type { CurrentUserResponse, LoginRequest, RegisterRequest } from "../types/api";
 
 export type SessionStatus = "checking" | "authenticated" | "anonymous" | "error";
 
@@ -22,6 +22,8 @@ export interface SessionState {
 export interface SessionContextValue extends SessionState {
   restoreSession: () => Promise<void>;
   clearSession: () => void;
+  login: (payload: LoginRequest) => Promise<void>;
+  register: (payload: RegisterRequest) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
@@ -87,6 +89,62 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const login = useCallback(
+    async (payload: LoginRequest) => {
+      setSession((current) => ({
+        ...current,
+        status: "checking",
+        error: null,
+      }));
+
+      try {
+        const response = await api.login(payload);
+        persistAuthTokens({
+          accessToken: response.access_token,
+          refreshToken: response.refresh_token,
+        });
+        await restoreSession();
+      } catch (error) {
+        clearAuthTokens();
+        setSession({
+          status: "anonymous",
+          currentUser: null,
+          error: getErrorMessage(error),
+        });
+        throw error;
+      }
+    },
+    [restoreSession],
+  );
+
+  const register = useCallback(
+    async (payload: RegisterRequest) => {
+      setSession((current) => ({
+        ...current,
+        status: "checking",
+        error: null,
+      }));
+
+      try {
+        const response = await api.register(payload);
+        persistAuthTokens({
+          accessToken: response.access_token,
+          refreshToken: response.refresh_token,
+        });
+        await restoreSession();
+      } catch (error) {
+        clearAuthTokens();
+        setSession({
+          status: "anonymous",
+          currentUser: null,
+          error: getErrorMessage(error),
+        });
+        throw error;
+      }
+    },
+    [restoreSession],
+  );
+
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
@@ -96,8 +154,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       ...session,
       restoreSession,
       clearSession,
+      login,
+      register,
     }),
-    [clearSession, restoreSession, session],
+    [clearSession, login, register, restoreSession, session],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
