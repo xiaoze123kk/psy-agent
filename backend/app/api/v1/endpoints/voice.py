@@ -105,7 +105,7 @@ async def voice_session_ws(websocket: WebSocket, voice_session_id: str) -> None:
 
                 # Invoke the full LangGraph pipeline (risk + intent + response)
                 user_mode = user.profile.user_mode if user.profile else "adult"
-                companion_style = user.settings.companion_style if user.settings else "gentle"
+                companion_style = user.settings.companion_style if user.settings else ""
                 memory_mode = user.settings.memory_mode if user.settings else "summary_only"
 
                 result = await graph_runtime.invoke_turn(

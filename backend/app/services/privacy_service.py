@@ -22,6 +22,7 @@ from app.db.models import (
     utcnow,
 )
 from app.schemas.privacy import PrivacyDataCounts, PrivacyMutationResponse, PrivacySettingsSnapshot, PrivacySummaryResponse
+from app.services.companion_style import normalize_custom_companion_style
 
 
 def _count(db: Session, statement) -> int:
@@ -165,7 +166,7 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
         },
         "settings": {
             "memory_mode": settings.memory_mode if settings else "summary_only",
-            "companion_style": settings.companion_style if settings else "gentle",
+            "companion_style": normalize_custom_companion_style(settings.companion_style) if settings else "",
             "voice_enabled": bool(settings.voice_enabled) if settings else False,
             "save_voice_audio": bool(settings.save_voice_audio) if settings else False,
             "save_transcript": bool(settings.save_transcript) if settings else True,
@@ -175,8 +176,15 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
             {
                 "memory_id": memory.id,
                 "memory_type": memory.memory_type,
+                "title": memory.title,
+                "summary": memory.summary,
                 "content": memory.content,
+                "tags": list(memory.tags or []),
                 "importance": memory.importance,
+                "confidence": float(memory.confidence or 0),
+                "source": memory.source,
+                "review_state": memory.review_state,
+                "access_count": memory.access_count,
                 "created_at": _dt(memory.created_at),
                 "updated_at": _dt(memory.updated_at),
             }

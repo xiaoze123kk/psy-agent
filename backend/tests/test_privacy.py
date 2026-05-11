@@ -94,6 +94,12 @@ class PrivacyApiTests(unittest.TestCase):
         self.db.flush()
         message = Message(thread_id=thread.id, user_id=user.id, role="user", content="只属于我的消息")
         memory = UserMemory(user_id=user.id, memory_type="session_summary", content="只属于我的记忆")
+        hidden_memory = UserMemory(
+            user_id=user.id,
+            memory_type="safety_summary",
+            content="internal safety memory",
+            visibility="internal_safety",
+        )
         mood = MoodLog(user_id=user.id, mood_score=3, mood_tags=["平静"], source="checkin")
         history = TestHistory(
             user_id=user.id,
@@ -106,12 +112,13 @@ class PrivacyApiTests(unittest.TestCase):
         )
         feedback = UserFeedback(user_id=user.id, target_type="assistant_message", target_id="msg-1", rating=4)
         voice_session = VoiceSession(user_id=user.id, thread_id=thread.id, mode="companion", save_transcript=True)
-        self.db.add_all([message, memory, mood, history, feedback, voice_session])
+        self.db.add_all([message, memory, hidden_memory, mood, history, feedback, voice_session])
         self.db.commit()
         return {
             "thread": thread,
             "message": message,
             "memory": memory,
+            "hidden_memory": hidden_memory,
             "mood": mood,
             "history": history,
             "feedback": feedback,
@@ -149,6 +156,8 @@ class PrivacyApiTests(unittest.TestCase):
         self.assertEqual(body["account"]["username"], "owner")
         self.assertNotIn("password_hash", body["account"])
         self.assertNotIn("refresh_token", str(body))
+        self.assertEqual(len(body["memories"]), 1)
+        self.assertNotIn("internal safety memory", str(body))
         self.assertEqual(body["chat_threads"][0]["messages"][0]["content"], "只属于我的消息")
         self.assertTrue(all(thread["thread_id"] != other.id for thread in body["chat_threads"]))
 

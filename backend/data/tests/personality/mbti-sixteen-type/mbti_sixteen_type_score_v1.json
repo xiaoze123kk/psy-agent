@@ -1,0 +1,1054 @@
+{
+  "test_id": "mbti-sixteen-type",
+  "scoring_method": "traditional_dimensions + cognitive_stacks",
+  "results": {
+    "E-I": {
+      "高E倾向": "你在E-I维度上明显偏向E端。E型个体通常……（请根据知识库填充标准描述）",
+      "高I倾向": "你在E-I维度上明显偏向I端。I型个体通常……（请根据知识库填充标准描述）",
+      "边界模糊": "你在E-I维度上的作答模式不一致，可能处于该维度的中间区域，兼具两端特质，能够灵活切换行为模式。"
+    },
+    "S-N": {
+      "高S倾向": "你在S-N维度上明显偏向S端。S型个体通常……（请根据知识库填充标准描述）",
+      "高N倾向": "你在S-N维度上明显偏向N端。N型个体通常……（请根据知识库填充标准描述）",
+      "边界模糊": "你在S-N维度上的作答模式不一致，可能处于该维度的中间区域，兼具两端特质，能够灵活切换行为模式。"
+    },
+    "T-F": {
+      "高T倾向": "你在T-F维度上明显偏向T端。T型个体通常……（请根据知识库填充标准描述）",
+      "高F倾向": "你在T-F维度上明显偏向F端。F型个体通常……（请根据知识库填充标准描述）",
+      "边界模糊": "你在T-F维度上的作答模式不一致，可能处于该维度的中间区域，兼具两端特质，能够灵活切换行为模式。"
+    },
+    "J-P": {
+      "高J倾向": "你在J-P维度上明显偏向J端。J型个体通常……（请根据知识库填充标准描述）",
+      "高P倾向": "你在J-P维度上明显偏向P端。P型个体通常……（请根据知识库填充标准描述）",
+      "边界模糊": "你在J-P维度上的作答模式不一致，可能处于该维度的中间区域，兼具两端特质，能够灵活切换行为模式。"
+    },
+    "INTJ": {
+      "高匹配": "你在多项题目上的反应模式与INTJ类型高度一致，认知功能组合很可能接近INTJ。",
+      "中等匹配": "你显示出一定的INTJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与INTJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "INTP": {
+      "高匹配": "你在多项题目上的反应模式与INTP类型高度一致，认知功能组合很可能接近INTP。",
+      "中等匹配": "你显示出一定的INTP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与INTP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ENTJ": {
+      "高匹配": "你在多项题目上的反应模式与ENTJ类型高度一致，认知功能组合很可能接近ENTJ。",
+      "中等匹配": "你显示出一定的ENTJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ENTJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ENTP": {
+      "高匹配": "你在多项题目上的反应模式与ENTP类型高度一致，认知功能组合很可能接近ENTP。",
+      "中等匹配": "你显示出一定的ENTP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ENTP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "INFJ": {
+      "高匹配": "你在多项题目上的反应模式与INFJ类型高度一致，认知功能组合很可能接近INFJ。",
+      "中等匹配": "你显示出一定的INFJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与INFJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "INFP": {
+      "高匹配": "你在多项题目上的反应模式与INFP类型高度一致，认知功能组合很可能接近INFP。",
+      "中等匹配": "你显示出一定的INFP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与INFP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ENFJ": {
+      "高匹配": "你在多项题目上的反应模式与ENFJ类型高度一致，认知功能组合很可能接近ENFJ。",
+      "中等匹配": "你显示出一定的ENFJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ENFJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ENFP": {
+      "高匹配": "你在多项题目上的反应模式与ENFP类型高度一致，认知功能组合很可能接近ENFP。",
+      "中等匹配": "你显示出一定的ENFP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ENFP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ISTJ": {
+      "高匹配": "你在多项题目上的反应模式与ISTJ类型高度一致，认知功能组合很可能接近ISTJ。",
+      "中等匹配": "你显示出一定的ISTJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ISTJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ISFJ": {
+      "高匹配": "你在多项题目上的反应模式与ISFJ类型高度一致，认知功能组合很可能接近ISFJ。",
+      "中等匹配": "你显示出一定的ISFJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ISFJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ESTJ": {
+      "高匹配": "你在多项题目上的反应模式与ESTJ类型高度一致，认知功能组合很可能接近ESTJ。",
+      "中等匹配": "你显示出一定的ESTJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ESTJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ESFJ": {
+      "高匹配": "你在多项题目上的反应模式与ESFJ类型高度一致，认知功能组合很可能接近ESFJ。",
+      "中等匹配": "你显示出一定的ESFJ特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ESFJ类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ISTP": {
+      "高匹配": "你在多项题目上的反应模式与ISTP类型高度一致，认知功能组合很可能接近ISTP。",
+      "中等匹配": "你显示出一定的ISTP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ISTP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ISFP": {
+      "高匹配": "你在多项题目上的反应模式与ISFP类型高度一致，认知功能组合很可能接近ISFP。",
+      "中等匹配": "你显示出一定的ISFP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ISFP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ESTP": {
+      "高匹配": "你在多项题目上的反应模式与ESTP类型高度一致，认知功能组合很可能接近ESTP。",
+      "中等匹配": "你显示出一定的ESTP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ESTP类型存在较大差异，认知功能组合更接近其他类型。"
+    },
+    "ESFP": {
+      "高匹配": "你在多项题目上的反应模式与ESFP类型高度一致，认知功能组合很可能接近ESFP。",
+      "中等匹配": "你显示出一定的ESFP特质，但并不稳定。建议结合传统维度得分进一步确认。",
+      "低匹配": "你的作答模式与ESFP类型存在较大差异，认知功能组合更接近其他类型。"
+    }
+  },
+  "scoring": {
+    "traditional_dimensions": {
+      "E-I": {
+        "total_items": 4,
+        "scoring_method": "每题A选项测E倾向（计1分），B选项测I倾向（计0分）。总分范围 0~4，得分越高越偏向E。",
+        "items": [
+          {
+            "index": 1,
+            "label": "E-I 维度",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "E",
+              "B": "I",
+              "normalized": "A → E（计1分），B → I（计0分）"
+            }
+          },
+          {
+            "index": 2,
+            "label": "E-I 维度",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "E",
+              "B": "I",
+              "normalized": "A → E（计1分），B → I（计0分）"
+            }
+          },
+          {
+            "index": 3,
+            "label": "E-I 维度",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "E",
+              "B": "I",
+              "normalized": "A → E（计1分），B → I（计0分）"
+            }
+          },
+          {
+            "index": 4,
+            "label": "E-I 维度",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "E",
+              "B": "I",
+              "normalized": "A → E（计1分），B → I（计0分）"
+            }
+          }
+        ]
+      },
+      "S-N": {
+        "total_items": 4,
+        "scoring_method": "每题A选项测S倾向（计1分），B选项测N倾向（计0分）。总分范围 0~4，得分越高越偏向S。",
+        "items": [
+          {
+            "index": 5,
+            "label": "S-N 维度",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "S",
+              "B": "N",
+              "normalized": "A → S（计1分），B → N（计0分）"
+            }
+          },
+          {
+            "index": 6,
+            "label": "S-N 维度",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "S",
+              "B": "N",
+              "normalized": "A → S（计1分），B → N（计0分）"
+            }
+          },
+          {
+            "index": 7,
+            "label": "S-N 维度",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "S",
+              "B": "N",
+              "normalized": "A → S（计1分），B → N（计0分）"
+            }
+          },
+          {
+            "index": 8,
+            "label": "S-N 维度",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "S",
+              "B": "N",
+              "normalized": "A → S（计1分），B → N（计0分）"
+            }
+          }
+        ]
+      },
+      "T-F": {
+        "total_items": 4,
+        "scoring_method": "每题A选项测T倾向（计1分），B选项测F倾向（计0分）。总分范围 0~4，得分越高越偏向T。",
+        "items": [
+          {
+            "index": 9,
+            "label": "T-F 维度",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "T",
+              "B": "F",
+              "normalized": "A → T（计1分），B → F（计0分）"
+            }
+          },
+          {
+            "index": 10,
+            "label": "T-F 维度",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "T",
+              "B": "F",
+              "normalized": "A → T（计1分），B → F（计0分）"
+            }
+          },
+          {
+            "index": 11,
+            "label": "T-F 维度",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "T",
+              "B": "F",
+              "normalized": "A → T（计1分），B → F（计0分）"
+            }
+          },
+          {
+            "index": 12,
+            "label": "T-F 维度",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "T",
+              "B": "F",
+              "normalized": "A → T（计1分），B → F（计0分）"
+            }
+          }
+        ]
+      },
+      "J-P": {
+        "total_items": 4,
+        "scoring_method": "每题A选项测J倾向（计1分），B选项测P倾向（计0分）。总分范围 0~4，得分越高越偏向J。",
+        "items": [
+          {
+            "index": 13,
+            "label": "J-P 维度",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "J",
+              "B": "P",
+              "normalized": "A → J（计1分），B → P（计0分）"
+            }
+          },
+          {
+            "index": 14,
+            "label": "J-P 维度",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "J",
+              "B": "P",
+              "normalized": "A → J（计1分），B → P（计0分）"
+            }
+          },
+          {
+            "index": 15,
+            "label": "J-P 维度",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "J",
+              "B": "P",
+              "normalized": "A → J（计1分），B → P（计0分）"
+            }
+          },
+          {
+            "index": 16,
+            "label": "J-P 维度",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "J",
+              "B": "P",
+              "normalized": "A → J（计1分），B → P（计0分）"
+            }
+          }
+        ]
+      }
+    },
+    "cognitive_stacks": {
+      "INTJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近INTJ类型，0分=远离）。总分范围 0~4，得分越高与INTJ匹配度越高。",
+        "items": [
+          {
+            "index": 17,
+            "label": "INTJ (Ni-Te 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Te",
+              "B": "Ni",
+              "normalized": "B=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 18,
+            "label": "INTJ (Ni-Te 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ni",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 49,
+            "label": "INTJ (Ni-Te 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ni",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 50,
+            "label": "INTJ (Ni-Te 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Ni-Te",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "INTP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近INTP类型，0分=远离）。总分范围 0~4，得分越高与INTP匹配度越高。",
+        "items": [
+          {
+            "index": 19,
+            "label": "INTP (Ti-Ne 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ti",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 20,
+            "label": "INTP (Ti-Ne 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ti",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 51,
+            "label": "INTP (Ti-Ne 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ti",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 52,
+            "label": "INTP (Ti-Ne 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Ti-Ne",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ENTJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ENTJ类型，0分=远离）。总分范围 0~4，得分越高与ENTJ匹配度越高。",
+        "items": [
+          {
+            "index": 21,
+            "label": "ENTJ (Te-Ni 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Te",
+              "B": "Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 22,
+            "label": "ENTJ (Te-Ni 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Te",
+              "B": "Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 53,
+            "label": "ENTJ (Te-Ni 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Te-Ni",
+              "B": "Fe-Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 54,
+            "label": "ENTJ (Te-Ni 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Te-Ni",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ENTP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ENTP类型，0分=远离）。总分范围 0~4，得分越高与ENTP匹配度越高。",
+        "items": [
+          {
+            "index": 23,
+            "label": "ENTP (Ne-Ti 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ne-Ti",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 24,
+            "label": "ENTP (Ne-Ti 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ne-Ti",
+              "B": "Ti",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 55,
+            "label": "ENTP (Ne-Ti 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ne-Ti",
+              "B": "Ti-Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 56,
+            "label": "ENTP (Ne-Ti 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Ne-Ti",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "INFJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近INFJ类型，0分=远离）。总分范围 0~4，得分越高与INFJ匹配度越高。",
+        "items": [
+          {
+            "index": 25,
+            "label": "INFJ (Ni-Fe 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ni-Fe",
+              "B": "Se-Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 26,
+            "label": "INFJ (Ni-Fe 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ni",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 57,
+            "label": "INFJ (Ni-Fe 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ni",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 58,
+            "label": "INFJ (Ni-Fe 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Ni-Fe",
+              "B": "Te-Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "INFP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近INFP类型，0分=远离）。总分范围 0~4，得分越高与INFP匹配度越高。",
+        "items": [
+          {
+            "index": 27,
+            "label": "INFP (Fi-Ne 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Fi",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 28,
+            "label": "INFP (Fi-Ne 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ne",
+              "B": "Fi",
+              "normalized": "B=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 59,
+            "label": "INFP (Fi-Ne 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Fi",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 60,
+            "label": "INFP (Fi-Ne 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Fi",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ENFJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ENFJ类型，0分=远离）。总分范围 0~4，得分越高与ENFJ匹配度越高。",
+        "items": [
+          {
+            "index": 29,
+            "label": "ENFJ (Fe-Ni 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ni",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 30,
+            "label": "ENFJ (Fe-Ni 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ni-Ti",
+              "B": "Fe",
+              "normalized": "B=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 61,
+            "label": "ENFJ (Fe-Ni 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Fe",
+              "B": "Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 62,
+            "label": "ENFJ (Fe-Ni 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Fe",
+              "B": "Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ENFP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ENFP类型，0分=远离）。总分范围 0~4，得分越高与ENFP匹配度越高。",
+        "items": [
+          {
+            "index": 31,
+            "label": "ENFP (Ne-Fi 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ne-Fi",
+              "B": "Te-Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 32,
+            "label": "ENFP (Ne-Fi 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Ne",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 63,
+            "label": "ENFP (Ne-Fi 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ne",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 64,
+            "label": "ENFP (Ne-Fi 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Ne",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ISTJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ISTJ类型，0分=远离）。总分范围 0~4，得分越高与ISTJ匹配度越高。",
+        "items": [
+          {
+            "index": 33,
+            "label": "ISTJ (Si-Te 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Si-Te",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 34,
+            "label": "ISTJ (Si-Te 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Si-Te",
+              "B": "Fi-Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 65,
+            "label": "ISTJ (Si-Te 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Si",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 66,
+            "label": "ISTJ (Si-Te 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Si-Te",
+              "B": "Ne-Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ISFJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ISFJ类型，0分=远离）。总分范围 0~4，得分越高与ISFJ匹配度越高。",
+        "items": [
+          {
+            "index": 35,
+            "label": "ISFJ (Si-Fe 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Si",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 36,
+            "label": "ISFJ (Si-Fe 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Si-Fe",
+              "B": "Te-Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 67,
+            "label": "ISFJ (Si-Fe 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Si+Fe",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 68,
+            "label": "ISFJ (Si-Fe 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Si-Fe",
+              "B": "Ne-Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ESTJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ESTJ类型，0分=远离）。总分范围 0~4，得分越高与ESTJ匹配度越高。",
+        "items": [
+          {
+            "index": 37,
+            "label": "ESTJ (Te-Si 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Te-Si",
+              "B": "Ne",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 38,
+            "label": "ESTJ (Te-Si 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Te",
+              "B": "Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 69,
+            "label": "ESTJ (Te-Si 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Te",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 70,
+            "label": "ESTJ (Te-Si 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Te",
+              "B": "Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ESFJ": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ESFJ类型，0分=远离）。总分范围 0~4，得分越高与ESFJ匹配度越高。",
+        "items": [
+          {
+            "index": 39,
+            "label": "ESFJ (Fe-Si 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Fe-Si",
+              "B": "Ne-Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 40,
+            "label": "ESFJ (Fe-Si 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Fe",
+              "B": "Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 71,
+            "label": "ESFJ (Fe-Si 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Fe",
+              "B": "Si",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 72,
+            "label": "ESFJ (Fe-Si 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Fe-Si",
+              "B": "Ti",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ISTP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ISTP类型，0分=远离）。总分范围 0~4，得分越高与ISTP匹配度越高。",
+        "items": [
+          {
+            "index": 41,
+            "label": "ISTP (Ti-Se 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Ti",
+              "B": "Se",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 42,
+            "label": "ISTP (Ti-Se 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Se-Ti",
+              "B": "Ti-Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 73,
+            "label": "ISTP (Ti-Se 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Ti-Se",
+              "B": "Si/Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 74,
+            "label": "ISTP (Ti-Se 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Se",
+              "B": "Ti",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ISFP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ISFP类型，0分=远离）。总分范围 0~4，得分越高与ISFP匹配度越高。",
+        "items": [
+          {
+            "index": 43,
+            "label": "ISFP (Fi-Se 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Fi",
+              "B": "Se",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 44,
+            "label": "ISFP (Fi-Se 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Fi",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 75,
+            "label": "ISFP (Fi-Se 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Se-Fi",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 76,
+            "label": "ISFP (Fi-Se 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Fi-Se",
+              "B": "Te",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ESTP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ESTP类型，0分=远离）。总分范围 0~4，得分越高与ESTP匹配度越高。",
+        "items": [
+          {
+            "index": 45,
+            "label": "ESTP (Se-Ti 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Se-Ti",
+              "B": "Fe",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 46,
+            "label": "ESTP (Se-Ti 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Se-Ti",
+              "B": "Fe-Ni",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 77,
+            "label": "ESTP (Se-Ti 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Se-Ti",
+              "B": "Ni-Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 78,
+            "label": "ESTP (Se-Ti 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Se",
+              "B": "Ti",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      },
+      "ESFP": {
+        "total_items": 4,
+        "scoring_method": "每题按 normalised 方向计分（1分=接近ESFP类型，0分=远离）。总分范围 0~4，得分越高与ESFP匹配度越高。",
+        "items": [
+          {
+            "index": 47,
+            "label": "ESFP (Se-Fi 轴)",
+            "type": "深层动机题",
+            "scoring": {
+              "A": "Se",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 48,
+            "label": "ESFP (Se-Fi 轴)",
+            "type": "极限情境投射题",
+            "scoring": {
+              "A": "Se",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 79,
+            "label": "ESFP (Se-Fi 轴)",
+            "type": "表层行为题",
+            "scoring": {
+              "A": "Se",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          },
+          {
+            "index": 80,
+            "label": "ESFP (Se-Fi 轴)",
+            "type": "他人视角题",
+            "scoring": {
+              "A": "Se",
+              "B": "Fi",
+              "normalized": "A=1（1分），另一选项计0分"
+            }
+          }
+        ]
+      }
+    },
+    "cross_validation_rules": {
+      "E-I": "E-I维度由4道题（四种题型）构成证据链。全部一致时置信度为“高”，1道不一致为“中”，2道及以上不一致则标记为“边界模糊”。",
+      "S-N": "S-N维度由4道题（四种题型）构成证据链。全部一致时置信度为“高”，1道不一致为“中”，2道及以上不一致则标记为“边界模糊”。",
+      "T-F": "T-F维度由4道题（四种题型）构成证据链。全部一致时置信度为“高”，1道不一致为“中”，2道及以上不一致则标记为“边界模糊”。",
+      "J-P": "J-P维度由4道题（四种题型）构成证据链。全部一致时置信度为“高”，1道不一致为“中”，2道及以上不一致则标记为“边界模糊”。",
+      "INTJ": "INTJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "INTP": "INTP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ENTJ": "ENTJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ENTP": "ENTP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "INFJ": "INFJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "INFP": "INFP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ENFJ": "ENFJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ENFP": "ENFP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ISTJ": "ISTJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ISFJ": "ISFJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ESTJ": "ESTJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ESFJ": "ESFJ的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ISTP": "ISTP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ISFP": "ISFP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ESTP": "ESTP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。",
+      "ESFP": "ESFP的4道题构成证据链。全部指向该类型时置信度为“高”，多数指向为“中”，否则为“低匹配”。"
+    }
+  }
+}

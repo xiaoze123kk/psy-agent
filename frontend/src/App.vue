@@ -7,10 +7,14 @@ import { CounselingApi } from "./api/endpoints";
 import type {
   AgeRange,
   AskKnowledgeResponse,
+  ChatStreamAcceptedEvent,
+  ChatStreamErrorEvent,
   ChatStreamFinalEvent,
   ChatStreamGraphUpdateEvent,
+  ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
   CompleteAttemptResponse,
+  DeliveryStatus,
   FeedbackCreateRequest,
   FeedbackResponse,
   KnowledgeArticleResponse,
@@ -20,6 +24,7 @@ import type {
   KnowledgeQuizResultResponse,
   KnowledgeQuizSessionResponse,
   KnowledgeSearchItem,
+  MemoryJobStatus,
   MemoryItem,
   MemoryMode,
   MemoryReference,
@@ -29,6 +34,7 @@ import type {
   PersonalDataExport,
   PrivacyDataScope,
   PrivacySummaryResponse,
+  SendMessageRequest,
   SendMessageResponse,
   ShareCardData,
   StartAttemptResponse,
@@ -58,6 +64,12 @@ interface SelectOption {
   description: string;
 }
 
+interface CustomCompanionStyle {
+  id: string;
+  title: string;
+  definition: string;
+}
+
 interface ChatMessage {
   id: number;
   role: ChatRole;
@@ -68,8 +80,17 @@ interface ChatMessage {
   suggestedActions?: string[];
   referencedMemories?: MemoryReference[];
   memoryRefsExpanded?: boolean;
+  deliveryStatus?: DeliveryStatus;
+  failureReason?: string | null;
+  retryable?: boolean;
   streaming?: boolean;
   streamError?: boolean;
+}
+
+interface FailedReplyStatus {
+  userText: string;
+  failureReason?: string | null;
+  retryable: boolean;
 }
 
 interface KnowledgeChatMessage {
@@ -100,22 +121,23 @@ const USER_ID_KEY = "counseling_user_id";
 const USERNAME_KEY = "counseling_username";
 const THREAD_ID_KEY = "counseling_thread_id";
 const STYLE_KEY = "counseling_style";
+const CUSTOM_STYLES_KEY = "counseling_custom_styles";
+const SELECTED_CUSTOM_STYLE_ID_KEY = "counseling_selected_custom_style_id";
 const GOAL_KEY = "counseling_goal";
+const NEW_THREAD_TITLE = "新的对话";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_STYLE_ID = "default";
+const NEW_STYLE_ID = "new";
+const LEGACY_STYLE_IDS = new Set(["gentle", "rational", "reflective", "action"]);
+const MAX_COMPANION_STYLE_TITLE_LENGTH = 24;
+const MAX_COMPANION_STYLE_LENGTH = 500;
 
 const ageOptions: Array<SelectOption & { id: AgeOptionId }> = [
   { id: "13-15", label: "13-15 岁", description: "青少年保护模式" },
   { id: "16-17", label: "16-17 岁", description: "青少年保护模式" },
   { id: "18-24", label: "18-24 岁", description: "标准陪伴模式" },
   { id: "25+", label: "25 岁及以上", description: "标准陪伴模式" },
-];
-
-const styleOptions: SelectOption[] = [
-  { id: "gentle", label: "温柔安抚型", description: "先接住情绪，再慢慢放松。" },
-  { id: "rational", label: "理性分析型", description: "把困扰拆开，理清头绪。" },
-  { id: "reflective", label: "陪你梳理型", description: "一起整理感受和触发点。" },
-  { id: "action", label: "轻量行动型", description: "给出一两个可执行步骤。" },
 ];
 
 const goalOptions: SelectOption[] = [
@@ -328,6 +350,48 @@ function storageText(key: string) {
   return localStorage.getItem(key) ?? "";
 }
 
+function normalizeCompanionStyle(value: string) {
+  const normalized = value.trim();
+  if (LEGACY_STYLE_IDS.has(normalized)) return "";
+  return normalized.slice(0, MAX_COMPANION_STYLE_LENGTH);
+}
+
+function normalizeCompanionStyleTitle(value: string) {
+  return value.trim().slice(0, MAX_COMPANION_STYLE_TITLE_LENGTH);
+}
+
+function createCompanionStyleId() {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function previewCompanionStyle(value: string, maxLength = 58) {
+  const normalized = normalizeCompanionStyle(value);
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function readCustomCompanionStyles() {
+  try {
+    const parsed = JSON.parse(storageText(CUSTOM_STYLES_KEY)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    return parsed
+      .map((item, index): CustomCompanionStyle | null => {
+        if (!item || typeof item !== "object") return null;
+        const record = item as Record<string, unknown>;
+        const rawId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : createCompanionStyleId();
+        if (seen.has(rawId) || rawId === DEFAULT_STYLE_ID || rawId === NEW_STYLE_ID) return null;
+        const definition = normalizeCompanionStyle(typeof record.definition === "string" ? record.definition : "");
+        if (!definition) return null;
+        const title = normalizeCompanionStyleTitle(typeof record.title === "string" ? record.title : "") || `自定义风格 ${index + 1}`;
+        seen.add(rawId);
+        return { id: rawId, title, definition };
+      })
+      .filter((item): item is CustomCompanionStyle => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
 function storageOption(key: string, options: SelectOption[]) {
   const value = localStorage.getItem(key);
   return value && options.some((option) => option.id === value) ? value : null;
@@ -346,6 +410,8 @@ const isSending = ref(false);
 const isMoodSubmitting = ref(false);
 const isMoodTrendLoading = ref(false);
 const isSafetyOpen = ref(false);
+const isThreadDrawerOpen = ref(false);
+const isCreatingThread = ref(false);
 
 const accessToken = ref(storageText(ACCESS_TOKEN_KEY));
 const refreshToken = ref(storageText(REFRESH_TOKEN_KEY));
@@ -364,7 +430,9 @@ const apiError = ref("");
 const apiNotice = ref("");
 
 const selectedAge = ref<AgeOptionId | null>(null);
-const selectedStyle = ref<string | null>(storageOption(STYLE_KEY, styleOptions));
+const customStyles = ref<CustomCompanionStyle[]>(readCustomCompanionStyles());
+const selectedStyle = ref(normalizeCompanionStyle(storageText(STYLE_KEY)));
+const selectedCustomStyleId = ref(storageText(SELECTED_CUSTOM_STYLE_ID_KEY) || DEFAULT_STYLE_ID);
 const selectedGoal = ref<string | null>(storageOption(GOAL_KEY, goalOptions));
 
 const threads = ref<ThreadListItem[]>([]);
@@ -379,6 +447,11 @@ const memoryDocContent = ref("");
 const memoryDocError = ref("");
 const memoryError = ref("");
 const isSettingsSaving = ref(false);
+const isStyleEditorOpen = ref(false);
+const editingStyleId = ref(DEFAULT_STYLE_ID);
+const companionStyleTitleDraft = ref("");
+const companionStyleDraft = ref("");
+const companionStyleError = ref("");
 const privacySummary = ref<PrivacySummaryResponse | null>(null);
 const privacyExportPreview = ref("");
 const privacyExportData = ref<PersonalDataExport | null>(null);
@@ -408,8 +481,10 @@ const knowledgeMessages = ref<KnowledgeChatMessage[]>([
     text: "今天想弄清楚哪件事？焦虑、睡眠、关系、情绪调节，都可以慢慢说。",
   },
 ]);
-const quickActions = ref<string[]>(["继续听我说", "帮我理一理", "先听我说完"]);
+const quickActions = ref<string[]>([]);
+const failedReplyStatus = ref<FailedReplyStatus | null>(null);
 const composerText = ref("");
+const threadSearchQuery = ref("");
 const knowledgeDraft = ref("");
 const quizStats = ref<KnowledgeQuizBankStatsResponse | null>(null);
 const quizMode = ref<KnowledgeQuizMode>("10");
@@ -469,10 +544,18 @@ const isTeenMode = computed(() => selectedAge.value === "13-15" || selectedAge.v
 const modeLabel = computed(() => (isDemoMode.value ? "演示模式" : isTeenMode.value ? "青少年模式" : "标准模式"));
 const userName = computed(() => username.value || "朋友");
 const selectedAgeLabel = computed(() => ageOptions.find((option) => option.id === selectedAge.value)?.label ?? "未设置");
-const selectedStyleLabel = computed(
-  () => styleOptions.find((option) => option.id === selectedStyle.value)?.label ?? "未设置",
+const selectedCustomStyle = computed(
+  () => customStyles.value.find((style) => style.id === selectedCustomStyleId.value) ?? null,
 );
+const selectedStyleLabel = computed(() => selectedCustomStyle.value?.title ?? "未启用自定义风格");
+const companionStylePreview = computed(() => {
+  if (!selectedCustomStyle.value) return "可添加并切换多套自定义回复风格。";
+  return previewCompanionStyle(selectedCustomStyle.value.definition);
+});
 const selectedGoalLabel = computed(() => goalOptions.find((option) => option.id === selectedGoal.value)?.label ?? "未设置");
+const companionSettingsSummary = computed(() =>
+  selectedCustomStyle.value ? `${selectedStyleLabel.value} · ${selectedGoalLabel.value}` : selectedGoalLabel.value,
+);
 const memoryModeLabel = computed(() => memoryModeOptions.find((option) => option.id === currentMemoryMode.value)?.label ?? "只记摘要");
 const privacyCounts = computed(() => privacySummary.value?.data_counts ?? {
   memories: memories.value.length,
@@ -499,7 +582,17 @@ const canSubmitMood = computed(
     [moodDraft.value.mood_score, moodDraft.value.anxiety_score, moodDraft.value.energy_score, moodDraft.value.sleep_quality]
       .every((score) => typeof score === "number" && score >= 1 && score <= 5) && !isMoodSubmitting.value,
 );
-const canContinueOnboarding = computed(() => Boolean(selectedStyle.value && selectedGoal.value));
+const canContinueOnboarding = computed(() => Boolean(selectedGoal.value));
+const isEditingDefaultStyle = computed(() => editingStyleId.value === DEFAULT_STYLE_ID);
+const isEditingNewStyle = computed(() => editingStyleId.value === NEW_STYLE_ID);
+const canSaveCompanionStyle = computed(() => {
+  if (isEditingDefaultStyle.value) return !isSettingsSaving.value;
+  return (
+    !isSettingsSaving.value &&
+    Boolean(normalizeCompanionStyleTitle(companionStyleTitleDraft.value)) &&
+    Boolean(normalizeCompanionStyle(companionStyleDraft.value))
+  );
+});
 const shouldShowKnowledgePrompts = computed(() => !knowledgeMessages.value.some((message) => message.role === "user"));
 const currentQuizQuestion = computed<KnowledgeQuizQuestion | null>(
   () => quizSession.value?.questions[activeQuizIndex.value] ?? null,
@@ -512,6 +605,23 @@ const canSubmitQuiz = computed(() => Boolean(quizSession.value && quizAnsweredCo
 const quizWrongCount = computed(() => quizResult.value?.review.filter((item) => !item.is_correct).length ?? 0);
 const activeReviewItem = computed(() => quizResult.value?.review[activeReviewIndex.value] ?? null);
 const activeThread = computed(() => threads.value.find((thread) => thread.thread_id === activeThreadId.value) ?? null);
+const visibleThreads = computed(() => {
+  let hasReusableNewThread = false;
+  return threads.value.filter((thread) => {
+    if (!isReusableNewThread(thread)) return true;
+    if (hasReusableNewThread) return false;
+    hasReusableNewThread = true;
+    return true;
+  });
+});
+const filteredThreads = computed(() => {
+  const query = threadSearchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return visibleThreads.value;
+  return visibleThreads.value.filter((thread) => {
+    const searchable = `${thread.title} ${thread.last_summary ?? ""}`.toLocaleLowerCase();
+    return searchable.includes(query);
+  });
+});
 const latestSummary = computed(() => activeThread.value?.last_summary || "可以从此刻最明显的感受开始。");
 const testHeaderTitle = computed(() => {
   if (testView.value !== "result" || !testResult.value) return testView.value === "taking" && currentTest.value ? currentTest.value.title : "测试中心";
@@ -530,6 +640,8 @@ const contextText = computed(() =>
     .filter(Boolean)
     .join(" "),
 );
+
+syncCustomStyleSelectionFromDefinition(selectedStyle.value, "当前风格");
 
 watch(
   () => messages.value.map((message) => `${message.id}:${message.text}`).join("\n"),
@@ -551,15 +663,35 @@ watch(
   },
 );
 
-watch([selectedStyle, selectedGoal], ([style, goal]) => {
-  style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
-  goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
-});
+watch(
+  [selectedStyle, selectedGoal, selectedCustomStyleId],
+  ([style, goal, styleId]) => {
+    style ? localStorage.setItem(STYLE_KEY, style) : localStorage.removeItem(STYLE_KEY);
+    goal ? localStorage.setItem(GOAL_KEY, goal) : localStorage.removeItem(GOAL_KEY);
+    styleId && styleId !== DEFAULT_STYLE_ID
+      ? localStorage.setItem(SELECTED_CUSTOM_STYLE_ID_KEY, styleId)
+      : localStorage.removeItem(SELECTED_CUSTOM_STYLE_ID_KEY);
+  },
+  { immediate: true },
+);
+
+watch(
+  customStyles,
+  (styles) => {
+    if (styles.length > 0) {
+      localStorage.setItem(CUSTOM_STYLES_KEY, JSON.stringify(styles));
+    } else {
+      localStorage.removeItem(CUSTOM_STYLES_KEY);
+    }
+  },
+  { deep: true, immediate: true },
+);
 
 watch(activeTab, (tab) => {
 
   // 这里单独给演示模式做了一个分支，后续看看能不能合并
 
+  if (tab !== "chat") closeThreadDrawer();
   if (tab === "tests" && testItems.value.length === 0) {
     if (isDemoMode.value || !accessToken.value) {
       testItems.value = demoTests;
@@ -734,6 +866,10 @@ function normalizeRiskLevel(value: unknown): RiskLevel | null {
   return value === "L0" || value === "L1" || value === "L2" || value === "L3" ? value : null;
 }
 
+function normalizeDeliveryStatus(value: unknown): DeliveryStatus {
+  return value === "failed_no_reply" || value === "safety_fallback" ? value : "generated";
+}
+
 function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -763,10 +899,19 @@ function memoryTypeLabel(type: string) {
 }
 
 function graphStatusLabel(node?: string | null) {
+  if (node === "accepted") return "已接收";
   if (node === "risk_classifier") return "正在识别风险";
+  if (node === "load_user_profile") return "正在读取设置";
+  if (node === "control_plane") return "正在确认边界";
   if (node === "intent_classifier") return "正在理解意图";
   if (node === "memory_retrieval") return "正在整理上下文";
-  if (node === "summary_memory_node") return "正在整理摘要";
+  if (node === "example_retriever") return "正在检索参考";
+  if (node === "companion_response" || node === "soothing_response" || node === "counseling_response") return "正在生成回复";
+  if (node === "crisis_response" || node === "clinical_red_flag_response" || node === "boundary_response") return "正在生成安全回复";
+  if (node === "response_validator") return "正在校验安全";
+  if (node === "summarize_turn" || node === "memory_candidate_extract" || node === "write_memory" || node === "summary_memory_node") return "正在整理摘要";
+  if (node === "saving_record") return "正在保存记录";
+  if (node === "heartbeat") return "仍在处理中";
   if (node) return "正在推进对话";
   return "";
 }
@@ -779,8 +924,20 @@ function isTokenEventData(data: unknown): data is ChatStreamTokenEvent {
   return isObjectRecord(data) && typeof data.text === "string";
 }
 
+function isAcceptedEventData(data: unknown): data is ChatStreamAcceptedEvent {
+  return isObjectRecord(data) && data.status === "accepted" && typeof data.thread_id === "string";
+}
+
 function isGraphUpdateEventData(data: unknown): data is ChatStreamGraphUpdateEvent {
   return isObjectRecord(data) && typeof data.node === "string";
+}
+
+function isHeartbeatEventData(data: unknown): data is ChatStreamHeartbeatEvent {
+  return isObjectRecord(data) && data.status === "running" && typeof data.elapsed_ms === "number";
+}
+
+function isErrorEventData(data: unknown): data is ChatStreamErrorEvent {
+  return isObjectRecord(data) && typeof data.message === "string";
 }
 
 function isFinalEventData(data: unknown): data is ChatStreamFinalEvent {
@@ -792,6 +949,7 @@ function sortThreads(items: ThreadListItem[]) {
 }
 
 function setMessages(items: ChatMessage[]) {
+  failedReplyStatus.value = null;
   messages.value = items.map((message, index) => ({ ...message, id: index + 1 }));
   messageSeed.value = messages.value.length + 1;
 }
@@ -819,6 +977,14 @@ function clearSession() {
   memoryDocContent.value = "";
   memoryDocError.value = "";
   memoryError.value = "";
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+  isCreatingThread.value = false;
+  isStyleEditorOpen.value = false;
+  editingStyleId.value = DEFAULT_STYLE_ID;
+  companionStyleTitleDraft.value = "";
+  companionStyleDraft.value = "";
+  companionStyleError.value = "";
   privacySummary.value = null;
   privacyExportPreview.value = "";
   privacyExportData.value = null;
@@ -861,14 +1027,18 @@ async function refreshAccessToken(): Promise<boolean> {
 
 function mapMessage(item: MessageItem): ChatMessage | null {
   if (item.role !== "assistant" && item.role !== "user") return null;
+  const deliveryStatus = normalizeDeliveryStatus(item.metadata.delivery_status);
   return {
     id: 0,
     role: item.role,
     text: item.content,
     createdAt: item.created_at,
     riskLevel: item.risk_level,
-    suggestedActions: normalizeStringList(item.metadata.suggested_actions),
-    referencedMemories: normalizeMemoryReferences(item.metadata.referenced_memories),
+    suggestedActions: deliveryStatus === "failed_no_reply" ? [] : normalizeStringList(item.metadata.suggested_actions),
+    referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(item.metadata.referenced_memories) : [],
+    deliveryStatus,
+    failureReason: typeof item.metadata.failure_reason === "string" ? item.metadata.failure_reason : null,
+    retryable: Boolean(item.metadata.retryable),
   };
 }
 
@@ -906,9 +1076,7 @@ async function loadApp() {
     saveVoiceAudio.value = user.save_voice_audio;
     saveTranscript.value = user.save_transcript;
     privacySummary.value = privacy;
-    if (styleOptions.some((option) => option.id === user.companion_style)) {
-      selectedStyle.value = user.companion_style;
-    }
+    syncCustomStyleSelectionFromDefinition(user.companion_style, "当前风格");
     threads.value = sortThreads(threadList.items);
     memories.value = memoryList.items;
     memoryError.value = "";
@@ -919,7 +1087,7 @@ async function loadApp() {
       localStorage.setItem(THREAD_ID_KEY, activeThreadId.value);
       await loadThreadMessages(activeThreadId.value);
     }
-    stage.value = selectedStyle.value && selectedGoal.value ? "app" : "onboarding";
+    stage.value = selectedGoal.value ? "app" : "onboarding";
   } catch (error) {
     clearSession();
     authError.value = error instanceof Error ? error.message : "登录状态已失效，请重新登录。";
@@ -934,6 +1102,16 @@ async function refreshMemories() {
   if (isDemoMode.value || !accessToken.value) return;
   const memoryList = await api.listMemories();
   memories.value = memoryList.items;
+}
+
+function refreshMemoriesForJob(status?: MemoryJobStatus | null) {
+  if (status === "pending" || status === "running") {
+    window.setTimeout(() => {
+      void refreshMemories();
+    }, 2500);
+    return;
+  }
+  void refreshMemories();
 }
 
 function buildLocalPrivacySummary(): PrivacySummaryResponse {
@@ -970,6 +1148,125 @@ async function refreshPrivacySummary() {
     privacyError.value = "";
   } catch (error) {
     privacyError.value = error instanceof Error ? error.message : "隐私数据加载失败。";
+  }
+}
+
+function syncCustomStyleSelectionFromDefinition(value: string, fallbackTitle = "当前风格") {
+  const definition = normalizeCompanionStyle(value);
+  selectedStyle.value = definition;
+  if (!definition) {
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
+    return;
+  }
+  const existing = customStyles.value.find((style) => style.definition === definition);
+  if (existing) {
+    selectedCustomStyleId.value = existing.id;
+    return;
+  }
+  const style: CustomCompanionStyle = {
+    id: createCompanionStyleId(),
+    title: normalizeCompanionStyleTitle(fallbackTitle) || "当前风格",
+    definition,
+  };
+  customStyles.value = [style, ...customStyles.value];
+  selectedCustomStyleId.value = style.id;
+}
+
+function selectCompanionStyleDraft(styleId: string) {
+  companionStyleError.value = "";
+  if (styleId === DEFAULT_STYLE_ID) {
+    editingStyleId.value = DEFAULT_STYLE_ID;
+    companionStyleTitleDraft.value = "";
+    companionStyleDraft.value = "";
+    return;
+  }
+  const style = customStyles.value.find((item) => item.id === styleId);
+  if (!style) return;
+  editingStyleId.value = style.id;
+  companionStyleTitleDraft.value = style.title;
+  companionStyleDraft.value = style.definition;
+}
+
+function startNewCompanionStyleDraft() {
+  companionStyleError.value = "";
+  editingStyleId.value = NEW_STYLE_ID;
+  companionStyleTitleDraft.value = `自定义风格 ${customStyles.value.length + 1}`;
+  companionStyleDraft.value = "";
+}
+
+function openCompanionStyleEditor() {
+  companionStyleError.value = "";
+  isStyleEditorOpen.value = true;
+  if (selectedCustomStyle.value) {
+    selectCompanionStyleDraft(selectedCustomStyle.value.id);
+  } else {
+    selectCompanionStyleDraft(DEFAULT_STYLE_ID);
+  }
+}
+
+async function saveCompanionStyle() {
+  if (isSettingsSaving.value) return;
+  const previousStyle = selectedStyle.value;
+  const previousStyleId = selectedCustomStyleId.value;
+  const previousStyles = customStyles.value.map((style) => ({ ...style }));
+  companionStyleError.value = "";
+
+  let nextStyle = "";
+  let nextStyleId = DEFAULT_STYLE_ID;
+  let nextStyles = customStyles.value.map((style) => ({ ...style }));
+  let successMessage = "已关闭自定义回复风格。";
+
+  if (!isEditingDefaultStyle.value) {
+    const title = normalizeCompanionStyleTitle(companionStyleTitleDraft.value);
+    const definition = normalizeCompanionStyle(companionStyleDraft.value);
+    if (!title) {
+      companionStyleError.value = "请填写风格标题。";
+      return;
+    }
+    if (!definition) {
+      companionStyleError.value = "请填写具体风格定义，或选择默认。";
+      return;
+    }
+    if (isEditingNewStyle.value) {
+      nextStyleId = createCompanionStyleId();
+      nextStyles = [{ id: nextStyleId, title, definition }, ...nextStyles];
+    } else {
+      nextStyleId = editingStyleId.value;
+      const styleIndex = nextStyles.findIndex((style) => style.id === nextStyleId);
+      const nextRecord = { id: nextStyleId, title, definition };
+      nextStyles = styleIndex >= 0
+        ? nextStyles.map((style, index) => (index === styleIndex ? nextRecord : style))
+        : [nextRecord, ...nextStyles];
+    }
+    nextStyle = definition;
+    successMessage = "回复风格已保存。";
+  }
+
+  customStyles.value = nextStyles;
+  selectedCustomStyleId.value = nextStyleId;
+  selectedStyle.value = nextStyle;
+  companionStyleDraft.value = nextStyle;
+
+  if (isDemoMode.value || !accessToken.value) {
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+    return;
+  }
+
+  try {
+    isSettingsSaving.value = true;
+    const response = await api.updateSettings({ companion_style: nextStyle });
+    syncCustomStyleSelectionFromDefinition(response.companion_style, companionStyleTitleDraft.value || "当前风格");
+    isStyleEditorOpen.value = false;
+    apiNotice.value = successMessage;
+  } catch (error) {
+    customStyles.value = previousStyles;
+    selectedCustomStyleId.value = previousStyleId;
+    selectedStyle.value = previousStyle;
+    companionStyleDraft.value = previousStyle;
+    companionStyleError.value = error instanceof Error ? error.message : "回复风格保存失败。";
+  } finally {
+    isSettingsSaving.value = false;
   }
 }
 
@@ -1287,7 +1584,8 @@ async function deleteCurrentAccount() {
     clearSession();
     isDemoMode.value = false;
     selectedAge.value = null;
-    selectedStyle.value = null;
+    selectedStyle.value = "";
+    selectedCustomStyleId.value = DEFAULT_STYLE_ID;
     selectedGoal.value = null;
     threads.value = [];
     memories.value = [];
@@ -1401,7 +1699,8 @@ function enterDemoMode() {
   isDemoMode.value = true;
   username.value = "小林";
   selectedAge.value = "18-24";
-  selectedStyle.value ||= "gentle";
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value ||= "anxiety";
   currentMemoryMode.value = "summary_only";
   saveVoiceAudio.value = false;
@@ -1435,10 +1734,33 @@ async function selectThread(threadId: string) {
   localStorage.setItem(THREAD_ID_KEY, threadId);
   activeTab.value = "chat";
   await loadThreadMessages(threadId);
-  quickActions.value = [...fallbackQuickActions];
+  quickActions.value = [];
 }
 
-async function createThread(title = "新的对话") {
+function openThreadDrawer() {
+  activeTab.value = "chat";
+  isThreadDrawerOpen.value = true;
+}
+
+function closeThreadDrawer() {
+  isThreadDrawerOpen.value = false;
+  threadSearchQuery.value = "";
+}
+
+async function selectThreadFromDrawer(threadId: string) {
+  await selectThread(threadId);
+  closeThreadDrawer();
+}
+
+function isReusableNewThread(thread: ThreadListItem) {
+  return thread.title.trim() === NEW_THREAD_TITLE && !thread.last_summary?.trim();
+}
+
+function findReusableNewThread() {
+  return threads.value.find(isReusableNewThread);
+}
+
+async function createThread(title = NEW_THREAD_TITLE) {
   if (isDemoMode.value || !accessToken.value) {
     const threadId = `local-${Date.now()}`;
     threads.value = sortThreads([
@@ -1474,6 +1796,29 @@ async function createThread(title = "新的对话") {
   setMessages([]);
 }
 
+async function createChatThread() {
+  if (isCreatingThread.value) return;
+  try {
+    isCreatingThread.value = true;
+    clearApiFeedback();
+    composerText.value = "";
+    const reusableThread = findReusableNewThread();
+    if (reusableThread) {
+      await selectThread(reusableThread.thread_id);
+    } else {
+      await createThread();
+    }
+    quickActions.value = [];
+    threadSearchQuery.value = "";
+    activeTab.value = "chat";
+    closeThreadDrawer();
+  } catch (error) {
+    apiError.value = error instanceof Error ? `新建会话失败：${error.message}` : "新建会话失败。";
+  } finally {
+    isCreatingThread.value = false;
+  }
+}
+
 function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = null, streaming = false) {
   const id = messageSeed.value;
   messages.value = [...messages.value, { id, role, text, riskLevel, streaming, createdAt: new Date().toISOString() }];
@@ -1483,6 +1828,10 @@ function addMessage(role: ChatRole, text: string, riskLevel: RiskLevel | null = 
 
 function updateMessage(id: number, patch: Partial<Omit<ChatMessage, "id">>) {
   messages.value = messages.value.map((message) => (message.id === id ? { ...message, ...patch } : message));
+}
+
+function removeMessage(id: number) {
+  messages.value = messages.value.filter((message) => message.id !== id);
 }
 
 function appendMessageText(id: number, text: string) {
@@ -1498,14 +1847,48 @@ function inferRisk(message: string): RiskLevel | null {
   return null;
 }
 
-const fallbackQuickActions = ["继续听我说", "帮我理一理", "先听我说完"];
+interface LocalSafetyFallback {
+  reply: string;
+  actions: string[];
+}
 
-function buildReply(message: string) {
-  if (message.includes("睡")) return "睡不好的时候，很多情绪都会被放大。我们先不急着解决全部，只分开看看：是入睡难、半夜醒，还是醒来后很累？";
-  if (message.includes("焦虑") || message.includes("慌")) return "焦虑来的时候，身体常常比想法更快。我们先让身体退一步，再看事情本身。";
-  if (message.includes("关系") || message.includes("家人")) return "关系里的难受，通常不只是一句话，而是那句话碰到了你很在意的东西。你最怕哪种感受被忽略？";
-  if (message.includes("呼吸")) return "现在先把注意力放回身体。吸气四拍，停一拍，呼气六拍。先做三轮，不用追求标准。";
-  return "我在这里。你不用一下子说得很完整，先把压在胸口最重的那一小块说出来就够了。";
+function buildLocalSafetyFallback(): LocalSafetyFallback {
+  return {
+    reply: "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；如果马上有危险，请立刻拨打当地紧急电话。",
+    actions: ["我现在不安全", "我能联系谁", "先陪我稳住"],
+  };
+}
+
+function createClientMessageId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isTurnStateError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("turn_running") || message.includes("idempotency_key_conflict");
+}
+
+async function refreshAfterTurnStateError(assistantId: number, message: string) {
+  apiNotice.value = message;
+  updateMessage(assistantId, { streaming: false, streamError: true });
+  if (activeThreadId.value) await loadThreadMessages(activeThreadId.value);
+}
+
+function showFailedNoReply(assistantId: number | null, userText: string, failureReason?: string | null) {
+  if (assistantId !== null) removeMessage(assistantId);
+  failedReplyStatus.value = {
+    userText,
+    failureReason: failureReason ?? null,
+    retryable: true,
+  };
+  quickActions.value = [];
+}
+
+async function retryFailedReply() {
+  const userText = failedReplyStatus.value?.userText;
+  if (!userText || isSending.value) return;
+  await submitMessage(userText);
 }
 
 function syncLocalThread(summary: string, risk: RiskLevel | null) {
@@ -1520,23 +1903,50 @@ function syncLocalThread(summary: string, risk: RiskLevel | null) {
   demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
 }
 
-function applySendMessageResponse(assistantId: number, userContent: string, response: SendMessageResponse) {
+function syncFailedNoReplyThread(risk: RiskLevel | null) {
+  if (!activeThreadId.value) return;
+  threads.value = sortThreads(
+    threads.value.map((thread) =>
+      thread.thread_id === activeThreadId.value
+        ? { ...thread, last_risk_level: risk ?? thread.last_risk_level, updated_at: new Date().toISOString() }
+        : thread,
+    ),
+  );
+  demoMessagesByThread.value = { ...demoMessagesByThread.value, [activeThreadId.value]: messages.value.map((message) => ({ ...message })) };
+}
+
+function applySendMessageResponse(
+  assistantId: number,
+  userContent: string,
+  response: SendMessageResponse,
+  fallbackRisk: RiskLevel | null = null,
+) {
   const assistant = response.assistant_message;
+  if (response.delivery_status === "failed_no_reply" || !assistant) {
+    showFailedNoReply(assistantId, userContent, response.failure_reason);
+    syncFailedNoReplyThread(fallbackRisk);
+    return;
+  }
+  const deliveryStatus = normalizeDeliveryStatus(assistant.delivery_status);
   const risk = normalizeRiskLevel(assistant.risk_level) ?? "L0";
   const reply = assistant.assistant_text || assistant.content;
-  const actions = assistant.suggested_actions.length ? assistant.suggested_actions : fallbackQuickActions;
+  const actions = assistant.suggested_actions.slice(0, 3);
   updateMessage(assistantId, {
     text: reply,
     riskLevel: risk,
     graphNode: null,
     suggestedActions: actions,
-    referencedMemories: assistant.referenced_memories ?? [],
+    referencedMemories: deliveryStatus === "generated" ? assistant.referenced_memories ?? [] : [],
+    deliveryStatus,
+    failureReason: assistant.failure_reason ?? null,
+    retryable: assistant.retryable,
     streaming: false,
     streamError: false,
   });
-  quickActions.value = actions.slice(0, 3);
+  failedReplyStatus.value = null;
+  quickActions.value = actions;
   syncLocalThread(reply, risk);
-  if (assistant.should_write_memory) void refreshMemories();
+  if (assistant.should_write_memory) refreshMemoriesForJob(assistant.memory_job_status);
   if (risk === "L2" || risk === "L3") openSafety();
 }
 
@@ -1545,32 +1955,62 @@ async function submitMessage(text = composerText.value) {
   if (!content || isSending.value) return;
   composerText.value = "";
   clearApiFeedback();
+  failedReplyStatus.value = null;
+  quickActions.value = [];
   activeTab.value = "chat";
   if (!activeThreadId.value) await createThread(content.slice(0, 12) || "新的对话");
   addMessage("user", content);
   const localRisk = inferRisk(content);
-  quickActions.value = [...fallbackQuickActions];
 
   if (isDemoMode.value || !accessToken.value || activeThreadId.value.startsWith("local-")) {
-    const reply = buildReply(content);
-    addMessage("assistant", reply, localRisk);
-    syncLocalThread(reply, localRisk);
-    if (localRisk === "L2" || localRisk === "L3") openSafety();
+    if (localRisk === "L2" || localRisk === "L3") {
+      const safetyFallback = buildLocalSafetyFallback();
+      addMessage("assistant", safetyFallback.reply, localRisk, false);
+      quickActions.value = safetyFallback.actions;
+      syncLocalThread(safetyFallback.reply, localRisk);
+      openSafety();
+      return;
+    }
+    showFailedNoReply(null, content, "local_generation_unavailable");
+    syncFailedNoReplyThread(localRisk);
     return;
   }
 
-  const payload = { user_id: currentUserId.value, content, input_type: "text" as const, user_mode: selectedUserMode() };
+  const payload: SendMessageRequest = {
+    user_id: currentUserId.value,
+    client_message_id: createClientMessageId(),
+    content,
+    input_type: "text",
+    user_mode: selectedUserMode(),
+  };
   const assistantId = addMessage("assistant", "", null, true);
   let streamed = "";
   let risk: RiskLevel | null = null;
   let receivedStreamEvent = false;
   let receivedFinalEvent = false;
+  let failedNoReply = false;
   try {
     isSending.value = true;
     await api.streamMessage(
       activeThreadId.value,
       payload,
       (event, data) => {
+        if (event === "accepted" && isAcceptedEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "accepted",
+            streamError: false,
+          });
+        }
+
+        if (event === "heartbeat" && isHeartbeatEventData(data)) {
+          receivedStreamEvent = true;
+          updateMessage(assistantId, {
+            graphNode: "heartbeat",
+            streamError: false,
+          });
+        }
+
         if (event === "graph_update" && isGraphUpdateEventData(data)) {
           receivedStreamEvent = true;
           const graphRisk = normalizeRiskLevel(data.risk_level);
@@ -1582,29 +2022,49 @@ async function submitMessage(text = composerText.value) {
           });
         }
 
+        if (event === "error" && isErrorEventData(data)) {
+          receivedStreamEvent = true;
+          apiNotice.value = data.code === "turn_running"
+            ? "这轮消息仍在服务端处理中，正在刷新记录。"
+            : data.message || "流式连接异常，正在刷新服务端记录。";
+          updateMessage(assistantId, {
+            streaming: false,
+            streamError: true,
+          });
+        }
+
         if (event === "token" && isTokenEventData(data)) {
           receivedStreamEvent = true;
           streamed += data.text;
           appendMessageText(assistantId, data.text);
         }
-        if (event === "final") {
+        if (event === "final" && isFinalEventData(data)) {
           receivedStreamEvent = true;
           receivedFinalEvent = true;
           risk = normalizeRiskLevel(data.risk_level) ?? "L0";
-          const actions = normalizeStringList(data.suggested_actions);
-          const finalActions = actions.length ? actions : fallbackQuickActions;
-          quickActions.value = finalActions.slice(0, 3);
-          if (!streamed && isFinalEventData(data)) streamed = data.assistant_text;
+          const deliveryStatus = normalizeDeliveryStatus(data.delivery_status);
+          if (deliveryStatus === "failed_no_reply") {
+            failedNoReply = true;
+            showFailedNoReply(assistantId, content, data.failure_reason ?? null);
+            syncFailedNoReplyThread(risk);
+            return;
+          }
+          const finalActions = normalizeStringList(data.suggested_actions).slice(0, 3);
+          quickActions.value = finalActions;
+          if (!streamed) streamed = data.assistant_text;
           updateMessage(assistantId, {
             text: streamed,
             riskLevel: risk,
             graphNode: null,
             suggestedActions: finalActions,
-            referencedMemories: normalizeMemoryReferences(data.referenced_memories),
+            referencedMemories: deliveryStatus === "generated" ? normalizeMemoryReferences(data.referenced_memories) : [],
+            deliveryStatus,
+            failureReason: data.failure_reason ?? null,
+            retryable: Boolean(data.retryable),
             streaming: false,
             streamError: false,
           });
-          if (Boolean(data.should_write_memory)) void refreshMemories();
+          if (Boolean(data.should_write_memory)) refreshMemoriesForJob(data.memory_job_status);
         }
       },
     );
@@ -1618,14 +2078,32 @@ async function submitMessage(text = composerText.value) {
 
     if (!receivedStreamEvent) {
       apiNotice.value = "流式连接无返回，已切换到稳定发送。";
-      const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      try {
+        const response = await api.sendMessage(activeThreadId.value, payload);
+        applySendMessageResponse(assistantId, content, response, localRisk);
+      } catch (fallbackError) {
+        if (isTurnStateError(fallbackError)) {
+          await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+          return;
+        }
+        showFailedNoReply(
+          assistantId,
+          content,
+          fallbackError instanceof Error ? fallbackError.message : "send_failed",
+        );
+        syncFailedNoReplyThread(localRisk);
+      }
       return;
     }
 
-    if (!streamed) {
-      streamed = buildReply(content);
-      updateMessage(assistantId, { text: streamed, riskLevel: risk });
+    if (failedNoReply) {
+      return;
+    }
+
+    if (!streamed.trim()) {
+      showFailedNoReply(assistantId, content, "empty_stream_reply");
+      syncFailedNoReplyThread(risk ?? localRisk);
+      return;
     }
     syncLocalThread(streamed, risk);
     if (risk === "L2" || risk === "L3") openSafety();
@@ -1637,25 +2115,26 @@ async function submitMessage(text = composerText.value) {
       return;
     }
 
+    if (isTurnStateError(error)) {
+      await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+      return;
+    }
+
     try {
       apiNotice.value = "流式连接失败，已切换到稳定发送。";
       const response = await api.sendMessage(activeThreadId.value, payload);
-      applySendMessageResponse(assistantId, content, response);
+      applySendMessageResponse(assistantId, content, response, localRisk);
     } catch (fallbackError) {
-      apiError.value =
-        fallbackError instanceof Error ? `发送失败，已使用本地回复：${fallbackError.message}` : "发送失败，已使用本地回复。";
-      const reply = buildReply(content);
-      quickActions.value = [...fallbackQuickActions];
-      updateMessage(assistantId, {
-        text: reply,
-        riskLevel: localRisk,
-        graphNode: null,
-        suggestedActions: fallbackQuickActions,
-        streaming: false,
-        streamError: true,
-      });
-      syncLocalThread(reply, localRisk);
-      if (localRisk === "L2" || localRisk === "L3") openSafety();
+      if (isTurnStateError(fallbackError)) {
+        await refreshAfterTurnStateError(assistantId, "这轮消息正在服务端处理中，已刷新记录。");
+        return;
+      }
+      showFailedNoReply(
+        assistantId,
+        content,
+        fallbackError instanceof Error ? fallbackError.message : "send_failed",
+      );
+      syncFailedNoReplyThread(localRisk);
     }
   } finally {
     updateMessage(assistantId, { streaming: false });
@@ -2483,7 +2962,8 @@ async function logout() {
   clearSession();
   isDemoMode.value = false;
   selectedAge.value = null;
-  selectedStyle.value = null;
+  selectedStyle.value = "";
+  selectedCustomStyleId.value = DEFAULT_STYLE_ID;
   selectedGoal.value = null;
   threads.value = [];
   memories.value = [];
@@ -2576,22 +3056,8 @@ onMounted(async () => {
         <header class="screen-header">
           <span class="top-label">{{ selectedAgeLabel }} · {{ modeLabel }}</span>
           <h1>你希望我怎么陪你？</h1>
-          <p>先选一种交流语气，再选一个这段时间更需要的方向。</p>
+          <p>先选一个这段时间更需要的方向。</p>
         </header>
-
-        <div class="choice-section">
-          <h2>陪伴风格</h2>
-          <button
-            v-for="option in styleOptions"
-            :key="option.id"
-            :class="['choice-row', { active: selectedStyle === option.id }]"
-            type="button"
-            @click="selectedStyle = option.id"
-          >
-            <strong>{{ option.label }}</strong>
-            <span>{{ option.description }}</span>
-          </button>
-        </div>
 
         <div class="choice-section">
           <h2>当前目标</h2>
@@ -2720,10 +3186,10 @@ onMounted(async () => {
           <section class="section-block">
             <div class="section-title">
               <h2>继续聊</h2>
-              <button type="button" @click="createThread()">新建</button>
+              <button type="button" :disabled="isCreatingThread" @click="createChatThread">新建</button>
             </div>
             <button
-              v-for="thread in threads"
+              v-for="thread in visibleThreads"
               :key="thread.thread_id"
               class="thread-card"
               type="button"
@@ -2735,20 +3201,17 @@ onMounted(async () => {
               </div>
               <span :class="['risk-pill', riskClass(thread.last_risk_level)]">{{ riskLabel(thread.last_risk_level) }}</span>
             </button>
-            <p v-if="threads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
+            <p v-if="visibleThreads.length === 0" class="empty-copy">还没有会话，先从一段倾诉开始。</p>
           </section>
         </section>
 
         <section v-else-if="activeTab === 'chat'" class="tab-page chat-page">
-          <div v-if="threads.length > 0" class="thread-tabs">
-            <button
-              v-for="thread in threads"
-              :key="thread.thread_id"
-              :class="{ active: activeThreadId === thread.thread_id }"
-              type="button"
-              @click="selectThread(thread.thread_id)"
-            >
-              {{ thread.title }}
+          <div class="chat-thread-toolbar" role="group" aria-label="会话操作">
+            <button class="thread-menu-button" type="button" @click="openThreadDrawer">
+              会话
+            </button>
+            <button class="thread-new-button" type="button" :disabled="isCreatingThread" @click="createChatThread">
+              {{ isCreatingThread ? "创建中..." : "新建" }}
             </button>
           </div>
 
@@ -2804,9 +3267,15 @@ onMounted(async () => {
               </div>
               <span v-if="message.streaming" class="typing-dot"></span>
             </article>
+            <div v-if="failedReplyStatus" class="retry-status-row" role="status">
+              <span>这次没有生成成功，可以重试。</span>
+              <button type="button" :disabled="isSending || !failedReplyStatus.retryable" @click="retryFailedReply">
+                重试
+              </button>
+            </div>
           </div>
 
-          <div class="quick-actions">
+          <div v-if="quickActions.length" class="quick-actions">
             <button v-for="action in quickActions" :key="action" type="button" :disabled="isSending" @click="submitMessage(action)">
               {{ action }}
             </button>
@@ -3337,22 +3806,83 @@ onMounted(async () => {
               <h2>陪伴设置</h2>
               <span>自动保存</span>
             </div>
-            <p>{{ selectedStyleLabel }} · {{ selectedGoalLabel }}</p>
+            <p>{{ companionSettingsSummary }}</p>
           </section>
 
-          <div class="choice-section compact">
-            <h2>风格</h2>
-            <button
-              v-for="option in styleOptions"
-              :key="option.id"
-              :class="['choice-row', { active: selectedStyle === option.id }]"
-              type="button"
-              @click="selectedStyle = option.id"
-            >
-              <strong>{{ option.label }}</strong>
-              <span>{{ option.description }}</span>
+          <section class="style-settings">
+            <button class="style-setting-card" type="button" @click="openCompanionStyleEditor">
+              <div>
+                <h2>自定义回复风格</h2>
+                <strong>{{ selectedStyleLabel }}</strong>
+                <p>{{ companionStylePreview }}</p>
+              </div>
+              <span>管理</span>
             </button>
-          </div>
+
+            <div v-if="isStyleEditorOpen" class="style-editor">
+              <div class="style-switcher" role="radiogroup" aria-label="回复风格切换">
+                <button
+                  :class="{ active: editingStyleId === DEFAULT_STYLE_ID }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(DEFAULT_STYLE_ID)"
+                >
+                  <strong>默认</strong>
+                  <span>未启用自定义</span>
+                </button>
+                <button
+                  v-for="style in customStyles"
+                  :key="style.id"
+                  :class="{ active: editingStyleId === style.id }"
+                  type="button"
+                  @click="selectCompanionStyleDraft(style.id)"
+                >
+                  <strong>{{ style.title }}</strong>
+                  <span>{{ previewCompanionStyle(style.definition, 28) }}</span>
+                </button>
+                <button
+                  :class="{ active: editingStyleId === NEW_STYLE_ID }"
+                  type="button"
+                  @click="startNewCompanionStyleDraft"
+                >
+                  <strong>新建</strong>
+                  <span>添加一套风格</span>
+                </button>
+              </div>
+              <template v-if="!isEditingDefaultStyle">
+                <label class="field">
+                  <span>标题</span>
+                  <input
+                    v-model="companionStyleTitleDraft"
+                    type="text"
+                    maxlength="24"
+                    placeholder="例如：先安抚再行动"
+                  />
+                </label>
+                <label class="field">
+                  <span>具体风格定义</span>
+                  <textarea
+                    v-model="companionStyleDraft"
+                    rows="5"
+                    maxlength="500"
+                    placeholder="例如：先短短安抚我，再给一个可执行的小步骤。"
+                  ></textarea>
+                </label>
+                <div class="style-editor-meta">
+                  <span>{{ companionStyleTitleDraft.trim().length }}/24</span>
+                  <span>{{ companionStyleDraft.trim().length }}/500</span>
+                </div>
+              </template>
+              <p v-if="companionStyleError" class="notice notice--error">{{ companionStyleError }}</p>
+              <div class="style-editor-actions">
+                <button class="secondary-action" type="button" :disabled="isSettingsSaving" @click="isStyleEditorOpen = false">
+                  取消
+                </button>
+                <button class="primary-action" type="button" :disabled="!canSaveCompanionStyle" @click="saveCompanionStyle">
+                  {{ isSettingsSaving ? "保存中..." : "保存" }}
+                </button>
+              </div>
+            </div>
+          </section>
 
           <section class="section-block memory-center">
             <div class="section-title">
@@ -3494,6 +4024,60 @@ onMounted(async () => {
           <button :class="{ active: activeTab === 'knowledge' }" type="button" @click="activeTab = 'knowledge'">知识</button>
           <button :class="{ active: activeTab === 'profile' }" type="button" @click="activeTab = 'profile'">我的</button>
         </nav>
+      </section>
+
+      <section
+        v-if="isThreadDrawerOpen"
+        class="thread-drawer-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="会话列表"
+        @click.self="closeThreadDrawer"
+      >
+        <aside class="thread-drawer">
+          <header class="thread-drawer__header">
+            <div>
+              <h2>会话</h2>
+              <span>{{ visibleThreads.length }} 个会话</span>
+            </div>
+            <button class="thread-drawer__close" type="button" @click="closeThreadDrawer">关闭</button>
+          </header>
+
+          <input
+            v-model="threadSearchQuery"
+            class="thread-search-input"
+            type="search"
+            placeholder="搜索会话"
+            aria-label="搜索会话"
+          />
+
+          <button class="thread-drawer__new" type="button" :disabled="isCreatingThread" @click="createChatThread">
+            {{ isCreatingThread ? "创建中..." : "新建会话" }}
+          </button>
+
+          <div class="thread-drawer__list">
+            <p v-if="visibleThreads.length === 0" class="thread-drawer__empty">还没有会话</p>
+            <p v-else-if="filteredThreads.length === 0" class="thread-drawer__empty">没有找到相关会话</p>
+            <button
+              v-for="thread in filteredThreads"
+              :key="thread.thread_id"
+              :class="['thread-drawer__item', { active: activeThreadId === thread.thread_id }]"
+              type="button"
+              @click="selectThreadFromDrawer(thread.thread_id)"
+            >
+              <span class="thread-drawer__item-main">
+                <strong>{{ thread.title }}</strong>
+                <span>{{ thread.last_summary || "还没有摘要，打开后继续。" }}</span>
+              </span>
+              <span class="thread-drawer__item-meta">
+                <small>{{ formatTime(thread.updated_at) }}</small>
+                <span :class="['risk-pill', riskClass(thread.last_risk_level)]">
+                  {{ riskLabel(thread.last_risk_level) }}
+                </span>
+              </span>
+            </button>
+          </div>
+        </aside>
       </section>
 
       <section v-if="isMemoryDocOpen" class="memory-document-viewer" role="dialog" aria-modal="true">
@@ -3783,6 +4367,7 @@ onMounted(async () => {
 }
 
 .field input,
+.field textarea,
 .composer input,
 .knowledge-composer input {
   min-height: 52px;
@@ -4189,6 +4774,154 @@ onMounted(async () => {
   font-weight: 900;
 }
 
+.thread-drawer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  display: flex;
+  align-items: stretch;
+  background: rgba(15, 20, 18, 0.42);
+}
+
+.thread-drawer {
+  width: min(90%, 360px);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px 14px;
+  background: #fbfdfb;
+  box-shadow: 18px 0 42px rgba(38, 57, 52, 0.2);
+  animation: threadDrawerIn 0.18s ease-out;
+}
+
+.thread-drawer__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.thread-drawer__header h2 {
+  margin: 0 0 4px;
+  color: var(--text-main);
+  font-size: 20px;
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-main span,
+.thread-drawer__item-meta small,
+.thread-drawer__empty {
+  color: var(--text-muted);
+}
+
+.thread-drawer__header span,
+.thread-drawer__item-meta small {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.thread-drawer__close {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--surface-muted);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.thread-search-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0 12px;
+  color: var(--text-main);
+}
+
+.field textarea {
+  min-height: 132px;
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.thread-drawer__new {
+  min-height: 44px;
+  border-radius: 14px;
+  background: var(--teal);
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.thread-drawer__list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.thread-drawer__item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  padding: 11px 10px;
+  text-align: left;
+}
+
+.thread-drawer__item.active {
+  border-color: rgba(15, 118, 110, 0.26);
+  background: var(--mint-soft);
+}
+
+.thread-drawer__item-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.thread-drawer__item-main strong,
+.thread-drawer__item-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-drawer__item-main strong {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.thread-drawer__item-main span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.thread-drawer__item-meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.thread-drawer__empty {
+  margin: 20px 4px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
 .risk--steady {
   background: #e8f4ee;
   color: #28745d;
@@ -4212,7 +4945,45 @@ onMounted(async () => {
 .chat-page {
   height: calc(100dvh - 268px);
   min-height: 440px;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+}
+
+.chat-thread-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.thread-menu-button,
+.thread-new-button {
+  min-height: 38px;
+  border-radius: 14px;
+  padding: 0 15px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.thread-menu-button {
+  flex: 1;
+  min-width: 0;
+  background: #ffffff;
+  color: var(--text-main);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.thread-new-button {
+  flex: 0 0 auto;
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.thread-new-button:disabled,
+.thread-drawer__new:disabled {
+  background: #c7d5cf;
+  color: #f8faf8;
+  cursor: not-allowed;
 }
 
 .quick-actions {
@@ -4322,6 +5093,37 @@ onMounted(async () => {
 .stream-status {
   background: #fff6ed;
   color: #9a4a25;
+}
+
+.retry-status-row {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8faf8;
+  color: var(--text-muted);
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.retry-status-row button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.retry-status-row button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .memory-reference {
@@ -5124,6 +5926,121 @@ onMounted(async () => {
   margin: 0 0 4px;
 }
 
+.style-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.style-setting-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 16px;
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-setting-card h2,
+.style-setting-card p {
+  margin: 0;
+}
+
+.style-setting-card div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.style-setting-card h2 {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.style-setting-card strong {
+  color: var(--teal-dark);
+  font-size: 14px;
+}
+
+.style-setting-card p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.style-setting-card > span {
+  color: var(--teal);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.style-editor {
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.style-switcher {
+  display: grid;
+  gap: 8px;
+}
+
+.style-switcher button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.style-switcher button.active {
+  border-color: var(--teal);
+  background: var(--mint-soft);
+}
+
+.style-switcher strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.style-switcher button.active strong {
+  color: var(--teal-dark);
+}
+
+.style-switcher span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.style-editor-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.style-editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .memory-center {
   padding-bottom: 4px;
 }
@@ -5467,9 +6384,21 @@ onMounted(async () => {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid rgba(15, 118, 110, 0.45);
   outline-offset: 2px;
+}
+
+@keyframes threadDrawerIn {
+  from {
+    transform: translateX(-16px);
+    opacity: 0.88;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 @keyframes blink {

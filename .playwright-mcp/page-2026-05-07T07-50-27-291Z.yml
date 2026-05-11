@@ -1,0 +1,89 @@
+- main [ref=e3]:
+  - generic [ref=e68]:
+    - generic [ref=e69]:
+      - generic [ref=e70]:
+        - generic [ref=e71]: 演示模式
+        - heading "晚上好，小林" [level=1] [ref=e72]
+      - button "SOS" [ref=e73] [cursor=pointer]
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - generic [ref=e78]: 今日状态
+            - heading "你现在感觉怎么样？" [level=2] [ref=e79]
+          - strong [ref=e80]: 3分
+        - generic [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e83]:
+              - text: 心情
+              - strong [ref=e84]: 一般
+            - slider "心情 一般" [ref=e85]: "3"
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - text: 焦虑
+              - strong [ref=e88]: 一般
+            - slider "焦虑 一般" [ref=e89]: "3"
+          - generic [ref=e90]:
+            - generic [ref=e91]:
+              - text: 精力
+              - strong [ref=e92]: 一般
+            - slider "精力 一般" [ref=e93]: "3"
+          - generic [ref=e94]:
+            - generic [ref=e95]:
+              - text: 睡眠
+              - strong [ref=e96]: 一般
+            - slider "睡眠 一般" [ref=e97]: "3"
+        - generic "情绪标签" [ref=e98]:
+          - button "焦虑" [ref=e99] [cursor=pointer]
+          - button "疲惫" [ref=e100] [cursor=pointer]
+          - button "难过" [ref=e101] [cursor=pointer]
+          - button "委屈" [ref=e102] [cursor=pointer]
+          - button "平静" [ref=e103] [cursor=pointer]
+          - button "睡眠" [ref=e104] [cursor=pointer]
+          - button "关系" [ref=e105] [cursor=pointer]
+          - button "学习" [ref=e106] [cursor=pointer]
+        - textbox "一句话记录今天的触发点或感受" [ref=e107]
+        - button "记录今日状态" [ref=e108] [cursor=pointer]
+      - button "现在开始 我有点难受，想倾诉 点一下进入对话，我会先听你说。" [ref=e109] [cursor=pointer]:
+        - generic [ref=e110]: 现在开始
+        - strong [ref=e111]: 我有点难受，想倾诉
+        - generic [ref=e112]: 点一下进入对话，我会先听你说。
+      - generic [ref=e113]:
+        - generic [ref=e114]:
+          - heading "状态趋势" [level=2] [ref=e115]
+          - group "趋势范围" [ref=e116]:
+            - button "7天" [ref=e117] [cursor=pointer]
+            - button "30天" [ref=e118] [cursor=pointer]
+        - paragraph [ref=e119]: 最近 7 天共记录 4 次情绪，平均情绪分为 3。 高频标签主要是：焦虑、睡眠、疲惫。
+        - generic "情绪趋势点" [ref=e120]:
+          - generic [ref=e123]: 5/1
+          - generic [ref=e126]: 5/3
+          - generic [ref=e129]: 5/5
+          - generic [ref=e132]: 5/6
+        - generic [ref=e133]:
+          - generic [ref=e134]: 焦虑
+          - generic [ref=e135]: 睡眠
+          - generic [ref=e136]: 疲惫
+          - generic [ref=e137]: 平静
+          - generic [ref=e138]: 关系
+        - button "查看本周情绪小结" [ref=e139] [cursor=pointer]
+      - generic [ref=e140]:
+        - generic [ref=e141]:
+          - heading "继续聊" [level=2] [ref=e142]
+          - button "新建" [ref=e143] [cursor=pointer]
+        - button "最近总是睡不好 你提到晚上脑子停不下来，第二天也恢复不过来。 平稳" [ref=e144] [cursor=pointer]:
+          - generic [ref=e145]:
+            - strong [ref=e146]: 最近总是睡不好
+            - paragraph [ref=e147]: 你提到晚上脑子停不下来，第二天也恢复不过来。
+          - generic [ref=e148]: 平稳
+        - button "开会前会很慌 你希望找到一个能在 3 分钟内稳定下来的方式。 多一点支持" [ref=e149] [cursor=pointer]:
+          - generic [ref=e150]:
+            - strong [ref=e151]: 开会前会很慌
+            - paragraph [ref=e152]: 你希望找到一个能在 3 分钟内稳定下来的方式。
+          - generic [ref=e153]: 多一点支持
+    - navigation "底部导航" [ref=e154]:
+      - button "首页" [ref=e155] [cursor=pointer]
+      - button "对话" [ref=e156] [cursor=pointer]
+      - button "测试" [ref=e157] [cursor=pointer]
+      - button "知识" [ref=e158] [cursor=pointer]
+      - button "我的" [ref=e159] [cursor=pointer]

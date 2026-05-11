@@ -1,0 +1,3811 @@
+{
+  "test_id": "mbti_sixteen_type_v2",
+  "code": "mbti_200",
+  "title": "MBTI 16型人格测试（200题自研版）",
+  "test_type": "personality",
+  "estimated_minutes": 25,
+  "audience": "all",
+  "status": "published",
+  "questions": [
+    {
+      "id": "mbti-q-000",
+      "index": 0,
+      "text": "周末晚上，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "约朋友出去吃饭聊天"
+        },
+        {
+          "id": "B",
+          "text": "在家看一部喜欢的电影或读书"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-001",
+      "index": 1,
+      "text": "参加一场大型社交活动后，你通常感到：",
+      "options": [
+        {
+          "id": "A",
+          "text": "精神振奋，还想继续"
+        },
+        {
+          "id": "B",
+          "text": "需要独处一段时间来恢复精力"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-002",
+      "index": 2,
+      "text": "当你在一个陌生的场合时，你通常会：",
+      "options": [
+        {
+          "id": "A",
+          "text": "主动找人搭话，认识新面孔"
+        },
+        {
+          "id": "B",
+          "text": "先观察环境，等有人来找你"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-003",
+      "index": 3,
+      "text": "连续独处三天后，你会：",
+      "options": [
+        {
+          "id": "A",
+          "text": "感到焦躁不安，迫切想与人交流"
+        },
+        {
+          "id": "B",
+          "text": "觉得时间过得很快，很享受"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-004",
+      "index": 4,
+      "text": "你的手机通讯录中联系人数量更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "几百人以上"
+        },
+        {
+          "id": "B",
+          "text": "几十人以内"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-005",
+      "index": 5,
+      "text": "遇到一个复杂的问题时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "找朋友讨论，在对话中理清思路"
+        },
+        {
+          "id": "B",
+          "text": "自己安静思考，想清楚再说"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-006",
+      "index": 6,
+      "text": "在会议或课堂中，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "积极举手发言或参与讨论"
+        },
+        {
+          "id": "B",
+          "text": "认真倾听，在脑中整理自己的想法"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-007",
+      "index": 7,
+      "text": "你更享受哪种沟通方式？",
+      "options": [
+        {
+          "id": "A",
+          "text": "面对面或电话交流"
+        },
+        {
+          "id": "B",
+          "text": "文字消息或邮件"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-008",
+      "index": 8,
+      "text": "在表达一个观点时，你通常：",
+      "options": [
+        {
+          "id": "A",
+          "text": "边说边组织语言，说到一半可能改变想法"
+        },
+        {
+          "id": "B",
+          "text": "在脑中完整构思好再开口"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-009",
+      "index": 9,
+      "text": "当你需要做一个重要决定时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "征求多人的意见后再决定"
+        },
+        {
+          "id": "B",
+          "text": "自己安静权衡后做出决定"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-010",
+      "index": 10,
+      "text": "理想的朋友聚会方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "热闹的大型派对，认识各种人"
+        },
+        {
+          "id": "B",
+          "text": "三五个好友的深度聚餐"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-011",
+      "index": 11,
+      "text": "在旅行中，你更享受：",
+      "options": [
+        {
+          "id": "A",
+          "text": "结伴同行，与旅伴分享每一刻"
+        },
+        {
+          "id": "B",
+          "text": "独自旅行或与极少数人安静相处"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-012",
+      "index": 12,
+      "text": "关于你的朋友圈，以下哪个更接近？",
+      "options": [
+        {
+          "id": "A",
+          "text": "认识很多人，经常有各种社交邀请"
+        },
+        {
+          "id": "B",
+          "text": "朋友不多但每个都很亲密"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-013",
+      "index": 13,
+      "text": "在团队项目中，你更倾向于扮演：",
+      "options": [
+        {
+          "id": "A",
+          "text": "协调者或发言人"
+        },
+        {
+          "id": "B",
+          "text": "独立贡献者或幕后分析者"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-014",
+      "index": 14,
+      "text": "午餐时间你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "和同事或同学一起吃饭聊天"
+        },
+        {
+          "id": "B",
+          "text": "一个人安静地吃饭，顺便放松"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-015",
+      "index": 15,
+      "text": "理想的工作环境是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "开放式办公，随时可以和同事交流"
+        },
+        {
+          "id": "B",
+          "text": "独立的安静空间，减少打扰"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-016",
+      "index": 16,
+      "text": "在团队合作中，你更享受：",
+      "options": [
+        {
+          "id": "A",
+          "text": "频繁的头脑风暴和讨论环节"
+        },
+        {
+          "id": "B",
+          "text": "各自独立完成分配的任务后汇总"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-017",
+      "index": 17,
+      "text": "当你接到一个新任务时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "立刻找人讨论方案"
+        },
+        {
+          "id": "B",
+          "text": "先自己研究清楚再汇报"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-018",
+      "index": 18,
+      "text": "你认为工作效率更高的情况是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "与他人协作，互相激发灵感"
+        },
+        {
+          "id": "B",
+          "text": "独自专注，不被打扰"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-019",
+      "index": 19,
+      "text": "对于远程办公，你的感受是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "缺少人际互动，不太适应"
+        },
+        {
+          "id": "B",
+          "text": "正好适合我，效率更高"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-020",
+      "index": 20,
+      "text": "经历了一段高压工作后，你更可能通过什么来恢复？",
+      "options": [
+        {
+          "id": "A",
+          "text": "和朋友出去庆祝或聚会"
+        },
+        {
+          "id": "B",
+          "text": "独处休息，做自己喜欢的事"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-021",
+      "index": 21,
+      "text": "当你感到情绪低落时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "找朋友倾诉，说出来就好了"
+        },
+        {
+          "id": "B",
+          "text": "自己消化，写日记或安静思考"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-022",
+      "index": 22,
+      "text": "长假过后回到工作岗位，你的状态是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "迫不及待想和同事分享假期经历"
+        },
+        {
+          "id": "B",
+          "text": "需要一点时间重新适应社交节奏"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-023",
+      "index": 23,
+      "text": "关于\"安静的时间\"，你认为它对你来说：",
+      "options": [
+        {
+          "id": "A",
+          "text": "偶尔需要，但不宜太久"
+        },
+        {
+          "id": "B",
+          "text": "每天都必不可少"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-024",
+      "index": 24,
+      "text": "在社交场合中，你通常的角色是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "带动气氛的人"
+        },
+        {
+          "id": "B",
+          "text": "安静观察的人"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-025",
+      "index": 25,
+      "text": "你对\"闲聊\"（small talk）的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "很自然，是建立关系的起点"
+        },
+        {
+          "id": "B",
+          "text": "觉得有些无聊，更想跳到有深度的对话"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-026",
+      "index": 26,
+      "text": "当你认识一个新朋友时，你通常：",
+      "options": [
+        {
+          "id": "A",
+          "text": "很快就能聊得火热，分享很多"
+        },
+        {
+          "id": "B",
+          "text": "需要较长时间才会真正敞开心扉"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-027",
+      "index": 27,
+      "text": "在社交网络上，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "频繁分享生活动态，积极互动"
+        },
+        {
+          "id": "B",
+          "text": "偶尔浏览，很少主动发布"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-028",
+      "index": 28,
+      "text": "对于参加一个没有熟人的活动，你的反应是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "很兴奋，又是一个认识新朋友的机会"
+        },
+        {
+          "id": "B",
+          "text": "有些犹豫，可能会找借口不去"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-029",
+      "index": 29,
+      "text": "你更享受的周末是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "排满了各种社交活动"
+        },
+        {
+          "id": "B",
+          "text": "大部分时间留给自己"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-030",
+      "index": 30,
+      "text": "在人群中，你的注意力更容易被什么吸引？",
+      "options": [
+        {
+          "id": "A",
+          "text": "人与人之间的互动和对话"
+        },
+        {
+          "id": "B",
+          "text": "自己内心的想法和感受"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-031",
+      "index": 31,
+      "text": "当你阅读一本引人入胜的书时，如果朋友约你出去，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "放下书，社交机会不能错过"
+        },
+        {
+          "id": "B",
+          "text": "婉拒，沉浸在书中更重要"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-032",
+      "index": 32,
+      "text": "你认为\"独处\"这个词对你来说：",
+      "options": [
+        {
+          "id": "A",
+          "text": "偶尔需要，但长期独处让我不安"
+        },
+        {
+          "id": "B",
+          "text": "是一种珍贵的充电方式"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-033",
+      "index": 33,
+      "text": "在小组讨论中，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "不断发言，推动讨论前进"
+        },
+        {
+          "id": "B",
+          "text": "等想好了再发言，每次发言都很有分量"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-034",
+      "index": 34,
+      "text": "你更容易在什么情况下感到疲惫？",
+      "options": [
+        {
+          "id": "A",
+          "text": "长时间独处没有社交"
+        },
+        {
+          "id": "B",
+          "text": "连续不断的社交活动"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-035",
+      "index": 35,
+      "text": "搬到一个新城市后，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "很快融入当地社区，认识很多邻居"
+        },
+        {
+          "id": "B",
+          "text": "慢慢来，先安顿好自己的生活"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-036",
+      "index": 36,
+      "text": "对于公司团建活动，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "很期待，是认识同事的好机会"
+        },
+        {
+          "id": "B",
+          "text": "有些抗拒，占用私人时间"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-037",
+      "index": 37,
+      "text": "在电梯里遇到不太熟的同事，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "主动开启话题聊天"
+        },
+        {
+          "id": "B",
+          "text": "礼貌点头后保持沉默"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-038",
+      "index": 38,
+      "text": "你更喜欢哪种学习方式？",
+      "options": [
+        {
+          "id": "A",
+          "text": "小组讨论、互动式课堂"
+        },
+        {
+          "id": "B",
+          "text": "独立阅读、在线自学"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-039",
+      "index": 39,
+      "text": "当你有一个好消息要分享时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "立刻告诉身边所有人"
+        },
+        {
+          "id": "B",
+          "text": "先自己品味一下，再告诉最亲近的人"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-040",
+      "index": 40,
+      "text": "以下哪种情况更让你感到舒适？",
+      "options": [
+        {
+          "id": "A",
+          "text": "房间里充满了人们的笑声和交谈声"
+        },
+        {
+          "id": "B",
+          "text": "房间里只有你一个人，安静而平和"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-041",
+      "index": 41,
+      "text": "如果可以选择，你更愿意从事哪种工作？",
+      "options": [
+        {
+          "id": "A",
+          "text": "需要频繁与客户或公众打交道的工作"
+        },
+        {
+          "id": "B",
+          "text": "可以独立完成、社交需求较低的工作"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-042",
+      "index": 42,
+      "text": "在一场聚会中，你更可能在哪里？",
+      "options": [
+        {
+          "id": "A",
+          "text": "在人群中央，和不同的人聊天"
+        },
+        {
+          "id": "B",
+          "text": "在角落或阳台，和一两个人深入交谈"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-043",
+      "index": 43,
+      "text": "你如何看待\"社交恐惧\"这个词？",
+      "options": [
+        {
+          "id": "A",
+          "text": "很难理解，社交是自然而愉快的事"
+        },
+        {
+          "id": "B",
+          "text": "多少能理解，有时社交确实让人紧张"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-044",
+      "index": 44,
+      "text": "你更享受的娱乐方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "去现场看演出、参加音乐节或体育赛事"
+        },
+        {
+          "id": "B",
+          "text": "在家沉浸于游戏、电影或创作"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-045",
+      "index": 45,
+      "text": "当你需要解决一个人际矛盾时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "直接找对方当面谈清楚"
+        },
+        {
+          "id": "B",
+          "text": "先自己想清楚该怎么沟通，再找机会谈"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-046",
+      "index": 46,
+      "text": "你认为以下哪个词更接近你的性格？",
+      "options": [
+        {
+          "id": "A",
+          "text": "热情洋溢"
+        },
+        {
+          "id": "B",
+          "text": "沉稳内敛"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-047",
+      "index": 47,
+      "text": "在日常生活中，你更常被别人评价为：",
+      "options": [
+        {
+          "id": "A",
+          "text": "开朗健谈"
+        },
+        {
+          "id": "B",
+          "text": "安静深沉"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-048",
+      "index": 48,
+      "text": "你更享受的购物方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "和朋友一起去商场，边逛边聊"
+        },
+        {
+          "id": "B",
+          "text": "自己一个人在网上或实体店安静挑选"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-049",
+      "index": 49,
+      "text": "对于\"认识新朋友\"这件事，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "越多越好，人生就是不断遇见"
+        },
+        {
+          "id": "B",
+          "text": "质量重于数量，深交几个就够了"
+        }
+      ],
+      "metadata": {
+        "dimension": "EI",
+        "category": "能量来源与方向"
+      }
+    },
+    {
+      "id": "mbti-q-050",
+      "index": 50,
+      "text": "阅读一篇新闻报道时，你更关注：",
+      "options": [
+        {
+          "id": "A",
+          "text": "具体的事实、数据和事件经过"
+        },
+        {
+          "id": "B",
+          "text": "背后的原因、趋势和深层含义"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-051",
+      "index": 51,
+      "text": "当你学习一个新概念时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "先看具体案例和实际应用"
+        },
+        {
+          "id": "B",
+          "text": "先理解抽象原理和理论框架"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-052",
+      "index": 52,
+      "text": "在描述一次旅行经历时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按时间顺序讲述每天去了哪里、吃了什么"
+        },
+        {
+          "id": "B",
+          "text": "分享旅行中获得的灵感和感悟"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-053",
+      "index": 53,
+      "text": "面对一个新产品，你首先想了解的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "它的具体功能、参数和使用方法"
+        },
+        {
+          "id": "B",
+          "text": "它的设计理念和未来潜力"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-054",
+      "index": 54,
+      "text": "你更信任哪种知识？",
+      "options": [
+        {
+          "id": "A",
+          "text": "经过验证的经验和可观测的事实"
+        },
+        {
+          "id": "B",
+          "text": "理论模型和逻辑推理"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-055",
+      "index": 55,
+      "text": "在工作中，你更容易注意到：",
+      "options": [
+        {
+          "id": "A",
+          "text": "当前需要处理的细节和具体任务"
+        },
+        {
+          "id": "B",
+          "text": "项目的长远方向和战略意义"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-056",
+      "index": 56,
+      "text": "当你观察一幅画时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "欣赏它的色彩、笔触和构图细节"
+        },
+        {
+          "id": "B",
+          "text": "感受它传达的情感和象征意义"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-057",
+      "index": 57,
+      "text": "在做计划时，你更关注：",
+      "options": [
+        {
+          "id": "A",
+          "text": "具体的步骤和可执行的行动方案"
+        },
+        {
+          "id": "B",
+          "text": "整体愿景和最终要达成的目标"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-058",
+      "index": 58,
+      "text": "你更享受的阅读内容是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "实用指南、操作手册或纪实作品"
+        },
+        {
+          "id": "B",
+          "text": "哲学著作、科幻小说或理论文章"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-059",
+      "index": 59,
+      "text": "在与人交谈时，你更容易被什么吸引？",
+      "options": [
+        {
+          "id": "A",
+          "text": "对方描述的具体经历和真实故事"
+        },
+        {
+          "id": "B",
+          "text": "对方提出的独特观点和抽象想法"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-060",
+      "index": 60,
+      "text": "面对一个从未遇到过的问题，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "参考过去的经验和已知的方法"
+        },
+        {
+          "id": "B",
+          "text": "从第一性原理出发，寻找全新的解决方案"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-061",
+      "index": 61,
+      "text": "在讨论一个议题时，你更可能提出的问题是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "\"具体怎么做？有哪些实际步骤？\""
+        },
+        {
+          "id": "B",
+          "text": "\"为什么是这样？有没有其他可能性？\""
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-062",
+      "index": 62,
+      "text": "你更欣赏哪种类型的人？",
+      "options": [
+        {
+          "id": "A",
+          "text": "脚踏实地、经验丰富、做事靠谱的人"
+        },
+        {
+          "id": "B",
+          "text": "富有远见、总有新想法、敢于创新的人"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-063",
+      "index": 63,
+      "text": "在工作中遇到困难时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "寻找已有的最佳实践来参考"
+        },
+        {
+          "id": "B",
+          "text": "跳出框架，尝试一种全新的方法"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-064",
+      "index": 64,
+      "text": "你更喜欢哪种类型的电影？",
+      "options": [
+        {
+          "id": "A",
+          "text": "基于真实事件改编的传记或纪录片"
+        },
+        {
+          "id": "B",
+          "text": "充满想象力的科幻或奇幻片"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-065",
+      "index": 65,
+      "text": "对于新技术或新工具，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "等它成熟稳定、被广泛验证后再使用"
+        },
+        {
+          "id": "B",
+          "text": "迫不及待想尝试，越新越好"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-066",
+      "index": 66,
+      "text": "在工作中，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "遵循已经证明有效的流程和方法"
+        },
+        {
+          "id": "B",
+          "text": "不断探索和改进现有的做事方式"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-067",
+      "index": 67,
+      "text": "关于\"规则\"，你更认同：",
+      "options": [
+        {
+          "id": "A",
+          "text": "规则存在是有道理的，应该遵守"
+        },
+        {
+          "id": "B",
+          "text": "规则是参考，必要时可以灵活变通或打破"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-068",
+      "index": 68,
+      "text": "你更享受的烹饪方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "严格按照菜谱，精确称量每样食材"
+        },
+        {
+          "id": "B",
+          "text": "凭感觉和灵感自由发挥，经常即兴创作"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-069",
+      "index": 69,
+      "text": "对于你所在行业的发展，你更关注：",
+      "options": [
+        {
+          "id": "A",
+          "text": "当前的行业数据和实际案例"
+        },
+        {
+          "id": "B",
+          "text": "未来的趋势预测和颠覆性变化"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-070",
+      "index": 70,
+      "text": "在写作或表达时，你的风格更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "简洁明了，用具体的事实和数据说话"
+        },
+        {
+          "id": "B",
+          "text": "善用比喻和类比，喜欢探讨深层含义"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-071",
+      "index": 71,
+      "text": "别人向你请教问题时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "给出具体的操作步骤和实用建议"
+        },
+        {
+          "id": "B",
+          "text": "帮助对方理解问题的本质和底层逻辑"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-072",
+      "index": 72,
+      "text": "你更喜欢的教学方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "通过大量实例和动手练习来学习"
+        },
+        {
+          "id": "B",
+          "text": "通过理解核心概念和原理来举一反三"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-073",
+      "index": 73,
+      "text": "在汇报工作时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "用数据和事实展示具体成果"
+        },
+        {
+          "id": "B",
+          "text": "用故事和愿景描绘未来方向"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-074",
+      "index": 74,
+      "text": "你更享受的对话主题是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "分享最近的经历、美食或旅行见闻"
+        },
+        {
+          "id": "B",
+          "text": "探讨人生哲学、社会趋势或未来设想"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-075",
+      "index": 75,
+      "text": "你更常思考的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "过去发生了什么，从经验中学到了什么"
+        },
+        {
+          "id": "B",
+          "text": "未来可能发生什么，有哪些新的可能性"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-076",
+      "index": 76,
+      "text": "在做职业规划时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "目前岗位的实际待遇和发展路径"
+        },
+        {
+          "id": "B",
+          "text": "行业未来的前景和个人成长空间"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-077",
+      "index": 77,
+      "text": "你更享受的回忆方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "翻看照片和视频，回忆具体的细节"
+        },
+        {
+          "id": "B",
+          "text": "闭上眼睛，回味当时的感受和氛围"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-078",
+      "index": 78,
+      "text": "对于历史，你更感兴趣的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "具体的历史事件、人物和年代"
+        },
+        {
+          "id": "B",
+          "text": "历史发展的规律和对当下的启示"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-079",
+      "index": 79,
+      "text": "你更认同的观点是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "了解过去才能更好地应对现在"
+        },
+        {
+          "id": "B",
+          "text": "想象未来才能更好地塑造现在"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-080",
+      "index": 80,
+      "text": "在审阅一份文件时，你更容易发现：",
+      "options": [
+        {
+          "id": "A",
+          "text": "数据错误、拼写问题和格式不一致"
+        },
+        {
+          "id": "B",
+          "text": "逻辑漏洞、论证不充分或方向偏差"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-081",
+      "index": 81,
+      "text": "你更擅长的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "记住具体的事实、日期和人名"
+        },
+        {
+          "id": "B",
+          "text": "记住事物的整体印象和关联模式"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-082",
+      "index": 82,
+      "text": "在装修房子时，你更关注：",
+      "options": [
+        {
+          "id": "A",
+          "text": "材料质量、施工细节和实用功能"
+        },
+        {
+          "id": "B",
+          "text": "整体风格、空间感和设计理念"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-083",
+      "index": 83,
+      "text": "你更享受的爱好是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "需要动手操作、有具体成果的活动（如手工、烹饪）"
+        },
+        {
+          "id": "B",
+          "text": "需要思考和想象的开放性活动（如写作、构思）"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-084",
+      "index": 84,
+      "text": "在制定项目预算时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "基于历史数据和实际需求逐项估算"
+        },
+        {
+          "id": "B",
+          "text": "基于对项目规模和发展方向的直觉判断"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-085",
+      "index": 85,
+      "text": "当你看到一棵树时，你更可能想到的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "它的品种、树龄、叶子形状等具体特征"
+        },
+        {
+          "id": "B",
+          "text": "它象征的生命力或它在生态系统中的角色"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-086",
+      "index": 86,
+      "text": "你更喜欢的谜题类型是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "需要仔细观察和逻辑推理的数独或拼图"
+        },
+        {
+          "id": "B",
+          "text": "需要发散思维和创造力的开放式问题"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-087",
+      "index": 87,
+      "text": "对于\"成功\"的定义，你更认同：",
+      "options": [
+        {
+          "id": "A",
+          "text": "达成具体可衡量的目标和成果"
+        },
+        {
+          "id": "B",
+          "text": "实现自己的愿景和对世界产生独特影响"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-088",
+      "index": 88,
+      "text": "你更享受的购物体验是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "仔细比较产品参数和用户评价后理性购买"
+        },
+        {
+          "id": "B",
+          "text": "被某个产品的设计理念或品牌故事打动而购买"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-089",
+      "index": 89,
+      "text": "在听别人讲述一件事时，你更常问的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "\"然后呢？接下来发生了什么？\""
+        },
+        {
+          "id": "B",
+          "text": "\"你当时是什么感受？为什么会这样？\""
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-090",
+      "index": 90,
+      "text": "你更喜欢的书籍类型是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "教你具体技能或方法论的实用类书籍"
+        },
+        {
+          "id": "B",
+          "text": "拓展思维边界或探讨深层问题的思想类书籍"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-091",
+      "index": 91,
+      "text": "在选择餐厅时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "菜品口味、价格和卫生状况等实际因素"
+        },
+        {
+          "id": "B",
+          "text": "餐厅的氛围、创意和独特体验"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-092",
+      "index": 92,
+      "text": "你更享受的运动方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有明确规则和计分系统的竞技运动"
+        },
+        {
+          "id": "B",
+          "text": "自由随性的户外探索或极限运动"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-093",
+      "index": 93,
+      "text": "在评价一个项目是否成功时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "是否按时按质完成了预定目标"
+        },
+        {
+          "id": "B",
+          "text": "是否产生了超出预期的创新成果"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-094",
+      "index": 94,
+      "text": "你更倾向于用哪种方式理解世界？",
+      "options": [
+        {
+          "id": "A",
+          "text": "通过亲身观察、体验和积累具体经验"
+        },
+        {
+          "id": "B",
+          "text": "通过阅读、思考和构建理论框架"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-095",
+      "index": 95,
+      "text": "以下哪个描述更接近你？",
+      "options": [
+        {
+          "id": "A",
+          "text": "我更相信亲眼看到的东西"
+        },
+        {
+          "id": "B",
+          "text": "我更相信直觉告诉我的东西"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-096",
+      "index": 96,
+      "text": "你更享受的工作状态是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "把一件具体的事情做到极致"
+        },
+        {
+          "id": "B",
+          "text": "不断探索新的领域和可能性"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-097",
+      "index": 97,
+      "text": "对于\"常识\"这个词，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "常识是可靠的指南，值得信赖"
+        },
+        {
+          "id": "B",
+          "text": "常识有时会限制思维，需要质疑"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-098",
+      "index": 98,
+      "text": "你更喜欢的礼物是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "实用性强、你确实需要的东西"
+        },
+        {
+          "id": "B",
+          "text": "独特有创意、能带来灵感的东西"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-099",
+      "index": 99,
+      "text": "在日常生活中，你更常被什么困扰？",
+      "options": [
+        {
+          "id": "A",
+          "text": "想法太多不切实际，需要更多落地执行"
+        },
+        {
+          "id": "B",
+          "text": "过于关注细节，需要抬头看大局"
+        }
+      ],
+      "metadata": {
+        "dimension": "SN",
+        "category": "信息获取与加工"
+      }
+    },
+    {
+      "id": "mbti-q-100",
+      "index": 100,
+      "text": "在做一个重要决定时，你更依赖：",
+      "options": [
+        {
+          "id": "A",
+          "text": "逻辑分析和客观数据"
+        },
+        {
+          "id": "B",
+          "text": "内心感受和对他人的影响"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-101",
+      "index": 101,
+      "text": "当团队成员对方案有分歧时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "选择逻辑上最优的方案"
+        },
+        {
+          "id": "B",
+          "text": "选择大多数人能接受的方案"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-102",
+      "index": 102,
+      "text": "在招聘时，你更看重候选人的：",
+      "options": [
+        {
+          "id": "A",
+          "text": "专业能力和过往业绩"
+        },
+        {
+          "id": "B",
+          "text": "团队契合度和人际交往能力"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-103",
+      "index": 103,
+      "text": "面对一个需要裁员的决定，你会更纠结于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "如何确保留下最优秀的人才"
+        },
+        {
+          "id": "B",
+          "text": "如何尽量减少对被裁员工的影响"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-104",
+      "index": 104,
+      "text": "你更认同哪种管理风格？",
+      "options": [
+        {
+          "id": "A",
+          "text": "目标导向，以结果论英雄"
+        },
+        {
+          "id": "B",
+          "text": "以人为本，关注团队成员的成长和感受"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-105",
+      "index": 105,
+      "text": "当朋友向你倾诉烦恼时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "帮对方分析问题，提供解决方案"
+        },
+        {
+          "id": "B",
+          "text": "先表示理解和共情，让对方感到被支持"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-106",
+      "index": 106,
+      "text": "在一场争论中，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "坚持自己的观点直到逻辑上说服对方"
+        },
+        {
+          "id": "B",
+          "text": "如果发现争论伤害了关系，主动退让"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-107",
+      "index": 107,
+      "text": "当同事犯了一个明显的错误时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "直接指出错误，讨论如何修正"
+        },
+        {
+          "id": "B",
+          "text": "私下委婉地提醒，照顾对方的面子"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-108",
+      "index": 108,
+      "text": "在团队中发生意见冲突时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "就事论事，聚焦问题本身"
+        },
+        {
+          "id": "B",
+          "text": "先缓和气氛，确保每个人都感到被尊重"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-109",
+      "index": 109,
+      "text": "当你需要给出负面反馈时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "直截了当，清晰说明问题和改进方向"
+        },
+        {
+          "id": "B",
+          "text": "先肯定对方的优点，再委婉地提出建议"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-110",
+      "index": 110,
+      "text": "你认为\"公平\"更意味着：",
+      "options": [
+        {
+          "id": "A",
+          "text": "一视同仁，所有人适用同样的标准"
+        },
+        {
+          "id": "B",
+          "text": "因人而异，考虑每个人的具体情况"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-111",
+      "index": 111,
+      "text": "在评价一个项目是否成功时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "效率和投资回报率等客观指标"
+        },
+        {
+          "id": "B",
+          "text": "团队满意度和客户体验等主观感受"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-112",
+      "index": 112,
+      "text": "你更欣赏哪种品质？",
+      "options": [
+        {
+          "id": "A",
+          "text": "果断、理性、有判断力"
+        },
+        {
+          "id": "B",
+          "text": "善良、体贴、有同理心"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-113",
+      "index": 113,
+      "text": "以下哪个词更接近你？",
+      "options": [
+        {
+          "id": "A",
+          "text": "公正"
+        },
+        {
+          "id": "B",
+          "text": "仁慈"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-114",
+      "index": 114,
+      "text": "你认为一个好的领导者最重要的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "做出正确的战略决策"
+        },
+        {
+          "id": "B",
+          "text": "关心和激励每一个团队成员"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-115",
+      "index": 115,
+      "text": "在讨论一个有争议的话题时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "用事实和逻辑来支持自己的论点"
+        },
+        {
+          "id": "B",
+          "text": "用个人经历和情感来传达自己的立场"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-116",
+      "index": 116,
+      "text": "当你不同意某人的观点时，你更可能说：",
+      "options": [
+        {
+          "id": "A",
+          "text": "\"这个论据有问题，因为……\""
+        },
+        {
+          "id": "B",
+          "text": "\"我理解你的想法，但我从另一个角度看……\""
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-117",
+      "index": 117,
+      "text": "在写一封拒绝信时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "清晰简洁地说明拒绝的理由"
+        },
+        {
+          "id": "B",
+          "text": "用温和的措辞表达，尽量不伤害对方的感受"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-118",
+      "index": 118,
+      "text": "你更享受的讨论类型是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有逻辑的辩论，追求真理"
+        },
+        {
+          "id": "B",
+          "text": "有温度的交流，增进理解"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-119",
+      "index": 119,
+      "text": "在社交媒体上看到不公正的事情，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "分析事件的来龙去脉，理性评论"
+        },
+        {
+          "id": "B",
+          "text": "表达愤怒和同情，声援受害者"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-120",
+      "index": 120,
+      "text": "在做购买决定时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "性价比、质量和功能参数"
+        },
+        {
+          "id": "B",
+          "text": "品牌价值观、设计感和情感连接"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-121",
+      "index": 121,
+      "text": "你更认同的人生信条是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "真理至上，即使它让人不舒服"
+        },
+        {
+          "id": "B",
+          "text": "和谐至上，人际关系比争论对错更重要"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-122",
+      "index": 122,
+      "text": "在分配有限资源时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按贡献和效率来分配"
+        },
+        {
+          "id": "B",
+          "text": "按需要和公平来分配"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-123",
+      "index": 123,
+      "text": "你更看重工作中的：",
+      "options": [
+        {
+          "id": "A",
+          "text": "成就感和专业认可"
+        },
+        {
+          "id": "B",
+          "text": "归属感和团队氛围"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-124",
+      "index": 124,
+      "text": "以下哪种情况更让你感到满足？",
+      "options": [
+        {
+          "id": "A",
+          "text": "用逻辑解决了一个复杂的问题"
+        },
+        {
+          "id": "B",
+          "text": "帮助了别人并看到对方开心的笑容"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-125",
+      "index": 125,
+      "text": "当有人对你表达感谢时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "简短回应，觉得这只是一件该做的事"
+        },
+        {
+          "id": "B",
+          "text": "感到温暖，觉得自己的付出被看到了"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-126",
+      "index": 126,
+      "text": "在看电影时，你更容易被什么打动？",
+      "options": [
+        {
+          "id": "A",
+          "text": "精彩的剧情设计和严密的逻辑"
+        },
+        {
+          "id": "B",
+          "text": "角色之间真挚的情感和牺牲"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-127",
+      "index": 127,
+      "text": "当你被批评时，你更可能的第一反应是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "分析批评内容是否客观正确"
+        },
+        {
+          "id": "B",
+          "text": "先感到受伤或沮丧，然后才去思考"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-128",
+      "index": 128,
+      "text": "你更享受的赞美方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "肯定你的能力和成就"
+        },
+        {
+          "id": "B",
+          "text": "肯定你的品格和为人"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-129",
+      "index": 129,
+      "text": "在表达关心时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "用实际行动帮对方解决问题"
+        },
+        {
+          "id": "B",
+          "text": "用言语和陪伴让对方感到温暖"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-130",
+      "index": 130,
+      "text": "当你发现一个朋友违反了规则但情有可原时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "坚持规则，违规就是违规"
+        },
+        {
+          "id": "B",
+          "text": "理解对方的处境，灵活处理"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-131",
+      "index": 131,
+      "text": "在打分或评估时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "严格按照标准，不受个人关系影响"
+        },
+        {
+          "id": "B",
+          "text": "考虑个人情况，适当调整"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-132",
+      "index": 132,
+      "text": "你认为法律和制度最重要的作用是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "维护秩序和公平"
+        },
+        {
+          "id": "B",
+          "text": "保护弱者和促进和谐"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-133",
+      "index": 133,
+      "text": "当规则与个人情感发生冲突时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "遵循规则，认为规则面前人人平等"
+        },
+        {
+          "id": "B",
+          "text": "考虑具体情况，认为人比规则重要"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-134",
+      "index": 134,
+      "text": "你更认同哪种说法？",
+      "options": [
+        {
+          "id": "A",
+          "text": "\"对事不对人\""
+        },
+        {
+          "id": "B",
+          "text": "\"先处理情绪，再处理事情\""
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-135",
+      "index": 135,
+      "text": "你更希望别人怎么评价你？",
+      "options": [
+        {
+          "id": "A",
+          "text": "聪明、理性、有判断力"
+        },
+        {
+          "id": "B",
+          "text": "善良、温暖、善解人意"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-136",
+      "index": 136,
+      "text": "你认为自己更接近哪种人？",
+      "options": [
+        {
+          "id": "A",
+          "text": "用头脑生活的人"
+        },
+        {
+          "id": "B",
+          "text": "用心生活的人"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-137",
+      "index": 137,
+      "text": "在做选择时，你更常感到的纠结是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "理性告诉我一个答案，但直觉告诉另一个"
+        },
+        {
+          "id": "B",
+          "text": "我想为自己做选择，但不想让别人失望"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-138",
+      "index": 138,
+      "text": "你更享受的角色是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "公正的裁判者"
+        },
+        {
+          "id": "B",
+          "text": "温暖的调解者"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-139",
+      "index": 139,
+      "text": "以下哪种批评更让你难以接受？",
+      "options": [
+        {
+          "id": "A",
+          "text": "\"你的逻辑有问题\""
+        },
+        {
+          "id": "B",
+          "text": "\"你太冷漠了，不考虑别人的感受\""
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-140",
+      "index": 140,
+      "text": "在选择伴侣时，你更看重：",
+      "options": [
+        {
+          "id": "A",
+          "text": "智力上的匹配和思想的深度"
+        },
+        {
+          "id": "B",
+          "text": "情感上的连接和价值观的契合"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-141",
+      "index": 141,
+      "text": "当朋友之间发生矛盾来找你评理时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "客观分析谁对谁错"
+        },
+        {
+          "id": "B",
+          "text": "分别倾听双方，帮助修复关系"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-142",
+      "index": 142,
+      "text": "你认为友谊的基础更应该是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "相互尊重和能力互补"
+        },
+        {
+          "id": "B",
+          "text": "相互关心和情感支持"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-143",
+      "index": 143,
+      "text": "在帮助别人时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提供实质性的帮助和建议"
+        },
+        {
+          "id": "B",
+          "text": "提供情感上的支持和陪伴"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-144",
+      "index": 144,
+      "text": "你更享受的社交氛围是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有深度的智力讨论"
+        },
+        {
+          "id": "B",
+          "text": "有温度的情感交流"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-145",
+      "index": 145,
+      "text": "在紧急情况下做决定，你更依赖：",
+      "options": [
+        {
+          "id": "A",
+          "text": "快速分析利弊，选择最优方案"
+        },
+        {
+          "id": "B",
+          "text": "考虑所有人的安全和感受，选择最稳妥的方案"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-146",
+      "index": 146,
+      "text": "对于\"善意的谎言\"，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "不赞成，真相永远比谎言好"
+        },
+        {
+          "id": "B",
+          "text": "在某些情况下可以理解，避免不必要的伤害"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-147",
+      "index": 147,
+      "text": "你更认同哪种领导力？",
+      "options": [
+        {
+          "id": "A",
+          "text": "以身作则，用专业能力赢得尊重"
+        },
+        {
+          "id": "B",
+          "text": "以心换心，用真诚关怀赢得信任"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-148",
+      "index": 148,
+      "text": "当你看到一个不公平的现象时，你的第一反应更可能是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "分析原因，思考如何从制度上解决"
+        },
+        {
+          "id": "B",
+          "text": "感到愤怒或同情，想要帮助受影响的人"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-149",
+      "index": 149,
+      "text": "你认为以下哪个更重要？",
+      "options": [
+        {
+          "id": "A",
+          "text": "追求真理和进步"
+        },
+        {
+          "id": "B",
+          "text": "维护和谐与幸福"
+        }
+      ],
+      "metadata": {
+        "dimension": "TF",
+        "category": "决策判断的方式"
+      }
+    },
+    {
+      "id": "mbti-q-150",
+      "index": 150,
+      "text": "对于即将到来的假期，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前规划好每天的行程和活动"
+        },
+        {
+          "id": "B",
+          "text": "到了再说，随心所欲地安排"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-151",
+      "index": 151,
+      "text": "你的工作桌面通常：",
+      "options": [
+        {
+          "id": "A",
+          "text": "整洁有序，文件分类清晰"
+        },
+        {
+          "id": "B",
+          "text": "看起来有些乱，但我知道东西在哪"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-152",
+      "index": 152,
+      "text": "面对一个截止日期，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前完成，留出充裕的缓冲时间"
+        },
+        {
+          "id": "B",
+          "text": "在截止日期临近时效率最高"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-153",
+      "index": 153,
+      "text": "你更认同哪种说法？",
+      "options": [
+        {
+          "id": "A",
+          "text": "没有计划就是在计划失败"
+        },
+        {
+          "id": "B",
+          "text": "计划赶不上变化，不如随机应变"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-154",
+      "index": 154,
+      "text": "在开始一个新项目时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "先制定详细的计划和时间表"
+        },
+        {
+          "id": "B",
+          "text": "先动手尝试，在过程中逐步明确方向"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-155",
+      "index": 155,
+      "text": "你的日程表更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前一周甚至一个月就安排好了"
+        },
+        {
+          "id": "B",
+          "text": "比较灵活，经常当天或前一天才确定"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-156",
+      "index": 156,
+      "text": "对于迟到，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "非常不能接受，守时是基本素养"
+        },
+        {
+          "id": "B",
+          "text": "偶尔迟到可以理解，不必太紧张"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-157",
+      "index": 157,
+      "text": "你更享受的工作节奏是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "稳定有序，按计划推进"
+        },
+        {
+          "id": "B",
+          "text": "灵活多变，根据状态调整"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-158",
+      "index": 158,
+      "text": "在日常生活中，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有固定的作息时间和日常惯例"
+        },
+        {
+          "id": "B",
+          "text": "每天都不太一样，跟着感觉走"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-159",
+      "index": 159,
+      "text": "对于\"待办事项清单\"，你的使用习惯是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "每天使用，逐项打勾很有成就感"
+        },
+        {
+          "id": "B",
+          "text": "偶尔用，更多时候凭记忆和直觉"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-160",
+      "index": 160,
+      "text": "在做决定时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "尽快做出决定，然后执行"
+        },
+        {
+          "id": "B",
+          "text": "保持开放，多收集信息再决定"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-161",
+      "index": 161,
+      "text": "当你做了一个决定后，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "坚持执行，不再反复纠结"
+        },
+        {
+          "id": "B",
+          "text": "随时准备根据新信息调整"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-162",
+      "index": 162,
+      "text": "在购物时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前列好清单，到店直接购买"
+        },
+        {
+          "id": "B",
+          "text": "逛逛看看，遇到喜欢的就买"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-163",
+      "index": 163,
+      "text": "你更享受的状态是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "事情都已确定，按部就班地执行"
+        },
+        {
+          "id": "B",
+          "text": "事情还在变化中，充满可能性"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-164",
+      "index": 164,
+      "text": "对于\"选择困难\"，你更常遇到的情况是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "选项太少，想要更多可能性"
+        },
+        {
+          "id": "B",
+          "text": "选项太多，希望有人帮我快速决定"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-165",
+      "index": 165,
+      "text": "当计划突然被打乱时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "感到焦虑，尽快制定新的计划"
+        },
+        {
+          "id": "B",
+          "text": "感到兴奋或无所谓，顺其自然"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-166",
+      "index": 166,
+      "text": "对于生活中的意外变化，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "不太喜欢，希望一切在掌控之中"
+        },
+        {
+          "id": "B",
+          "text": "觉得有趣，生活需要一些惊喜"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-167",
+      "index": 167,
+      "text": "你更享受的旅行方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "详细的攻略，预订好机票酒店和景点门票"
+        },
+        {
+          "id": "B",
+          "text": "背上行囊说走就走，到了再找住处"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-168",
+      "index": 168,
+      "text": "在工作中，当需求突然变更时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有些沮丧，需要时间重新调整计划"
+        },
+        {
+          "id": "B",
+          "text": "比较适应，觉得变化是常态"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-169",
+      "index": 169,
+      "text": "你更喜欢的生活状态是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "稳定、有序、可预测的"
+        },
+        {
+          "id": "B",
+          "text": "自由、灵活、充满变化的"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-170",
+      "index": 170,
+      "text": "在完成一项任务时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按步骤逐一完成，确保每个环节都到位"
+        },
+        {
+          "id": "B",
+          "text": "跳跃式推进，先做最有趣或最关键的部分"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-171",
+      "index": 171,
+      "text": "你更享受的工作方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "专注于一个项目，从头到尾完成后再开始下一个"
+        },
+        {
+          "id": "B",
+          "text": "同时推进多个项目，根据兴趣切换"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-172",
+      "index": 172,
+      "text": "对于工作中的规章制度，你的态度是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "规章制度是效率的保障，应该严格遵守"
+        },
+        {
+          "id": "B",
+          "text": "规章制度是参考，必要时可以灵活调整"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-173",
+      "index": 173,
+      "text": "你更倾向于在什么时候提交工作成果？",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前完成，反复检查后再提交"
+        },
+        {
+          "id": "B",
+          "text": "在截止时间前完成，觉得差不多了就提交"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-174",
+      "index": 174,
+      "text": "在开会时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "有明确的议程和时间安排，高效推进"
+        },
+        {
+          "id": "B",
+          "text": "开放讨论，允许话题自由延伸"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-175",
+      "index": 175,
+      "text": "你的衣柜更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按颜色和类型分类整理"
+        },
+        {
+          "id": "B",
+          "text": "虽然看起来有些乱，但找东西很快"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-176",
+      "index": 176,
+      "text": "对于早起，你的习惯是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "每天固定时间起床，包括周末"
+        },
+        {
+          "id": "B",
+          "text": "工作日勉强早起，周末睡到自然醒"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-177",
+      "index": 177,
+      "text": "你更喜欢的做饭方式是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "提前想好菜单，买好食材按步骤做"
+        },
+        {
+          "id": "B",
+          "text": "打开冰箱看有什么，即兴发挥"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-178",
+      "index": 178,
+      "text": "对于家庭开支，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "做预算并记录每笔支出"
+        },
+        {
+          "id": "B",
+          "text": "大致有数就行，不刻意记录"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-179",
+      "index": 179,
+      "text": "你的睡眠习惯更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "规律作息，每天差不多时间睡和起"
+        },
+        {
+          "id": "B",
+          "text": "不规律，有时熬夜有时早睡"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-180",
+      "index": 180,
+      "text": "你更享受的阶段是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "项目收尾，看到成果的那一刻"
+        },
+        {
+          "id": "B",
+          "text": "项目启动，充满无限可能的阶段"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-181",
+      "index": 181,
+      "text": "对于一本快读完的书，你的感受是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "迫不及待想看到结局"
+        },
+        {
+          "id": "B",
+          "text": "有些不舍，不想这么快结束"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-182",
+      "index": 182,
+      "text": "你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "做完一件事再开始下一件"
+        },
+        {
+          "id": "B",
+          "text": "同时开启多件事，在不同任务间切换"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-183",
+      "index": 183,
+      "text": "在玩游戏时，你更享受：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按攻略或计划高效通关"
+        },
+        {
+          "id": "B",
+          "text": "自由探索，享受过程中的惊喜"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-184",
+      "index": 184,
+      "text": "你更认同哪种工作理念？",
+      "options": [
+        {
+          "id": "A",
+          "text": "先完成，再完美"
+        },
+        {
+          "id": "B",
+          "text": "保持开放，不断迭代"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-185",
+      "index": 185,
+      "text": "当截止日期临近时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "因为已经完成了大部分而感到从容"
+        },
+        {
+          "id": "B",
+          "text": "因为还有很多没做而感到紧张但高效"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-186",
+      "index": 186,
+      "text": "面对一个不确定的情况，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "尽快收集信息，做出决定消除不确定性"
+        },
+        {
+          "id": "B",
+          "text": "保持观望，等更多线索出现"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-187",
+      "index": 187,
+      "text": "在高压环境下，你的工作方式更接近：",
+      "options": [
+        {
+          "id": "A",
+          "text": "更加严格地执行计划，用秩序对抗混乱"
+        },
+        {
+          "id": "B",
+          "text": "更加灵活地调整策略，用适应力应对变化"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-188",
+      "index": 188,
+      "text": "当事情没有按计划进行时，你更可能：",
+      "options": [
+        {
+          "id": "A",
+          "text": "感到不安，想要尽快回到正轨"
+        },
+        {
+          "id": "B",
+          "text": "觉得无所谓，也许这样更好"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-189",
+      "index": 189,
+      "text": "你更害怕的是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "失去控制，事情变得混乱"
+        },
+        {
+          "id": "B",
+          "text": "被束缚，失去自由和可能性"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-190",
+      "index": 190,
+      "text": "你认为以下哪个词更接近你的生活态度？",
+      "options": [
+        {
+          "id": "A",
+          "text": "有条不紊"
+        },
+        {
+          "id": "B",
+          "text": "随遇而安"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-191",
+      "index": 191,
+      "text": "在整理房间时，你更倾向于：",
+      "options": [
+        {
+          "id": "A",
+          "text": "定期大扫除，保持整洁"
+        },
+        {
+          "id": "B",
+          "text": "想起来才整理，平时随意"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-192",
+      "index": 192,
+      "text": "对于\"deadline\"（截止日期），你的看法是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "是必须遵守的承诺"
+        },
+        {
+          "id": "B",
+          "text": "是激发效率的动力"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-193",
+      "index": 193,
+      "text": "你更喜欢哪种类型的活动？",
+      "options": [
+        {
+          "id": "A",
+          "text": "有明确流程和规则的活动"
+        },
+        {
+          "id": "B",
+          "text": "自由度高的开放式活动"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-194",
+      "index": 194,
+      "text": "你更享受的周末是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "按计划安排好了各种活动，充实而有条理"
+        },
+        {
+          "id": "B",
+          "text": "没有具体安排，根据心情随时决定做什么"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-195",
+      "index": 195,
+      "text": "以下哪种情况更让你感到舒适？",
+      "options": [
+        {
+          "id": "A",
+          "text": "一切都已安排妥当，按计划进行"
+        },
+        {
+          "id": "B",
+          "text": "一切都在变化中，随时可能出现惊喜"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-196",
+      "index": 196,
+      "text": "你更常被别人评价为：",
+      "options": [
+        {
+          "id": "A",
+          "text": "靠谱、有条理、守时"
+        },
+        {
+          "id": "B",
+          "text": "随性、灵活、有趣"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-197",
+      "index": 197,
+      "text": "对于\"拖延\"这个词，你的看法是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "拖延是坏习惯，应该克服"
+        },
+        {
+          "id": "B",
+          "text": "有时候拖延反而能激发更好的创意"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-198",
+      "index": 198,
+      "text": "你更倾向于如何管理你的电子邮件或消息？",
+      "options": [
+        {
+          "id": "A",
+          "text": "及时处理，保持收件箱清空"
+        },
+        {
+          "id": "B",
+          "text": "有空再看，经常积累很多未读"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    },
+    {
+      "id": "mbti-q-199",
+      "index": 199,
+      "text": "你更享受的人生状态是：",
+      "options": [
+        {
+          "id": "A",
+          "text": "目标明确，一步一个脚印地前进"
+        },
+        {
+          "id": "B",
+          "text": "保持开放，享受沿途的风景和意外"
+        }
+      ],
+      "metadata": {
+        "dimension": "JP",
+        "category": "生活态度与外部世界"
+      }
+    }
+  ]
+}

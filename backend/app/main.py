@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.db.session import SessionLocal, init_db
-from app.services.knowledge_service import warm_knowledge_search_index
+from app.services.memory_job_service import start_memory_job_worker, stop_memory_job_worker
 
 
 def create_app() -> FastAPI:
@@ -25,8 +25,16 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup() -> None:
         init_db()
-        with SessionLocal() as db:
-            warm_knowledge_search_index(db)
+        start_memory_job_worker()
+        if settings.knowledge_warm_index_on_startup:
+            from app.services.knowledge_service import warm_knowledge_search_index
+
+            with SessionLocal() as db:
+                warm_knowledge_search_index(db)
+
+    @app.on_event("shutdown")
+    async def shutdown() -> None:
+        await stop_memory_job_worker()
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
