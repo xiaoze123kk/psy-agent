@@ -1,12 +1,51 @@
 __pycache__/
 *.py[cod]
+
+# Dependencies
 node_modules/
 frontend/node_modules/
-backend/data/*.db
-backend/data/*.log
+
+# Frontend build/cache output
+dist/
+frontend/dist/
+frontend/.vite/
+frontend/.vite-temp/
+
+# Test and coverage output
+coverage/
+frontend/coverage/
+.nyc_output/
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment
 .env
 .env.*
 backend/.env
 backend/.env.*
+frontend/.env
+frontend/.env.*
 !*.env.example
+!frontend/.env.example
+!backend/.env.example
+
+# Local database/runtime artifacts
+backend/data/*.db
+backend/data/*.log
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Agent/local planning files
+.claude
+.codex
+P_PLAN/
+openspec/
