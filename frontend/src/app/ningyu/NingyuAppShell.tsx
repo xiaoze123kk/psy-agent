@@ -59,6 +59,7 @@ function formatVoiceStyleLabel(style: string): string {
 export function NingyuAppShell() {
   const {
     currentUser,
+    ageModeProfile,
     userMode,
     memoryMode,
     voiceSettings,
@@ -122,6 +123,8 @@ export function NingyuAppShell() {
   const statusTags = useMemo(
     () => [
       userModeLabels[userMode],
+      ageModeProfile.ageLabel,
+      ageModeProfile.description,
       memoryModeLabels[memoryMode],
       voiceSettings.voiceEnabled ? "语音已开启" : "语音已关闭",
       voiceSettings.saveVoiceAudio ? "保存语音音频" : "不保存语音音频",
@@ -130,6 +133,8 @@ export function NingyuAppShell() {
     ],
     [
       memoryMode,
+      ageModeProfile.ageLabel,
+      ageModeProfile.description,
       privacySettings.saveTranscript,
       userMode,
       voiceSettings.companionStyle,
@@ -162,7 +167,7 @@ export function NingyuAppShell() {
   };
 
   return (
-    <GentleLoginTransition isNight={isNight}>
+    <div className={`ningyu-transition ${isNight ? "is-night" : "is-day"}`}>
       <div className={`ningyu-shell ${isNight ? "is-night" : "is-day"}`}>
         <Background isNight={isNight} />
         <Header
@@ -188,7 +193,7 @@ export function NingyuAppShell() {
           />
         </div>
       </div>
-    </GentleLoginTransition>
+    </div>
   );
 }
 

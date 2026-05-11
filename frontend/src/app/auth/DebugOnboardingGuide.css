@@ -1,0 +1,444 @@
+.debug-guide {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0b1a24;
+  color: #3a5a4a;
+  font-family: "Times New Roman", "Noto Serif SC", serif;
+}
+
+.debug-guide__background,
+.debug-guide__shade {
+  position: absolute;
+  inset: 0;
+}
+
+.debug-guide__background {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: bottom;
+  opacity: 0.9;
+}
+
+.debug-guide__shade {
+  background: linear-gradient(180deg, rgba(11, 26, 36, 0.08), rgba(11, 26, 36, 0.16) 48%, rgba(11, 26, 36, 0.68));
+}
+
+.debug-guide__frame {
+  position: relative;
+  z-index: 1;
+  width: min(880px, calc(100vw - 32px));
+  margin-top: -4vh;
+  filter: drop-shadow(0 20px 40px rgba(10, 30, 20, 0.5));
+  animation: debugGuideFrameIn 700ms ease-out both;
+}
+
+.debug-guide__paper {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+.debug-guide__content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8% 10% 10%;
+}
+
+.debug-guide__progress {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.debug-guide__progress span {
+  width: 8px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(83, 122, 102, 0.22);
+  transition: width 180ms ease, background 180ms ease;
+}
+
+.debug-guide__progress span.is-current {
+  width: 24px;
+  background: #3a5a4a;
+}
+
+.debug-guide__progress span.is-done {
+  background: rgba(83, 122, 102, 0.58);
+}
+
+.debug-guide__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  align-items: center;
+}
+
+.debug-guide__split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 36px;
+  animation: debugGuideStepIn 520ms ease-out both;
+}
+
+.debug-guide__split h1,
+.debug-guide__split p,
+.debug-guide__note-card ul,
+.debug-guide__fields span,
+.debug-guide__privacy span,
+.debug-guide__scores span {
+  margin: 0;
+}
+
+.debug-guide__split h1 {
+  margin-bottom: 12px;
+  color: #3a5a4a;
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.debug-guide__split p {
+  color: #6b8e7b;
+  font-size: 14px;
+  line-height: 1.8;
+  letter-spacing: 0.14em;
+}
+
+.debug-guide__hero-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  color: #6b8e7b;
+  stroke-width: 1.5;
+}
+
+.debug-guide__note-card {
+  padding: 20px;
+  border: 1px solid rgba(83, 122, 102, 0.2);
+  border-radius: 16px;
+  background: rgba(83, 122, 102, 0.05);
+  color: #537a66;
+  font-size: 14px;
+  line-height: 1.8;
+  letter-spacing: 0.1em;
+}
+
+.debug-guide__note-card ul {
+  padding-left: 20px;
+}
+
+.debug-guide__boundary-note,
+.debug-guide__privacy-note {
+  margin: 14px 0 0;
+  color: #6b8e7b;
+  font-size: 12px;
+  line-height: 1.75;
+  letter-spacing: 0.1em;
+}
+
+.debug-guide__fields,
+.debug-guide__chips,
+.debug-guide__tone-grid,
+.debug-guide__privacy,
+.debug-guide__scores {
+  display: grid;
+  gap: 14px;
+}
+
+.debug-guide__fields label {
+  display: grid;
+  gap: 8px;
+}
+
+.debug-guide__fields span {
+  color: #537a66;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+}
+
+.debug-guide__fields label div,
+.debug-guide__chips input {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1.5px solid rgba(83, 122, 102, 0.3);
+  padding-bottom: 8px;
+}
+
+.debug-guide__fields svg {
+  width: 20px;
+  height: 20px;
+  color: rgba(83, 122, 102, 0.82);
+}
+
+.debug-guide input,
+.debug-guide textarea {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #3a5a4a;
+  outline: none;
+  font: inherit;
+  letter-spacing: 0.1em;
+}
+
+.debug-guide input::placeholder,
+.debug-guide textarea::placeholder {
+  color: rgba(58, 90, 74, 0.42);
+}
+
+.debug-guide__chips {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.debug-guide__chips button,
+.debug-guide__tone-grid button,
+.debug-guide__privacy button,
+.debug-guide__scores button {
+  min-height: 40px;
+  border: 1.5px solid rgba(83, 122, 102, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #6b8e7b;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+
+.debug-guide__chips button.is-active,
+.debug-guide__tone-grid button.is-active,
+.debug-guide__privacy button.is-active {
+  border-color: #3a5a4a;
+  background: rgba(58, 90, 74, 0.09);
+  color: #3a5a4a;
+  font-weight: 700;
+}
+
+.debug-guide__chips input {
+  grid-column: 1 / -1;
+}
+
+.debug-guide__tone-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.debug-guide__tone-grid button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 14px;
+}
+
+.debug-guide__tone-grid svg {
+  width: 18px;
+  height: 18px;
+}
+
+.debug-guide__tone-grid label {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(83, 122, 102, 0.1);
+  border-radius: 12px;
+  background: rgba(83, 122, 102, 0.05);
+  color: #537a66;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.debug-guide__privacy {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.debug-guide__privacy-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(83, 122, 102, 0.14);
+  border-radius: 12px;
+  background: rgba(83, 122, 102, 0.05);
+}
+
+.debug-guide__privacy label {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #537a66;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+.debug-guide__privacy label button {
+  width: 40px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(83, 122, 102, 0.3);
+  color: transparent;
+  position: relative;
+}
+
+.debug-guide__privacy label button.is-active {
+  background: #3a5a4a;
+}
+
+.debug-guide__privacy label button::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f4efe4;
+  transition: transform 180ms ease;
+}
+
+.debug-guide__privacy label button.is-active::after {
+  transform: translateX(18px);
+}
+
+.debug-guide__split--checkin {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+}
+
+.debug-guide__scores {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.debug-guide__scores div {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.debug-guide__scores span {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #3a5a4a;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.debug-guide__scores svg {
+  width: 16px;
+  height: 16px;
+}
+
+.debug-guide__scores button {
+  min-height: 28px;
+  border-radius: 8px;
+}
+
+.debug-guide__scores textarea {
+  grid-column: 1 / -1;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid rgba(83, 122, 102, 0.18);
+  border-radius: 14px;
+  background: rgba(83, 122, 102, 0.05);
+  resize: none;
+}
+
+.debug-guide__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(83, 122, 102, 0.1);
+}
+
+.debug-guide__actions button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #6b8e7b;
+  font: inherit;
+  letter-spacing: 0.12em;
+}
+
+.debug-guide__actions button.is-primary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #3a5a4a;
+  color: #f4efe4;
+  font-weight: 700;
+}
+
+.debug-guide__actions svg {
+  width: 18px;
+  height: 18px;
+}
+
+@keyframes debugGuideFrameIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes debugGuideStepIn {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .debug-guide__frame {
+    width: min(540px, calc(100vw - 24px));
+  }
+
+  .debug-guide__paper {
+    min-height: 660px;
+    object-fit: fill;
+  }
+
+  .debug-guide__content {
+    padding: 40px 36px;
+  }
+
+  .debug-guide__split,
+  .debug-guide__split--checkin {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .debug-guide__split h1 {
+    font-size: 26px;
+  }
+}
