@@ -42,17 +42,25 @@
 - `build_memory_index()` 与 `retrieve_memories_for_turn()` 不再在 Python 层二次过滤记忆类型。
 - 新增 `summary_only` 回归测试，确认 200 条高优先级 `preference` 记忆不会挤掉唯一的 `session_summary`。
 
+#### 5. Milvus 向量同步清理
+
+- `MilvusVectorStore` 新增 `delete_memory_vectors()`，按记忆主键删除 `user_memories` 向量集合中的对应记录。
+- `memory_service.remove_memory_vectors()` 作为安全包装，统一处理空列表、去重和异常日志。
+- 记忆整合时被合并删除的重复记忆、TTL 过期记忆会同步清理 Milvus 向量。
+- 用户手动删除、清空可见记忆、反馈 `dont_use`、隐私清理和聊天数据清理也会同步移除对应向量。
+- 新增回归测试，确认整合任务和清空可见记忆会调用向量删除，并且不会删除内部安全记忆向量。
+
 ### 验证结果
 
 在 `backend/` 目录执行：
 
 ```powershell
-& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py -q
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py -q
 ```
 
-结果：`33 passed, 1 warning`。
+结果：`42 passed, 2 warnings`。
 
-warning 来自 LangGraph / LangChain 的 pending deprecation warning，非本轮改动引入。
+warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示，非本轮改动引入。
 
 ### 相关提交
 
@@ -64,16 +72,16 @@ warning 来自 LangGraph / LangChain 的 pending deprecation warning，非本轮
 | `87d94f5` | 稳定记忆 embedding 批量查询测试 |
 | `b888056` | 优化记忆 embedding 批量查询 |
 | `a03ad52` | 前置记忆类型过滤 |
+| `15ef4d3` | 同步清理记忆向量 |
 
 ### 未纳入本轮
 
 以下问题仍留作后续迭代：
 
-- Milvus 与 PostgreSQL 中删除 / 过期状态的同步清理。
 - `claim_pending_memory_jobs()` 的多 worker 行级锁竞争处理。
 - Milvus upsert 失败后的重试和可观测性。
 - 记忆列表 / 审计接口分页。
 
 ### 结论
 
-本轮完成了四类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉。写入和检索链路都更接近预期，且现有测试整体保持通过。
+本轮完成了五类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引也会跟随删除和过期状态清理。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。
