@@ -41,6 +41,7 @@ VISIBLE_MEMORY_TYPES = {
 }
 INTERNAL_MEMORY_TYPES = {"safety_summary"}
 ALL_MEMORY_TYPES = VISIBLE_MEMORY_TYPES | INTERNAL_MEMORY_TYPES
+MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS = 3
 
 MEMORY_TYPE_LABELS = {
     "profile": "基础画像",
@@ -261,6 +262,27 @@ def remove_memory_vectors(memory_ids: list[str]) -> bool:
     except Exception as exc:
         logger.warning("Milvus memory vector delete failed: %s", exc)
         return False
+
+
+def _upsert_memory_vectors_with_retry(rows: list[dict[str, Any]]) -> bool:
+    if not rows:
+        return True
+    memory_ids = [str(row.get("memory_id") or row.get("id") or "") for row in rows]
+    memory_ids = [memory_id for memory_id in dict.fromkeys(memory_ids) if memory_id]
+    last_error: Exception | None = None
+    for _ in range(MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS):
+        try:
+            if milvus_store.upsert_memory_vectors(rows):
+                return True
+        except Exception as exc:
+            last_error = exc
+    logger.warning(
+        "Milvus memory vector upsert failed after %s attempts for memory_ids=%s%s",
+        MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS,
+        memory_ids,
+        f": {last_error}" if last_error is not None else "",
+    )
+    return False
 
 
 def _base_memory_query(db: Session, user_id: str, memory_types: set[str] | None = None):
@@ -908,10 +930,7 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
             }
         )
     if milvus_rows:
-        try:
-            milvus_store.upsert_memory_vectors(milvus_rows)
-        except Exception:
-            pass
+        _upsert_memory_vectors_with_retry(milvus_rows)
     db.flush()
 
 

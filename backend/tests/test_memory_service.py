@@ -433,6 +433,50 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(embeddings_by_memory_id[second.id].embedding, [2.0, 3.0])
         self.assertEqual(existing.embedding, [1.0, 2.0])
 
+    def test_index_memory_embeddings_retries_and_logs_milvus_upsert_failure(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        memory = self.add_memory(user, memory_type="support_strategy", content="box breathing helps when anxious")
+
+        original_env = os.environ.get("MEMORY_EMBEDDINGS_ENABLED")
+        os.environ["MEMORY_EMBEDDINGS_ENABLED"] = "1"
+        original_client = memory_service.embedding_client
+        original_store = memory_service.milvus_store
+
+        class FakeEmbeddingClient:
+            is_configured = True
+            model = "test-model"
+            embedding_key = "test:embedding:2"
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [[1.0, 2.0] for _ in texts]
+
+        class FailingMilvusStore:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            def upsert_memory_vectors(self, rows):
+                self.call_count += 1
+                return False
+
+        fake_store = FailingMilvusStore()
+        memory_service.embedding_client = FakeEmbeddingClient()
+        memory_service.milvus_store = fake_store
+        try:
+            import asyncio
+
+            with self.assertLogs("app.services.memory_service", level="WARNING") as logs:
+                asyncio.run(index_memory_embeddings(self.db, [memory]))
+        finally:
+            memory_service.embedding_client = original_client
+            memory_service.milvus_store = original_store
+            if original_env is None:
+                os.environ.pop("MEMORY_EMBEDDINGS_ENABLED", None)
+            else:
+                os.environ["MEMORY_EMBEDDINGS_ENABLED"] = original_env
+
+        self.assertEqual(fake_store.call_count, 3)
+        self.assertTrue(any(memory.id in message for message in logs.output))
+
     def test_vector_retrieval_recall_and_precision_metrics(self) -> None:
         user = self.create_user(memory_mode="long_term")
         trigger = self.add_memory(

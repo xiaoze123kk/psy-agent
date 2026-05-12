@@ -50,6 +50,12 @@
 - 用户手动删除、清空可见记忆、反馈 `dont_use`、隐私清理和聊天数据清理也会同步移除对应向量。
 - 新增回归测试，确认整合任务和清空可见记忆会调用向量删除，并且不会删除内部安全记忆向量。
 
+#### 6. Milvus upsert 失败重试与可观测性
+
+- `index_memory_embeddings()` 新增最多 3 次的 Milvus upsert 重试，避免临时写入失败直接吞掉整批记忆向量。
+- 重试结束后会记录包含 `memory_ids` 的告警日志，便于回溯具体失败记忆。
+- 新增回归测试，确认 Milvus 写入失败时会重试 3 次并输出告警日志。
+
 ### 验证结果
 
 在 `backend/` 目录执行：
@@ -62,6 +68,12 @@
 
 warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示，非本轮改动引入。
 
+在 `backend/` 目录追加执行：
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory_service.py tests/test_memory.py tests/test_privacy.py -q
+```
+
+结果：`43 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
 ### 相关提交
 
 | Commit | 内容 |
@@ -79,9 +91,8 @@ warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 S
 以下问题仍留作后续迭代：
 
 - `claim_pending_memory_jobs()` 的多 worker 行级锁竞争处理。
-- Milvus upsert 失败后的重试和可观测性。
 - 记忆列表 / 审计接口分页。
 
 ### 结论
 
-本轮完成了五类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引也会跟随删除和过期状态清理。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。
+本轮完成了六类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引会跟随删除和过期状态清理，Milvus 写入失败时也会重试并留下失败线索。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。
