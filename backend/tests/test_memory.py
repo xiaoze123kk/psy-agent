@@ -18,6 +18,7 @@ from app.core.security import create_access_token
 from app.db.models import (
     Base,
     ConversationThread,
+    ConversationTurn,
     Message,
     MoodLog,
     PendingMemoryJob,
@@ -26,11 +27,12 @@ from app.db.models import (
     UserMemory,
     UserProfile,
     UserSettings,
+    utcnow,
 )
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
-from app.services.memory_job_service import process_pending_memory_jobs
+from app.services.memory_job_service import process_memory_job, process_pending_memory_jobs
 
 
 class MemoryApiTests(unittest.TestCase):
@@ -601,6 +603,69 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(assistant_message)
         self.assertEqual(assistant_message.meta["memory_job_status"], "completed")
         self.assertEqual(assistant_message.meta["memory_write_decisions"][0]["status"], "created")
+
+    async def test_failed_memory_job_does_not_issue_an_intermediate_commit(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        turn = ConversationTurn(
+            user_id=user.id,
+            thread_id=thread.id,
+            client_message_id="client-memory-job-failure",
+            request_hash="hash-memory-job-failure",
+            turn_status="completed",
+            response_snapshot={},
+        )
+        assistant_message = Message(
+            thread_id=thread.id,
+            user_id=user.id,
+            role="assistant",
+            content="assistant reply",
+            meta={},
+        )
+        self.db.add_all([turn, assistant_message])
+        self.db.flush()
+
+        job = PendingMemoryJob(
+            user_id=user.id,
+            thread_id=thread.id,
+            turn_id=turn.id,
+            assistant_message_id=assistant_message.id,
+            job_type="memory_write",
+            status="pending",
+            attempt_count=0,
+            max_attempts=1,
+            next_run_at=utcnow(),
+            payload={
+                "should_write_memory": True,
+                "memory_candidates": [{"memory_type": "session_summary", "content": "keep this"}],
+                "session_summary": "keep this",
+                "risk_level": "L0",
+                "memory_policy": "write_safe_summary",
+                "memory_mode": "summary_only",
+            },
+        )
+        self.db.add(job)
+        self.db.commit()
+
+        with patch.object(self.db, "commit", wraps=self.db.commit) as commit_spy:
+            with patch(
+                "app.services.memory_job_service.upsert_memory_candidates",
+                side_effect=RuntimeError("boom"),
+            ):
+                result = await process_memory_job(self.db, job.id)
+
+        self.db.refresh(job)
+        self.db.refresh(assistant_message)
+        self.db.refresh(turn)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(commit_spy.call_count, 1)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.attempt_count, 1)
+        self.assertIsNone(job.locked_at)
+        self.assertIsNone(job.locked_by)
+        self.assertTrue((job.last_error or "").startswith("RuntimeError: boom"))
+        self.assertEqual(assistant_message.meta["memory_job_status"], "failed")
+        self.assertEqual(turn.response_snapshot["memory_job_status"], "failed")
 
     async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")

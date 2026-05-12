@@ -229,68 +229,68 @@ async def process_memory_job(db: Session, job_id: str) -> PendingMemoryJob | Non
         job.locked_at = utcnow()
         job.locked_by = socket.gethostname()
         job.updated_at = utcnow()
-        db.commit()
+        db.flush()
 
     try:
-        user = db.get(User, job.user_id)
-        thread = db.get(ConversationThread, job.thread_id)
-        assistant_message = db.get(Message, job.assistant_message_id) if job.assistant_message_id else None
-        if user is None:
-            raise ValueError("Memory job user is missing.")
-        if thread is None:
-            raise ValueError("Memory job thread is missing.")
-        if assistant_message is None:
-            raise ValueError("Memory job assistant message is missing.")
+        with db.begin_nested():
+            user = db.get(User, job.user_id)
+            thread = db.get(ConversationThread, job.thread_id)
+            assistant_message = db.get(Message, job.assistant_message_id) if job.assistant_message_id else None
+            if user is None:
+                raise ValueError("Memory job user is missing.")
+            if thread is None:
+                raise ValueError("Memory job thread is missing.")
+            if assistant_message is None:
+                raise ValueError("Memory job assistant message is missing.")
 
-        payload = dict(job.payload or {})
-        assistant_result = {
-            "should_write_memory": bool(payload.get("should_write_memory", True)),
-            "memory_candidates": payload.get("memory_candidates", []),
-            "session_summary": payload.get("session_summary", ""),
-            "risk_level": payload.get("risk_level", "L0"),
-            "memory_policy": payload.get("memory_policy", "write_safe_summary"),
-        }
-        written_memories, decisions = upsert_memory_candidates(
-            db,
-            user=user,
-            thread=thread,
-            assistant_message_id=assistant_message.id,
-            assistant_result=assistant_result,
-            memory_mode_override=str(payload.get("memory_mode") or "summary_only"),
-        )
-        await index_memory_embeddings(db, written_memories)
-        consolidation_result = maybe_auto_consolidate_user_memories(db, user_id=user.id)
-
-        job.status = "completed"
-        job.result = _json_safe(
-            {
-                "memory_ids": [memory.id for memory in written_memories],
-                "memory_write_decisions": decisions,
-                "written_count": len(written_memories),
-                "consolidation_result": consolidation_result,
+            payload = dict(job.payload or {})
+            assistant_result = {
+                "should_write_memory": bool(payload.get("should_write_memory", True)),
+                "memory_candidates": payload.get("memory_candidates", []),
+                "session_summary": payload.get("session_summary", ""),
+                "risk_level": payload.get("risk_level", "L0"),
+                "memory_policy": payload.get("memory_policy", "write_safe_summary"),
             }
-        )
-        job.last_error = None
-        job.locked_at = None
-        job.locked_by = None
-        job.updated_at = utcnow()
-        turn = db.get(ConversationTurn, job.turn_id)
-        _set_assistant_memory_metadata(
-            assistant_message,
-            job=job,
-            status="completed",
-            decisions=decisions,
-        )
-        _set_turn_memory_snapshot(
-            turn,
-            job=job,
-            status="completed",
-            decisions=decisions,
-        )
+            written_memories, decisions = upsert_memory_candidates(
+                db,
+                user=user,
+                thread=thread,
+                assistant_message_id=assistant_message.id,
+                assistant_result=assistant_result,
+                memory_mode_override=str(payload.get("memory_mode") or "summary_only"),
+            )
+            await index_memory_embeddings(db, written_memories)
+            consolidation_result = maybe_auto_consolidate_user_memories(db, user_id=user.id)
+
+            job.status = "completed"
+            job.result = _json_safe(
+                {
+                    "memory_ids": [memory.id for memory in written_memories],
+                    "memory_write_decisions": decisions,
+                    "written_count": len(written_memories),
+                    "consolidation_result": consolidation_result,
+                }
+            )
+            job.last_error = None
+            job.locked_at = None
+            job.locked_by = None
+            job.updated_at = utcnow()
+            turn = db.get(ConversationTurn, job.turn_id)
+            _set_assistant_memory_metadata(
+                assistant_message,
+                job=job,
+                status="completed",
+                decisions=decisions,
+            )
+            _set_turn_memory_snapshot(
+                turn,
+                job=job,
+                status="completed",
+                decisions=decisions,
+            )
         db.commit()
         return job
     except Exception as exc:
-        db.rollback()
         logger.exception("Memory background job failed.", extra={"memory_job_id": job_id})
         return _mark_job_failed(db, job_id, exc)
 
