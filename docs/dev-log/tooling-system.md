@@ -11,6 +11,7 @@
 | 3 | `get_safety_resources` | 按地区和受众返回安全支持资源（热线等） | L0-L3 | 否 | 正式 |
 | 4 | `web_search` | 搜索互联网获取实时心理支持资源、热线和专业信息 | L0-L1 | 否 | 正式 |
 | 5 | `get_current_time` | 获取当前 UTC/本地时间、星期、时区、会话已持续时间 | L0-L3 | 否 | 正式 |
+| 6 | `get_weather` | 获取城市当前天气（wttr.in 免费 API），辅助理解用户情绪与天气的关联 | L0-L1 | 否 | 正式 |
 | - | `ask_knowledge` | 知识库查询（占位，v1 禁用） | L0-L1 | 是 | 禁用 |
 
 ### 工具门控规则
@@ -77,7 +78,40 @@
 
 ---
 
+## get_weather 工具
+
+### 实现 (2026-05-12)
+
+- **后端**：`wttr.in` 免费 API（无需 key），`format=%C+%t+%h+%w` 返回中文简短天气
+- **参数**：`city` 可选（默认 Beijing），5 秒超时
+- **返回**：`{city, weather, error?}` — weather 为如 "晴 15°C 湿度45% 风速3km/h"
+- **可用范围**：L0-L1（低风险），高风险不可用
+- **核心文件**：`backend/app/services/weather_service.py`
+
+---
+
+## 小目标管理 (goal memory type)
+
+### 实现 (2026-05-12)
+
+- **设计原则**：复用现有 `UserMemory` 表 + `save_memory_summary` / `search_memories` 管线，无需新 tool
+- **memory_type**：`"goal"`，加入 `VISIBLE_MEMORY_TYPES`
+- **存储**：目标属性 (`goal_status`, `goal_category`, `completed_at`) 存 `structured_value` JSON
+- **LLM 使用**：
+  - 创建目标：`save_memory_summary` 传 `memory_type: "goal"` + `structured_value: {goal_status: "active", ...}`
+  - 查询目标：`search_memories` 传 `memory_types: ["goal"]`
+  - 更新状态：同创建，`goal_status` 改为 `"completed"` / `"abandoned"`，管线自动 merge 已有记忆
+- **goal_category**：`behavior` | `emotion` | `social` | `routine` | `other`
+- 改动文件：`tooling.py`（VISIBLE_MEMORY_TYPES + structured_value 透传）、`memory_service.py`（VISIBLE_MEMORY_TYPES + LABELS + ORDER）
+
+---
+
 ## 架构说明
+
+```
+tooling.py
+├── TOOL_SPECS          → 6 个 ToolSpec 定义（tool 元数据 + 参数 schema）
+├── ToolGate            → 按 risk_level / memory_mode / knowledge_enabled 控制可用性
 
 ```
 tooling.py
@@ -87,6 +121,9 @@ tooling.py
 ├── _build_*_handler    → 每个 tool 的 handler factory（闭包捕获 state / capture）
 ├── _tool_prompt_hint   → 注入 system prompt 的 tool 使用策略说明
 └── run_dialogue_reply_with_tools → 对话入口，调用 deepseek_client.chat_with_tools()
+
+weather_service.py
+├── get_weather() → httpx GET wttr.in → (text, error)
 
 search_service.py
 ├── SearchResult        → 数据类（title, url, snippet, score）
@@ -101,8 +138,8 @@ search_service.py
 
 | 测试文件 | 测试数 | 覆盖内容 |
 |----------|--------|----------|
-| `tests/test_tooling.py` | 23 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递 |
+| `tests/test_tooling.py` | 31 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递、goal memory candidate |
 | `tests/test_search_service.py` | 29 | 清洗、去重、截断、评分、低信息过滤、错误处理、超时、error tuple |
 | `tests/test_tooling_integration.py` | 1 | 端到端 tool audit + memory patch 流转 |
 
-**全量**：301 passed, 2 skipped, 0 failures
+**全量**：309 passed, 2 skipped, 0 failures
