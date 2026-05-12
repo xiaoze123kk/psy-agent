@@ -96,6 +96,7 @@ class ConversationThread(Base):
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     mode: Mapped[str] = mapped_column(String(32), default="companion")
     last_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_digest: Mapped[dict] = mapped_column(JSON, default=dict)
     last_risk_level: Mapped[str] = mapped_column(String(8), default="L0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

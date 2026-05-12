@@ -359,10 +359,20 @@ def _query_for_retrieval(
     query: str,
     recent_messages: list[dict[str, Any]] | None,
     last_summary: str | None,
+    session_digest: dict[str, Any] | None,
     control_category: str | None,
 ) -> str:
     recent_text = " ".join(str(message.get("content", "")) for message in (recent_messages or [])[-4:])
-    return _clean_text(f"{query} {last_summary or ''} {control_category or ''} {recent_text}", limit=1200)
+    digest_parts: list[str] = []
+    if isinstance(session_digest, dict):
+        for key in ("key_themes", "emotional_arc", "unresolved_threads", "significant_changes", "summary_200chars"):
+            value = session_digest.get(key)
+            if isinstance(value, list):
+                digest_parts.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                digest_parts.append(value.strip())
+    digest_text = " ".join(digest_parts)
+    return _clean_text(f"{query} {last_summary or ''} {control_category or ''} {digest_text} {recent_text}", limit=1200)
 
 
 def _type_boost(memory_type: str, query_text: str, control_category: str | None) -> float:
@@ -370,6 +380,8 @@ def _type_boost(memory_type: str, query_text: str, control_category: str | None)
     boost = 0.0
     if memory_type == "session_summary" and any(term in text for term in ("上次", "继续", "刚才", "最近")):
         boost += 0.08
+    if memory_type == "session_summary" and any(term in text for term in ("职场", "工作", "压力", "主题", "方向", "讨论")):
+        boost += 0.1
     if memory_type == "preference" and any(term in text for term in ("喜欢", "希望", "不要", "别", "方式")):
         boost += 0.08
     if memory_type in {"recurring_trigger", "state"} and any(term in text for term in ("焦虑", "睡", "压力", "每次", "总是")):
@@ -501,6 +513,7 @@ def retrieve_memories_for_turn(
     query: str,
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
+    session_digest: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -522,6 +535,7 @@ def retrieve_memories_for_turn(
         query=query,
         recent_messages=recent_messages,
         last_summary=last_summary,
+        session_digest=session_digest,
         control_category=control_category,
     )
 
@@ -612,6 +626,7 @@ async def retrieve_memories_for_turn_async(
     query: str,
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
+    session_digest: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -629,6 +644,7 @@ async def retrieve_memories_for_turn_async(
             query=query,
             recent_messages=recent_messages,
             last_summary=last_summary,
+            session_digest=session_digest,
             control_category=control_category,
         )
         query_vector = await embedding_client.embed_query(query_text)
@@ -638,6 +654,7 @@ async def retrieve_memories_for_turn_async(
         query=query,
         recent_messages=recent_messages,
         last_summary=last_summary,
+        session_digest=session_digest,
         memory_mode=memory_mode,
         risk_level=risk_level,
         control_category=control_category,

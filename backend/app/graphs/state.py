@@ -19,6 +19,7 @@ class AgentState(TypedDict, total=False):
     messages: list[dict]
     recent_messages: list[dict]
     last_summary: str
+    session_digest: dict
 
     profile: dict
     companion_preferences: dict

@@ -222,6 +222,38 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertNotIn(expired.id, result_ids)
         self.assertNotIn(do_not_use.id, result_ids)
 
+    def test_retrieve_uses_session_digest_themes_for_vague_query(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户在讨论职场压力和任务分配",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="state",
+            content="用户最近很累，想多休息",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="我还是很累",
+            recent_messages=[{"role": "user", "content": "我还是很累"}],
+            session_digest={
+                "key_themes": ["职场压力"],
+                "emotional_arc": "紧绷 -> 疲惫",
+                "unresolved_threads": ["工作安排"],
+            },
+            memory_mode="long_term",
+            limit=5,
+        )
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(results[0]["memory_id"], target.id)
+
     def test_memory_modes_and_high_risk_internal_safety_filtering(self) -> None:
         user = self.create_user(memory_mode="summary_only")
         summary = self.add_memory(user, memory_type="session_summary", content="last session about exam stress")

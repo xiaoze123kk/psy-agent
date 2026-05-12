@@ -225,7 +225,6 @@ def build_dialogue_prompt_parts(
     response_contract: dict,
     examples_text: str,
     memory_text: str,
-    recent_text: str,
 ) -> DialoguePromptParts:
     text = state.get("normalized_text", "")
     user_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult"))
@@ -258,7 +257,6 @@ def build_dialogue_prompt_parts(
         f"{examples_text}"
         f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
         f"可参考记忆：\n{memory_text}\n"
-        f"最近对话：\n{recent_text}\n"
         f"用户刚刚说：{text}\n"
     )
     return DialoguePromptParts(

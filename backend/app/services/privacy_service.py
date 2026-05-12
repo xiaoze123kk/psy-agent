@@ -216,6 +216,7 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
                 "title": thread.title,
                 "mode": thread.mode,
                 "last_summary": thread.last_summary,
+                "session_digest": thread.session_digest,
                 "last_risk_level": thread.last_risk_level,
                 "created_at": _dt(thread.created_at),
                 "updated_at": _dt(thread.updated_at),
@@ -334,7 +335,7 @@ def _delete_chat(db: Session, user_id: str) -> dict[str, int]:
     thread_rows = db.execute(
         update(ConversationThread)
         .where(ConversationThread.id.in_(thread_ids), ConversationThread.user_id == user_id)
-        .values(archived_at=utcnow(), last_summary=None, updated_at=utcnow())
+        .values(archived_at=utcnow(), last_summary=None, session_digest={}, updated_at=utcnow())
     )
     memory_rows = db.execute(
         update(UserMemory)

@@ -790,6 +790,7 @@ async def run_dialogue_reply_with_tools(
     *,
     system_prompt: str,
     user_prompt: str,
+    messages: list[dict[str, Any]] | None = None,
     tool_plan: DialogueToolPlan | None = None,
 ) -> dict[str, Any]:
     plan = tool_plan or build_dialogue_tool_plan(state)

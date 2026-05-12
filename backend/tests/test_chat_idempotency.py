@@ -39,6 +39,11 @@ class FakeGraphRuntime:
             "risk_reasons": [],
             "suggested_actions": ["继续说"],
             "session_summary": "本轮摘要",
+            "session_digest": {
+                "key_themes": ["职场压力"],
+                "emotional_arc": "紧绷 -> 稍微稳定",
+                "summary_200chars": "用户本轮继续讨论职场压力。",
+            },
             "memory_candidates": self.memory_candidates,
             "should_write_memory": self.should_write_memory,
             "referenced_memories": [],
@@ -278,6 +283,23 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(body["turn_status"], "completed")
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)
+
+    def test_session_digest_persists_without_replacing_last_summary(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        chat_service.graph_runtime = FakeGraphRuntime()
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-digest", "content": "我最近工作压力很大"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.db.refresh(thread)
+        self.assertEqual(thread.last_summary, "本轮摘要")
+        self.assertEqual(thread.session_digest["key_themes"], ["职场压力"])
+        self.assertEqual(thread.session_digest["summary_200chars"], "用户本轮继续讨论职场压力。")
 
     def test_stream_completed_turn_can_be_replayed_by_send_message_fallback(self) -> None:
         user = self.create_user()

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from app.graphs.nodes.memory_nodes import summarize_turn
 from app.graphs.nodes.response_nodes import companion_response
 from app.graphs.state import AgentState
+from app.services.deepseek_client import ToolChatResult
 
 
 def _run(coro):
@@ -76,4 +77,61 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertIn("本轮主题", summary)
         self.assertNotIn("上次主要在聊", summary)
         self.assertNotIn("下次可以从", summary)
+
+    def test_companion_reply_uses_multi_turn_messages(self) -> None:
+        captured_messages: list[dict[str, str]] = []
+        state = self.make_state(
+            normalized_text="我还是很累",
+            recent_messages=[
+                {"role": "user", "content": "最近工作一直压着我"},
+                {"role": "assistant", "content": "那种被工作追着跑的感觉，确实会很耗。"},
+            ],
+        )
+
+        async def fake_chat(messages):
+            captured_messages.extend(messages)
+            return "我听见这个“还是”，像是那股累并没有真的退下去。\n---\n继续说说"
+
+        with patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)):
+            result = _run(companion_response(state))
+
+        self.assertEqual(result["assistant_text"], "我听见这个“还是”，像是那股累并没有真的退下去。")
+        self.assertEqual([message["role"] for message in captured_messages[:3]], ["system", "user", "assistant"])
+        self.assertEqual(captured_messages[1]["content"], "最近工作一直压着我")
+        self.assertEqual(captured_messages[2]["content"], "那种被工作追着跑的感觉，确实会很耗。")
+        self.assertEqual(captured_messages[-1]["role"], "user")
+        self.assertIn("用户刚刚说：我还是很累", captured_messages[-1]["content"])
+
+    def test_tool_reply_uses_multi_turn_messages(self) -> None:
+        captured_messages: list[dict[str, str]] = []
+        state = self.make_state(
+            normalized_text="我还是睡不好",
+            tooling_enabled=True,
+            recent_messages=[
+                {"role": "user", "content": "昨晚又醒了好几次"},
+                {"role": "assistant", "content": "这种反复醒来的疲惫会一直拖到白天。"},
+            ],
+        )
+
+        async def fake_chat_with_tools(messages, **kwargs):
+            captured_messages.extend(messages)
+            return ToolChatResult(
+                content="这次的“还是”更像是在延续昨晚反复醒来的困扰。\n---\n说说昨晚",
+                tool_events=[],
+                finish_reason="stop",
+                messages=messages,
+            )
+
+        with patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(side_effect=fake_chat_with_tools),
+        ):
+            result = _run(companion_response(state))
+
+        self.assertEqual(result["assistant_text"], "这次的“还是”更像是在延续昨晚反复醒来的困扰。")
+        self.assertEqual([message["role"] for message in captured_messages[:3]], ["system", "user", "assistant"])
+        self.assertEqual(captured_messages[1]["content"], "昨晚又醒了好几次")
+        self.assertEqual(captured_messages[2]["content"], "这种反复醒来的疲惫会一直拖到白天。")
+        self.assertEqual(captured_messages[-1]["role"], "user")
+        self.assertIn("用户刚刚说：我还是睡不好", captured_messages[-1]["content"])
 

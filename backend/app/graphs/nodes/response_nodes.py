@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from langgraph.config import get_stream_writer
 
-from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, recent_context, safe_trim
+from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, safe_trim
 from app.graphs.nodes.control_nodes import base_contract
 from app.graphs.nodes.rag_nodes import example_hit_to_dict
 from app.services import tooling as dialogue_tooling
@@ -140,6 +140,31 @@ def examples_text_from_state(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _recent_chat_messages(state: AgentState, *, limit: int = 12) -> list[dict[str, str]]:
+    current_text = str(state.get("normalized_text") or state.get("user_text") or "").strip()
+    raw_messages = [message for message in state.get("recent_messages", []) if isinstance(message, dict)]
+    messages: list[dict[str, str]] = []
+    for index, message in enumerate(raw_messages):
+        role = str(message.get("role") or "")
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if index == len(raw_messages) - 1 and role == "user" and current_text and content == current_text:
+            continue
+        messages.append({"role": role, "content": safe_trim(content, 1200)})
+    return messages[-limit:]
+
+
+def _reply_messages(state: AgentState, prompt_parts) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": prompt_parts.system_prompt},
+        *_recent_chat_messages(state),
+        {"role": "user", "content": prompt_parts.user_prompt},
+    ]
+
+
 async def _model_reply_with_actions(
     state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
 ) -> tuple[str, list[str]]:
@@ -150,14 +175,9 @@ async def _model_reply_with_actions(
         response_contract=response_contract,
         examples_text=examples_text_from_state(state),
         memory_text=memory_context(state.get("retrieved_memories", [])),
-        recent_text=recent_context(state),
     )
 
-    reply_messages = [
-        {"role": "system", "content": prompt_parts.system_prompt},
-        {"role": "user", "content": prompt_parts.user_prompt},
-    ]
-    return await _streamed_reply_with_actions(reply_messages)
+    return await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
 
 
 async def _model_reply_state_update(
@@ -170,7 +190,6 @@ async def _model_reply_state_update(
         response_contract=response_contract,
         examples_text=examples_text_from_state(state),
         memory_text=memory_context(state.get("retrieved_memories", [])),
-        recent_text=recent_context(state),
     )
     tool_plan = dialogue_tooling.build_dialogue_tool_plan(state)
     if tool_plan.tools:
@@ -178,16 +197,13 @@ async def _model_reply_state_update(
             state,
             system_prompt=prompt_parts.system_prompt,
             user_prompt=prompt_parts.user_prompt,
+            messages=_reply_messages(state, prompt_parts),
             tool_plan=tool_plan,
         )
         _write_final_visible_text(str(result.get("assistant_text") or ""))
         return result
 
-    reply_messages = [
-        {"role": "system", "content": prompt_parts.system_prompt},
-        {"role": "user", "content": prompt_parts.user_prompt},
-    ]
-    assistant_text, suggested_actions = await _streamed_reply_with_actions(reply_messages)
+    assistant_text, suggested_actions = await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 

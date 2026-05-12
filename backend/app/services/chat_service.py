@@ -209,6 +209,7 @@ async def _invoke_graph_with_fallback(
                 user_mode=effective_user_mode,
                 recent_messages=serialized_recent_messages,
                 last_summary=thread.last_summary,
+                session_digest=thread.session_digest or {},
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
@@ -586,6 +587,7 @@ async def _prepare_turn_context(
         query=payload.content,
         recent_messages=serialized_recent_messages,
         last_summary=thread.last_summary,
+        session_digest=thread.session_digest or {},
         memory_mode=memory_mode,
         risk_level=pre_risk_level,
         limit=5,
@@ -648,6 +650,7 @@ async def _persist_turn_result(
         "requires_safety_check": bool(assistant_result.get("requires_safety_check", False)),
         "suggested_actions": assistant_result.get("suggested_actions", []),
         "session_summary": assistant_result.get("session_summary", ""),
+        "session_digest": assistant_result.get("session_digest", {}),
         "should_write_memory": assistant_result.get("should_write_memory", False),
         "referenced_memories": assistant_result.get("referenced_memories", []),
         "referenced_counseling_examples": assistant_result.get("referenced_counseling_examples", []),
@@ -674,6 +677,9 @@ async def _persist_turn_result(
     context.turn.assistant_message_id = assistant_message.id
 
     thread.last_summary = str(assistant_result.get("session_summary", "") or "")
+    session_digest = assistant_result.get("session_digest")
+    if isinstance(session_digest, dict) and session_digest:
+        thread.session_digest = session_digest
 
     risk_level = str(assistant_result.get("risk_level", "L0"))
     if risk_level in {"L2", "L3"}:
@@ -864,6 +870,7 @@ async def process_message_turn_stream(
             user_mode=context.effective_user_mode,
             recent_messages=context.serialized_recent_messages,
             last_summary=thread.last_summary,
+            session_digest=thread.session_digest or {},
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
