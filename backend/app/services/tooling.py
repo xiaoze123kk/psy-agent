@@ -143,6 +143,7 @@ class ToolGate:
         if not high_risk and self.memory_mode != "off":
             names.extend(["search_memories", "save_memory_summary"])
         names.append("get_safety_resources")
+        names.append("web_search")
         if self.knowledge_enabled and not high_risk:
             names.append("ask_knowledge")
         return [name for name in names if self.allows(name)]
@@ -169,7 +170,7 @@ class ToolGate:
             return name in SAFETY_TOOL_NAMES
         if self.memory_mode == "off":
             return name in SAFETY_TOOL_NAMES
-        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | ({"ask_knowledge"} if self.knowledge_enabled else set()))
+        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
 
 
 @dataclass
@@ -299,6 +300,28 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                 "use_my_context": {"type": "boolean"},
             },
             "required": ["question"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
+        name="web_search",
+        description="Search the web for real-time information about psychological support resources, hotlines, and professional mental health information.",
+        allowed_risk_levels=LOW_RISK_LEVELS,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords for finding psychological support resources or professional health information.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Maximum number of results to return (1-5).",
+                },
+            },
+            "required": ["query"],
             "additionalProperties": False,
         },
     ),
@@ -521,6 +544,37 @@ def _build_get_safety_resources_handler(state: Mapping[str, Any], capture: ToolA
     return get_safety_resources
 
 
+def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCapture) -> ToolHandler:
+    def web_search_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+        from app.services.search_service import search_web  # lazy import to avoid circular dependency
+
+        query = _clean_text(arguments.get("query"), limit=240)
+        max_results = _clamp_int(arguments.get("max_results"), default=3, minimum=1, maximum=5)
+        results = search_web(query, max_results=max_results)
+        items: list[dict[str, Any]] = []
+        for result in results:
+            items.append({
+                "title": result.title,
+                "url": result.url,
+                "snippet": result.snippet,
+            })
+        capture.record_preview(
+            "web_search",
+            status="completed",
+            preview=[
+                {"title": result.title, "url": result.url}
+                for result in results[:3]
+            ],
+        )
+        return {
+            "query": query,
+            "count": len(items),
+            "items": items,
+        }
+
+    return web_search_tool
+
+
 def _tool_prompt_hint(tool_names: list[str]) -> str:
     if not tool_names:
         return ""
@@ -528,6 +582,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "search_memories": "search_memories: search only the available user-visible memory index; return references, not raw private content.",
         "save_memory_summary": "save_memory_summary: produce safe summaries/candidate memories for the backend memory pipeline; it does not write directly.",
         "get_safety_resources": "get_safety_resources: return minimal safety resources by region/audience when real-world support is relevant.",
+        "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
     }
     lines = [
         "",
@@ -567,6 +622,8 @@ def build_dialogue_tool_plan(
         handlers["save_memory_summary"] = _build_save_memory_summary_handler(state, capture)
     if "get_safety_resources" in allowed_names:
         handlers["get_safety_resources"] = _build_get_safety_resources_handler(state, capture)
+    if "web_search" in allowed_names:
+        handlers["web_search"] = _build_web_search_handler(state, capture)
 
     specs = [TOOL_SPEC_BY_NAME[name] for name in allowed_names if name in TOOL_SPEC_BY_NAME]
     return DialogueToolPlan(

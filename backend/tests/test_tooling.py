@@ -44,7 +44,7 @@ class ToolGateTests(unittest.TestCase):
         plan = build_dialogue_tool_plan(make_state())
         tool_names = [tool["function"]["name"] for tool in plan.tools]
 
-        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources"])
+        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search"])
         self.assertEqual(plan.allowed_tool_names, tool_names)
         self.assertNotIn("ask_knowledge", tool_names)
         self.assertFalse(plan.blocked_tool_names)
@@ -220,7 +220,7 @@ class WebSearchToolTests(unittest.TestCase):
         plan = build_dialogue_tool_plan(state)
 
         with patch(
-            "app.services.tooling.search_web",
+            "app.services.search_service.search_web",
             return_value=mock_results,
         ):
             result = plan.tool_handlers["web_search"]({"query": "北京心理援助热线"})
@@ -237,7 +237,7 @@ class WebSearchToolTests(unittest.TestCase):
         state = make_state()
         plan = build_dialogue_tool_plan(state)
 
-        with patch("app.services.tooling.search_web", return_value=[]):
+        with patch("app.services.search_service.search_web", return_value=[]):
             result = plan.tool_handlers["web_search"]({"query": "", "max_results": 3})
 
         self.assertEqual(result["count"], 0)
@@ -257,7 +257,7 @@ class WebSearchToolTests(unittest.TestCase):
         state = make_state()
         plan = build_dialogue_tool_plan(state)
 
-        with patch("app.services.tooling.search_web", return_value=mock_results):
+        with patch("app.services.search_service.search_web", return_value=mock_results):
             plan.tool_handlers["web_search"]({"query": "help"})
 
         previews = plan.audit_capture.previews
