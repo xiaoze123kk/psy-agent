@@ -243,7 +243,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _warm_embedding_model() -> None:
+    """Pre-load the local embedding model on the main thread BEFORE ``init_db``.
+
+    On Python 3.13 the order of C-extension DLL initialisation matters:
+    ``pyarrow`` (imported as a transitive dependency of FlagEmbedding) must be
+    loaded BEFORE ``psycopg`` (imported by ``init_db``), otherwise the process
+    crashes with a Windows fatal access violation.
+    """
+    from app.core.config import settings
+
+    if settings.embedding_provider != "local":
+        return
+    try:
+        from app.services.embedding_service import embedding_client
+
+        embedding_client._get_local_model()
+    except Exception:
+        pass
+
+
 async def run_terminal_chat(args: argparse.Namespace) -> None:
+    _warm_embedding_model()
     init_db()
     with SessionLocal() as db:
         user = ensure_terminal_user(db, username=args.username)
