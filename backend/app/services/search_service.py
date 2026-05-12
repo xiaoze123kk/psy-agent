@@ -3,6 +3,7 @@ from __future__ import annotations
 import html as _html
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 
 from duckduckgo_search import DDGS
@@ -13,6 +14,7 @@ from app.services.tooling import _clean_text, _clamp_int
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 3
+DEFAULT_TIMEOUT_SECONDS = 8.0
 MAX_SNIPPET_CHARS = 280
 SEARCH_REGION = "cn"
 _DEDUP_SNIPPET_PREFIX = 60
@@ -89,10 +91,10 @@ def _ddg_text(query: str, *, region: str, max_results: int) -> list[dict[str, ob
     return [dict(item) for item in raw if isinstance(item, dict)]
 
 
-def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> list[SearchResult]:
+def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> list[SearchResult]:
     """Search DuckDuckGo for the given query, returning cleaned, deduplicated results.
 
-    Returns an empty list on any error (network, parse, etc.).
+    Returns an empty list on any error (network, timeout, parse, etc.).
     """
     cleaned_query = _clean_text(query, limit=240)
     if not cleaned_query:
@@ -101,7 +103,12 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> list[Se
     limit = _clamp_int(max_results, default=DEFAULT_MAX_RESULTS, minimum=1, maximum=5)
 
     try:
-        raw_items = _ddg_text(cleaned_query, region=SEARCH_REGION, max_results=limit * 3)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_ddg_text, cleaned_query, region=SEARCH_REGION, max_results=limit * 3)
+            raw_items = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        logger.warning("DuckDuckGo search timed out after %.1fs for query: %s", timeout_seconds, cleaned_query[:80])
+        return []
     except Exception:
         logger.warning("DuckDuckGo search failed for query: %s", cleaned_query[:80])
         return []

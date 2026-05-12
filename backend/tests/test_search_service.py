@@ -214,6 +214,17 @@ class SearchServiceErrorTests(unittest.TestCase):
             results = search_web("crisis hotline", max_results=3)
         self.assertEqual(results, [])
 
+    def test_timeout_returns_empty(self) -> None:
+        import time
+
+        def slow_search(*args, **kwargs):
+            time.sleep(10)
+            return []
+
+        with patch("app.services.search_service._ddg_text", side_effect=slow_search):
+            results = search_web("test", max_results=3, timeout_seconds=0.1)
+        self.assertEqual(results, [])
+
 
 if __name__ == "__main__":
     unittest.main()
