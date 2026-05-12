@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -263,7 +263,7 @@ def _base_memory_query(db: Session, user_id: str, memory_types: set[str] | None 
     )
     if memory_types is not None:
         if not memory_types:
-            return ()
+            return db.scalars(select(UserMemory).where(false()))
         stmt = stmt.where(UserMemory.memory_type.in_(tuple(memory_types)))
     return db.scalars(stmt)
 
