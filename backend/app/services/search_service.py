@@ -177,6 +177,29 @@ class SearchResult:
     score: int = 0
 
 
+# --- Information density filter ---
+
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+_MIN_SNIPPET_CHARS = 12
+_LOW_INFO_PATTERNS = (
+    "点击查看", "点击阅读", "阅读更多", "查看更多", "查看详情", "展开全文",
+    "请登录", "请注册", "登录后", "注册后",
+    "click here", "read more", "view more", "sign in", "log in",
+)
+
+
+def _is_low_info(snippet: str) -> bool:
+    """Check if a snippet has too little information to be useful."""
+    if len(snippet) < _MIN_SNIPPET_CHARS:
+        return True
+    # Reject snippets that are mostly "click to read more" boilerplate
+    lower = snippet.lower()
+    for pattern in _LOW_INFO_PATTERNS:
+        if pattern in lower:
+            return True
+    return False
+
+
 # --- Search ---
 
 def _ddg_text(query: str, *, region: str, max_results: int) -> list[dict[str, object]]:
@@ -230,6 +253,9 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
             continue
 
         if url in seen_urls:
+            continue
+
+        if _is_low_info(snippet):
             continue
 
         fp = _ngram_fingerprint(snippet)

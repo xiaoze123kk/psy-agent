@@ -29,7 +29,7 @@ _SEARCH_RESULT_ELLIPSIS = {
 _SEARCH_RESULT_HTML_ENTITY = {
     "title": "心理&amp;援助",
     "href": "https://example.com/entity",
-    "body": "热线电话 &amp; 在线咨询",
+    "body": "热线电话 &amp; 在线咨询 心理健康服务",
 }
 _SEARCH_RESULT_LONG_ZH = {
     "title": "心理援助热线",
@@ -96,8 +96,8 @@ class SearchServiceCleaningTests(unittest.TestCase):
 class SearchServiceDedupTests(unittest.TestCase):
     def test_deduplicates_by_url(self) -> None:
         same_url_results = [
-            {"title": "A", "href": "https://x.com/same", "body": "Content A"},
-            {"title": "B", "href": "https://x.com/same", "body": "Content B"},
+            {"title": "A", "href": "https://x.com/same", "body": "Content A with more words for testing."},
+            {"title": "B", "href": "https://x.com/same", "body": "Content B with more words for testing."},
         ]
         with patch("app.services.search_service._ddg_text", return_value=same_url_results):
             results = search_web("test", max_results=3)
@@ -119,12 +119,12 @@ class SearchServiceDedupTests(unittest.TestCase):
             {
                 "title": "Hotline A",
                 "href": "https://x.com/page1",
-                "body": "北京心理援助热线：010-82951332",
+                "body": "北京心理援助热线：010-82951332 提供24小时服务。",
             },
             {
                 "title": "Hotline B",
                 "href": "https://x.com/page2",
-                "body": "上海心理援助热线：021-12320",
+                "body": "上海心理援助热线：021-12320 提供服务支持。",
             },
         ]
         with patch("app.services.search_service._ddg_text", return_value=different):
@@ -175,14 +175,14 @@ class SearchServiceTruncationTests(unittest.TestCase):
     def test_respects_max_results_after_dedup(self) -> None:
         raw_results = []
         bodies = [
-            "北京24小时心理援助热线",
-            "上海心理健康服务中心",
-            "广州心理咨询预约平台",
-            "深圳危机干预中心",
-            "成都心理支持热线",
-            "杭州心理健康教育基地",
-            "武汉心理援助平台",
-            "南京心理咨询中心",
+            "北京24小时心理援助热线电话提供专业咨询服务",
+            "上海心理健康服务中心提供面对面咨询支持",
+            "广州心理咨询预约平台可在线预约咨询师",
+            "深圳危机干预中心提供紧急心理援助服务",
+            "成都心理支持热线为市民提供免费咨询",
+            "杭州心理健康教育基地开展公益心理讲座",
+            "武汉心理援助平台整合全市咨询资源信息",
+            "南京心理咨询中心提供专业的心理评估",
         ]
         for i in range(8):
             raw_results.append({
@@ -205,8 +205,8 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertEqual(sr2.score, 105)
 
     def test_gov_domain_scores_higher_than_random(self) -> None:
-        gov = {"title": "国家卫健委", "href": "https://www.nhc.gov.cn/health", "body": "心理援助热线资源汇总。"}
-        random = {"title": "某博客", "href": "https://blog.example.com/hotline", "body": "心理援助热线分享。"}
+        gov = {"title": "国家卫健委", "href": "https://www.nhc.gov.cn/health", "body": "国家卫生健康委员会心理援助热线资源汇总查询。"}
+        random = {"title": "某博客", "href": "https://blog.example.com/hotline", "body": "个人博客分享心理援助热线使用经验。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[random, gov]):
             results = search_web("心理援助热线", max_results=3)
@@ -217,8 +217,8 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertGreater(results[0].score, results[1].score)
 
     def test_edu_domain_scores_higher_than_random(self) -> None:
-        edu = {"title": "北大心理系", "href": "https://www.psych.pku.edu.cn/counseling", "body": "心理咨询服务介绍。"}
-        random = {"title": "某论坛", "href": "https://bbs.example.com/thread/123", "body": "心理咨询经验分享。"}
+        edu = {"title": "北大心理系", "href": "https://www.psych.pku.edu.cn/counseling", "body": "北京大学心理学系提供专业心理咨询服务介绍。"}
+        random = {"title": "某论坛", "href": "https://bbs.example.com/thread/123", "body": "论坛用户分享个人心理咨询经验与感受。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[random, edu]):
             results = search_web("心理咨询", max_results=3)
@@ -239,8 +239,8 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertGreater(results[0].score, results[1].score)
 
     def test_https_scores_higher_than_http(self) -> None:
-        https = {"title": "安全页面", "href": "https://secure.example.com/hotline", "body": "心理援助资源。"}
-        http = {"title": "非安全页面", "href": "http://insecure.example.com/hotline", "body": "心理援助资源介绍。"}
+        https = {"title": "安全页面", "href": "https://secure.example.com/hotline", "body": "安全的心理援助资源信息页面。"}
+        http = {"title": "非安全页面", "href": "http://insecure.example.com/hotline", "body": "非安全的心理援助资源介绍。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[http, https]):
             results = search_web("心理援助", max_results=3)
@@ -250,8 +250,8 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertTrue(results[0].url.startswith("https://"))
 
     def test_shallow_path_scores_higher_than_deep(self) -> None:
-        shallow = {"title": "心理健康主页", "href": "https://example.com/mental-health", "body": "心理健康服务..."}
-        deep = {"title": "论坛帖子", "href": "https://example.com/forum/thread/999/page/3", "body": "心理健康讨论..."}
+        shallow = {"title": "心理健康主页", "href": "https://example.com/mental-health", "body": "心理健康服务介绍页面提供咨询。"}
+        deep = {"title": "论坛帖子", "href": "https://example.com/forum/thread/999/page/3", "body": "论坛心理健康讨论帖子分享。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[deep, shallow]):
             results = search_web("心理健康", max_results=3)
@@ -261,8 +261,8 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertGreater(results[0].score, results[1].score)
 
     def test_authority_title_scores_higher(self) -> None:
-        authority = {"title": "北京心理援助中心官方热线", "href": "https://example.com/a", "body": "心理咨询服务。"}
-        generic = {"title": "聊聊心理援助", "href": "https://example.com/b", "body": "心理咨询服务内容。"}
+        authority = {"title": "北京心理援助中心官方热线", "href": "https://example.com/a", "body": "北京心理援助中心提供专业心理咨询服务。"}
+        generic = {"title": "聊聊心理援助", "href": "https://example.com/b", "body": "分享心理援助服务的个人使用心得。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[generic, authority]):
             results = search_web("心理援助", max_results=3)
@@ -286,13 +286,55 @@ class SearchServiceScoringTests(unittest.TestCase):
         self.assertEqual(len(results), 3)
 
     def test_score_preserved_on_result(self) -> None:
-        raw = [{"title": "T", "href": "https://example.com", "body": "心理援助热线。"}]
+        raw = [{"title": "T", "href": "https://example.com", "body": "心理援助热线电话提供咨询服务。"}]
 
         with patch("app.services.search_service._ddg_text", return_value=raw):
             results = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0].score, int)
+
+
+class SearchServiceLowInfoFilterTests(unittest.TestCase):
+    def test_filters_out_short_snippet(self) -> None:
+        short = {"title": "测试", "href": "https://x.com", "body": "短"}
+        good = {"title": "完整信息", "href": "https://x.com/2", "body": "这是一条完整的心理援助热线信息内容。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[short, good]):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://x.com/2")
+
+    def test_filters_out_click_to_read_more(self) -> None:
+        boilerplate = {"title": "某文章", "href": "https://x.com/click", "body": "点击阅读更多内容查看更多详情。"}
+        good = {"title": "热线信息", "href": "https://x.com/2", "body": "北京心理援助热线提供24小时免费心理咨询服务。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[boilerplate, good]):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://x.com/2")
+
+    def test_keeps_low_cjk_but_high_latin_info(self) -> None:
+        latin = {
+            "title": "APA Guidelines",
+            "href": "https://apa.org/guidelines",
+            "body": "The American Psychological Association provides evidence-based guidelines for mental health professionals working with diverse populations.",
+        }
+
+        with patch("app.services.search_service._ddg_text", return_value=[latin]):
+            results = search_web("psychological guidelines", max_results=3)
+
+        self.assertEqual(len(results), 1)
+
+    def test_filters_out_empty_cjk_latinsnippet(self) -> None:
+        empty = {"title": "Empty", "href": "https://x.com", "body": "a b c d"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[empty]):
+            results = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 0)
 
 
 class SearchServiceErrorTests(unittest.TestCase):
