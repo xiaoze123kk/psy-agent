@@ -561,7 +561,11 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
 
         query = _clean_text(arguments.get("query"), limit=240)
         max_results = _clamp_int(arguments.get("max_results"), default=3, minimum=1, maximum=5)
-        results = search_web(query, max_results=max_results)
+        results, error = search_web(query, max_results=max_results)
+        status = "completed" if error is None else "error"
+        error_text = None
+        if error:
+            error_text = f"search_failed: {error}"
         items: list[dict[str, Any]] = []
         for result in results:
             items.append({
@@ -572,17 +576,21 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
             })
         capture.record_preview(
             "web_search",
-            status="completed",
+            status=status,
             preview=[
                 {"title": result.title, "url": result.url}
                 for result in results[:3]
             ],
+            error=error_text,
         )
-        return {
+        output: dict[str, Any] = {
             "query": query,
             "count": len(items),
             "items": items,
         }
+        if error:
+            output["error"] = error
+        return output
 
     return web_search_tool
 

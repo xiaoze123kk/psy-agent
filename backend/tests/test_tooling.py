@@ -221,7 +221,7 @@ class WebSearchToolTests(unittest.TestCase):
 
         with patch(
             "app.services.search_service.search_web",
-            return_value=mock_results,
+            return_value=(mock_results, None),
         ):
             result = plan.tool_handlers["web_search"]({"query": "北京心理援助热线"})
 
@@ -237,7 +237,7 @@ class WebSearchToolTests(unittest.TestCase):
         state = make_state()
         plan = build_dialogue_tool_plan(state)
 
-        with patch("app.services.search_service.search_web", return_value=[]):
+        with patch("app.services.search_service.search_web", return_value=([], None)):
             result = plan.tool_handlers["web_search"]({"query": "", "max_results": 3})
 
         self.assertEqual(result["count"], 0)
@@ -257,13 +257,26 @@ class WebSearchToolTests(unittest.TestCase):
         state = make_state()
         plan = build_dialogue_tool_plan(state)
 
-        with patch("app.services.search_service.search_web", return_value=mock_results):
+        with patch("app.services.search_service.search_web", return_value=(mock_results, None)):
             plan.tool_handlers["web_search"]({"query": "help"})
 
         previews = plan.audit_capture.previews
         self.assertEqual(len(previews), 1)
         self.assertEqual(previews[0]["name"], "web_search")
         self.assertEqual(previews[0]["status"], "completed")
+
+    def test_web_search_handler_reports_error_status(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch("app.services.search_service.search_web", return_value=([], "timeout")):
+            result = plan.tool_handlers["web_search"]({"query": "help"})
+
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["error"], "timeout")
+        previews = plan.audit_capture.previews
+        self.assertEqual(previews[0]["status"], "error")
+        self.assertEqual(previews[0]["error"], "search_failed: timeout")
 
 
 class GetCurrentTimeToolTests(unittest.TestCase):

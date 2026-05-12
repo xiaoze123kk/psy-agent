@@ -213,14 +213,15 @@ def _compute_score(url: str, title: str) -> int:
     return _score_domain(url) + _score_https(url) + _score_path_shallow(url) + _score_title_authority(title)
 
 
-def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> list[SearchResult]:
+def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> tuple[list[SearchResult], str | None]:
     """Search DuckDuckGo for the given query, returning cleaned, deduplicated results ranked by authority.
 
-    Returns an empty list on any error (network, timeout, parse, etc.).
+    Returns (results, error_message). error_message is None on success or no results found,
+    set to "timeout" or "network_error" on failures.
     """
     cleaned_query = _clean_text(query, limit=240)
     if not cleaned_query:
-        return []
+        return [], None
 
     limit = _clamp_int(max_results, default=DEFAULT_MAX_RESULTS, minimum=1, maximum=5)
 
@@ -230,10 +231,10 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
             raw_items = future.result(timeout=timeout_seconds)
     except TimeoutError:
         logger.warning("DuckDuckGo search timed out after %.1fs for query: %s", timeout_seconds, cleaned_query[:80])
-        return []
+        return [], "timeout"
     except Exception:
         logger.warning("DuckDuckGo search failed for query: %s", cleaned_query[:80])
-        return []
+        return [], "network_error"
 
     candidates: list[SearchResult] = []
     seen_urls: set[str] = set()
@@ -270,4 +271,4 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
 
     # Sort by score descending (higher authority first), then take top-N
     candidates.sort(key=lambda r: r.score, reverse=True)
-    return candidates[:limit]
+    return candidates[:limit], None

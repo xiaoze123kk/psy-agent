@@ -49,7 +49,7 @@ class SearchServiceCleaningTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_ELLIPSIS],
         ):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].title, "心理援助")
@@ -60,7 +60,7 @@ class SearchServiceCleaningTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_HTML_ENTITY],
         ):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].title, "心理&援助")
@@ -68,7 +68,7 @@ class SearchServiceCleaningTests(unittest.TestCase):
 
     def test_empty_query_returns_empty(self) -> None:
         with patch("app.services.search_service._ddg_text", return_value=[]):
-            results = search_web("   ", max_results=3)
+            results, _ = search_web("   ", max_results=3)
 
         self.assertEqual(results, [])
 
@@ -77,7 +77,7 @@ class SearchServiceCleaningTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_NEARLY_EMPTY, _SEARCH_RESULT_FULL],
         ):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].title, "心理援助热线")
@@ -87,7 +87,7 @@ class SearchServiceCleaningTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_MISSING_URL, _SEARCH_RESULT_FULL],
         ):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].url, "https://example.com/hotline")
@@ -100,7 +100,7 @@ class SearchServiceDedupTests(unittest.TestCase):
             {"title": "B", "href": "https://x.com/same", "body": "Content B with more words for testing."},
         ]
         with patch("app.services.search_service._ddg_text", return_value=same_url_results):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 1)
 
@@ -109,7 +109,7 @@ class SearchServiceDedupTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_FULL, _SEARCH_RESULT_DUPLICATE_CONTENT],
         ):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].url, "https://example.com/hotline")
@@ -128,7 +128,7 @@ class SearchServiceDedupTests(unittest.TestCase):
             },
         ]
         with patch("app.services.search_service._ddg_text", return_value=different):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 2)
 
@@ -139,7 +139,7 @@ class SearchServiceTruncationTests(unittest.TestCase):
         raw = [{"title": "T", "href": "https://x.com", "body": long_body}]
 
         with patch("app.services.search_service._ddg_text", return_value=raw):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 1)
         snippet = results[0].snippet
@@ -152,7 +152,7 @@ class SearchServiceTruncationTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_LONG_ZH],
         ):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 1)
         snippet = results[0].snippet
@@ -166,7 +166,7 @@ class SearchServiceTruncationTests(unittest.TestCase):
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_FULL],
         ):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertIn("400-161-9995", results[0].snippet)
@@ -192,7 +192,7 @@ class SearchServiceTruncationTests(unittest.TestCase):
             })
 
         with patch("app.services.search_service._ddg_text", return_value=raw_results):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 3)
 
@@ -209,7 +209,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         random = {"title": "某博客", "href": "https://blog.example.com/hotline", "body": "个人博客分享心理援助热线使用经验。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[random, gov]):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 2)
         # gov should be first because it scores much higher
@@ -221,7 +221,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         random = {"title": "某论坛", "href": "https://bbs.example.com/thread/123", "body": "论坛用户分享个人心理咨询经验与感受。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[random, edu]):
-            results = search_web("心理咨询", max_results=3)
+            results, _ = search_web("心理咨询", max_results=3)
 
         self.assertEqual(len(results), 2)
         self.assertIn("pku.edu.cn", results[0].url)
@@ -232,7 +232,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         random = {"title": "随便说说", "href": "https://random.example.com/hotline", "body": "我觉得心理援助热线还挺有用的分享一些经验。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[random, baike]):
-            results = search_web("心理援助热线", max_results=3)
+            results, _ = search_web("心理援助热线", max_results=3)
 
         self.assertEqual(len(results), 2)
         self.assertIn("baike.baidu.com", results[0].url)
@@ -243,7 +243,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         http = {"title": "非安全页面", "href": "http://insecure.example.com/hotline", "body": "非安全的心理援助资源介绍。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[http, https]):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 2)
         self.assertGreater(results[0].score, results[1].score)
@@ -254,7 +254,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         deep = {"title": "论坛帖子", "href": "https://example.com/forum/thread/999/page/3", "body": "论坛心理健康讨论帖子分享。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[deep, shallow]):
-            results = search_web("心理健康", max_results=3)
+            results, _ = search_web("心理健康", max_results=3)
 
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0].url, "https://example.com/mental-health")
@@ -265,7 +265,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         generic = {"title": "聊聊心理援助", "href": "https://example.com/b", "body": "分享心理援助服务的个人使用心得。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[generic, authority]):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 2)
         self.assertGreater(results[0].score, results[1].score)
@@ -281,7 +281,7 @@ class SearchServiceScoringTests(unittest.TestCase):
             })
 
         with patch("app.services.search_service._ddg_text", return_value=items):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 3)
 
@@ -289,7 +289,7 @@ class SearchServiceScoringTests(unittest.TestCase):
         raw = [{"title": "T", "href": "https://example.com", "body": "心理援助热线电话提供咨询服务。"}]
 
         with patch("app.services.search_service._ddg_text", return_value=raw):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0].score, int)
@@ -301,7 +301,7 @@ class SearchServiceLowInfoFilterTests(unittest.TestCase):
         good = {"title": "完整信息", "href": "https://x.com/2", "body": "这是一条完整的心理援助热线信息内容。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[short, good]):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].url, "https://x.com/2")
@@ -311,7 +311,7 @@ class SearchServiceLowInfoFilterTests(unittest.TestCase):
         good = {"title": "热线信息", "href": "https://x.com/2", "body": "北京心理援助热线提供24小时免费心理咨询服务。"}
 
         with patch("app.services.search_service._ddg_text", return_value=[boilerplate, good]):
-            results = search_web("心理援助", max_results=3)
+            results, _ = search_web("心理援助", max_results=3)
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].url, "https://x.com/2")
@@ -324,7 +324,7 @@ class SearchServiceLowInfoFilterTests(unittest.TestCase):
         }
 
         with patch("app.services.search_service._ddg_text", return_value=[latin]):
-            results = search_web("psychological guidelines", max_results=3)
+            results, _ = search_web("psychological guidelines", max_results=3)
 
         self.assertEqual(len(results), 1)
 
@@ -332,21 +332,22 @@ class SearchServiceLowInfoFilterTests(unittest.TestCase):
         empty = {"title": "Empty", "href": "https://x.com", "body": "a b c d"}
 
         with patch("app.services.search_service._ddg_text", return_value=[empty]):
-            results = search_web("test", max_results=3)
+            results, _ = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 0)
 
 
 class SearchServiceErrorTests(unittest.TestCase):
-    def test_network_error_returns_empty(self) -> None:
+    def test_network_error_returns_empty_and_error_message(self) -> None:
         with patch(
             "app.services.search_service._ddg_text",
             side_effect=Exception("network timeout"),
         ):
-            results = search_web("crisis hotline", max_results=3)
+            results, err = search_web("crisis hotline", max_results=3)
         self.assertEqual(results, [])
+        self.assertEqual(err, "network_error")
 
-    def test_timeout_returns_empty(self) -> None:
+    def test_timeout_returns_empty_and_error_message(self) -> None:
         import time
 
         def slow_search(*args, **kwargs):
@@ -354,8 +355,23 @@ class SearchServiceErrorTests(unittest.TestCase):
             return []
 
         with patch("app.services.search_service._ddg_text", side_effect=slow_search):
-            results = search_web("test", max_results=3, timeout_seconds=0.1)
+            results, err = search_web("test", max_results=3, timeout_seconds=0.1)
         self.assertEqual(results, [])
+        self.assertEqual(err, "timeout")
+
+    def test_success_returns_no_error(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
+        ):
+            results, err = search_web("test", max_results=3)
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(err)
+
+    def test_empty_query_returns_no_error(self) -> None:
+        results, err = search_web("   ", max_results=3)
+        self.assertEqual(results, [])
+        self.assertIsNone(err)
 
 
 if __name__ == "__main__":
