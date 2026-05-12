@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from app.services.tooling import ToolGate, build_dialogue_tool_plan, summarize_tool_events
+from app.services.tooling import LOW_RISK_LEVELS, TOOL_SPEC_BY_NAME, ToolGate, build_dialogue_tool_plan, summarize_tool_events
 
 
 def make_state(
@@ -172,6 +173,97 @@ class ToolAuditSummaryTests(unittest.TestCase):
         self.assertEqual(summary["status_counts"]["completed"], 1)
         self.assertEqual(summary["status_counts"]["error"], 1)
         self.assertEqual(summary["error_count"], 1)
+
+
+class WebSearchToolTests(unittest.TestCase):
+    def test_web_search_spec_is_registered(self) -> None:
+        spec = TOOL_SPEC_BY_NAME.get("web_search")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.name, "web_search")
+        self.assertEqual(spec.enabled_by_default, True)
+        self.assertEqual(spec.allowed_risk_levels, LOW_RISK_LEVELS)
+        tool_def = spec.to_deepseek_tool()
+        self.assertEqual(tool_def["function"]["name"], "web_search")
+        self.assertIn("query", tool_def["function"]["parameters"]["properties"])
+
+    def test_web_search_appears_in_low_risk_plan(self) -> None:
+        plan = build_dialogue_tool_plan(make_state())
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+
+        self.assertIn("web_search", tool_names)
+        self.assertIn("web_search", plan.allowed_tool_names)
+        self.assertNotIn("web_search", plan.blocked_tool_names)
+
+    def test_web_search_blocked_at_high_risk(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertNotIn("web_search", tool_names)
+        self.assertIn("web_search", plan.blocked_tool_names)
+
+    @staticmethod
+    def _search_result(title: str, url: str, snippet: str) -> dict[str, object]:
+        return {"title": title, "href": url, "body": snippet}
+
+    def test_web_search_handler_returns_search_results(self) -> None:
+        from app.services.search_service import SearchResult
+
+        mock_results = [
+            SearchResult(
+                title="北京心理援助热线",
+                url="https://example.com/beijing",
+                snippet="北京市心理援助热线：010-82951332",
+            ),
+        ]
+
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch(
+            "app.services.tooling.search_web",
+            return_value=mock_results,
+        ):
+            result = plan.tool_handlers["web_search"]({"query": "北京心理援助热线"})
+
+        self.assertEqual(result["query"], "北京心理援助热线")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["title"], "北京心理援助热线")
+        self.assertEqual(item["url"], "https://example.com/beijing")
+        self.assertIn("010-82951332", item["snippet"])
+
+    def test_web_search_handler_empty_query(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch("app.services.tooling.search_web", return_value=[]):
+            result = plan.tool_handlers["web_search"]({"query": "", "max_results": 3})
+
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["items"], [])
+
+    def test_web_search_handler_records_preview(self) -> None:
+        from app.services.search_service import SearchResult
+
+        mock_results = [
+            SearchResult(
+                title="Hotline",
+                url="https://example.com/hotline",
+                snippet="A helpful resource.",
+            ),
+        ]
+
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch("app.services.tooling.search_web", return_value=mock_results):
+            plan.tool_handlers["web_search"]({"query": "help"})
+
+        previews = plan.audit_capture.previews
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0]["name"], "web_search")
+        self.assertEqual(previews[0]["status"], "completed")
 
 
 if __name__ == "__main__":
