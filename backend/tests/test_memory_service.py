@@ -373,15 +373,14 @@ class MemoryServiceTests(unittest.TestCase):
             )
         )
         self.db.refresh(existing)
+        embeddings_by_memory_id = {row.memory_id: row for row in embeddings}
 
         self.assertEqual(select_count, 1)
         self.assertEqual(len(embeddings), 2)
-        self.assertEqual(embeddings[0].memory_id, first.id)
-        self.assertEqual(embeddings[0].embedding, [1.0, 2.0])
-        self.assertEqual(embeddings[0].embedding_model, "test-model")
-        self.assertEqual(embeddings[0].embedding_key, "test:embedding:2")
-        self.assertEqual(embeddings[1].memory_id, second.id)
-        self.assertEqual(embeddings[1].embedding, [2.0, 3.0])
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding, [1.0, 2.0])
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding_model, "test-model")
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding_key, "test:embedding:2")
+        self.assertEqual(embeddings_by_memory_id[second.id].embedding, [2.0, 3.0])
         self.assertEqual(existing.embedding, [1.0, 2.0])
 
     def test_vector_retrieval_recall_and_precision_metrics(self) -> None:
