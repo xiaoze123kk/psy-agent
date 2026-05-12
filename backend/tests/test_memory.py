@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import create_engine
@@ -32,7 +33,7 @@ from app.db.models import (
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
-from app.services.memory_job_service import process_memory_job, process_pending_memory_jobs
+from app.services.memory_job_service import claim_pending_memory_jobs, process_memory_job, process_pending_memory_jobs
 
 
 class MemoryApiTests(unittest.TestCase):
@@ -438,6 +439,52 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(user)
         self.db.refresh(thread)
         return user, thread
+
+    async def test_claim_pending_memory_jobs_uses_row_level_lock(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        turn = ConversationTurn(
+            user_id=user.id,
+            thread_id=thread.id,
+            client_message_id="client-claim-lock",
+            request_hash="hash-claim-lock",
+            turn_status="completed",
+            response_snapshot={},
+        )
+        self.db.add(turn)
+        self.db.flush()
+        job = PendingMemoryJob(
+            user_id=user.id,
+            thread_id=thread.id,
+            turn_id=turn.id,
+            assistant_message_id=None,
+            job_type="memory_write",
+            status="pending",
+            attempt_count=0,
+            max_attempts=3,
+            next_run_at=utcnow(),
+            payload={"should_write_memory": False},
+        )
+        self.db.add(job)
+        self.db.commit()
+
+        captured_statement = None
+
+        def fake_scalars(statement):
+            nonlocal captured_statement
+            captured_statement = statement
+            return [job]
+
+        with patch.object(self.db, "scalars", side_effect=fake_scalars):
+            claimed = claim_pending_memory_jobs(self.db, limit=1, worker_id="worker-a")
+
+        self.assertEqual(claimed, [job])
+        self.assertIsNotNone(captured_statement)
+        self.assertIn("FOR UPDATE", str(captured_statement.compile(dialect=postgresql.dialect())).upper())
+        self.assertIn("SKIP LOCKED", str(captured_statement.compile(dialect=postgresql.dialect())).upper())
+        self.db.refresh(job)
+        self.assertEqual(job.status, "running")
+        self.assertEqual(job.attempt_count, 1)
+        self.assertEqual(job.locked_by, "worker-a")
 
     def add_memory(
         self,

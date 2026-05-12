@@ -56,6 +56,12 @@
 - 重试结束后会记录包含 `memory_ids` 的告警日志，便于回溯具体失败记忆。
 - 新增回归测试，确认 Milvus 写入失败时会重试 3 次并输出告警日志。
 
+#### 7. claim_pending_memory_jobs 行级锁
+
+- `claim_pending_memory_jobs()` 在待领取查询上加入 `FOR UPDATE SKIP LOCKED`，多个 worker 并发扫表时不会重复领取同一批 pending job。
+- 保持按 `created_at` 排序和批量领取逻辑不变，只收紧领取阶段的并发控制。
+- 新增回归测试，确认领取查询会生成 `SKIP LOCKED`，并且 job 被标记为 `running` 后才提交。
+
 ### 验证结果
 
 在 `backend/` 目录执行：
@@ -74,6 +80,13 @@ warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 S
 ```
 
 结果：`43 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
+
+在 `backend/` 目录追加执行：
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py -q
+```
+
+结果：`51 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
 ### 相关提交
 
 | Commit | 内容 |
@@ -90,9 +103,8 @@ warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 S
 
 以下问题仍留作后续迭代：
 
-- `claim_pending_memory_jobs()` 的多 worker 行级锁竞争处理。
 - 记忆列表 / 审计接口分页。
 
 ### 结论
 
-本轮完成了六类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引会跟随删除和过期状态清理，Milvus 写入失败时也会重试并留下失败线索。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。
+本轮完成了七类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引会跟随删除和过期状态清理，Milvus 写入失败时也会重试并留下失败线索，`claim_pending_memory_jobs()` 也会在并发领取时避开重复抢占。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。

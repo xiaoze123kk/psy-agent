@@ -130,6 +130,7 @@ def claim_pending_memory_jobs(
             )
             .order_by(PendingMemoryJob.created_at)
             .limit(batch_size)
+            .with_for_update(skip_locked=True)
         )
     )
     for job in jobs:
