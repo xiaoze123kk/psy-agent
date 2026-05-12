@@ -33,6 +33,7 @@ VISIBLE_MEMORY_TYPES = {
     "support_strategy",
     "relationship",
     "state",
+    "goal",
 }
 INTERNAL_MEMORY_TYPES = {"safety_summary"}
 ALL_MEMORY_TYPES = VISIBLE_MEMORY_TYPES | INTERNAL_MEMORY_TYPES
@@ -259,6 +260,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                             "importance": {"type": "integer", "minimum": 1, "maximum": 5},
                             "tags": {"type": "array", "items": {"type": "string"}},
                             "visibility": {"type": "string", "enum": ["user_visible", "internal_safety"]},
+                            "structured_value": {
+                                "type": "object",
+                                "description": "Optional structured metadata for goal-type memories (e.g. goal_status, goal_category, completed_at).",
+                            },
                         },
                         "required": ["content"],
                         "additionalProperties": False,
@@ -461,7 +466,7 @@ def _normalize_memory_candidate(
     visibility = "internal_safety" if memory_type == "safety_summary" or risk_level in HIGH_RISK_LEVELS else "user_visible"
     if _clean_text(raw.get("visibility"), limit=24) == "internal_safety":
         visibility = "internal_safety"
-    return {
+    normalized: dict[str, Any] = {
         "memory_type": memory_type,
         "title": title,
         "summary": summary,
@@ -470,6 +475,10 @@ def _normalize_memory_candidate(
         "tags": _unique_strings(raw.get("tags")),
         "visibility": visibility,
     }
+    # Pass through structured_value for goal-type memories
+    if isinstance(raw.get("structured_value"), dict):
+        normalized["structured_value"] = dict(raw["structured_value"])
+    return normalized
 
 
 def _build_search_memories_handler(state: Mapping[str, Any], capture: ToolAuditCapture) -> ToolHandler:

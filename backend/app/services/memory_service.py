@@ -33,6 +33,7 @@ VISIBLE_MEMORY_TYPES = {
     "support_strategy",
     "relationship",
     "state",
+    "goal",
 }
 INTERNAL_MEMORY_TYPES = {"safety_summary"}
 ALL_MEMORY_TYPES = VISIBLE_MEMORY_TYPES | INTERNAL_MEMORY_TYPES
@@ -45,6 +46,7 @@ MEMORY_TYPE_LABELS = {
     "support_strategy": "支持方式",
     "relationship": "关系记忆",
     "state": "长期状态",
+    "goal": "小目标",
     "safety_summary": "安全摘要",
 }
 
@@ -56,6 +58,7 @@ MEMORY_TYPE_ORDER = [
     "support_strategy",
     "relationship",
     "state",
+    "goal",
     "safety_summary",
 ]
 

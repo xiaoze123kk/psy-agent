@@ -134,6 +134,54 @@ class MemoryToolHandlerTests(unittest.TestCase):
         self.assertEqual(result["memory_candidates"][0]["title"], "Reassurance first")
         self.assertEqual(result["memory_candidates"][1]["memory_type"], "session_summary")
 
+    def test_save_memory_summary_handles_goal_candidate(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["save_memory_summary"](
+            {
+                "session_summary": "User set a small goal.",
+                "memory_candidates": [
+                    {
+                        "memory_type": "goal",
+                        "title": "每天散步",
+                        "content": "每天下楼散步至少10分钟",
+                        "importance": 4,
+                        "tags": ["散步", "运动"],
+                        "structured_value": {"goal_status": "active", "goal_category": "routine"},
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(result["session_summary"], "User set a small goal.")
+        self.assertEqual(len(result["memory_candidates"]), 1)
+        candidate = result["memory_candidates"][0]
+        self.assertEqual(candidate["memory_type"], "goal")
+        self.assertEqual(candidate["content"], "每天下楼散步至少10分钟")
+        self.assertEqual(candidate["structured_value"]["goal_status"], "active")
+        self.assertEqual(candidate["structured_value"]["goal_category"], "routine")
+
+    def test_save_memory_summary_goal_candidate_strips_invalid_structured_value(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["save_memory_summary"](
+            {
+                "session_summary": "Goal test.",
+                "memory_candidates": [
+                    {
+                        "memory_type": "goal",
+                        "content": "每天冥想5分钟",
+                        "structured_value": "not-a-dict",
+                    },
+                ],
+            }
+        )
+
+        candidate = result["memory_candidates"][0]
+        self.assertNotIn("structured_value", candidate)
+
     def test_get_safety_resources_handler_uses_region_and_audience(self) -> None:
         state = make_state(user_mode="teen", crisis_resource_region="US")
         plan = build_dialogue_tool_plan(state)
