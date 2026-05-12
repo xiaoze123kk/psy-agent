@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.services.tooling import LOW_RISK_LEVELS, TOOL_SPEC_BY_NAME, ToolGate, build_dialogue_tool_plan, summarize_tool_events
+from app.services.tooling import ALL_RISK_LEVELS, LOW_RISK_LEVELS, TOOL_SPEC_BY_NAME, ToolGate, build_dialogue_tool_plan, summarize_tool_events
 
 
 def make_state(
@@ -44,7 +44,7 @@ class ToolGateTests(unittest.TestCase):
         plan = build_dialogue_tool_plan(make_state())
         tool_names = [tool["function"]["name"] for tool in plan.tools]
 
-        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search"])
+        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time"])
         self.assertEqual(plan.allowed_tool_names, tool_names)
         self.assertNotIn("ask_knowledge", tool_names)
         self.assertFalse(plan.blocked_tool_names)
@@ -52,15 +52,15 @@ class ToolGateTests(unittest.TestCase):
     def test_high_risk_plan_limits_to_safety_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
 
-        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources"])
-        self.assertEqual(plan.allowed_tool_names, ["get_safety_resources"])
+        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time"])
+        self.assertEqual(plan.allowed_tool_names, ["get_safety_resources", "get_current_time"])
         self.assertIn("search_memories", plan.blocked_tool_names)
         self.assertIn("save_memory_summary", plan.blocked_tool_names)
 
     def test_memory_mode_off_limits_to_safety_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(memory_mode="off"))
 
-        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources"])
+        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time"])
 
 
 class MemoryToolHandlerTests(unittest.TestCase):
@@ -263,6 +263,80 @@ class WebSearchToolTests(unittest.TestCase):
         previews = plan.audit_capture.previews
         self.assertEqual(len(previews), 1)
         self.assertEqual(previews[0]["name"], "web_search")
+        self.assertEqual(previews[0]["status"], "completed")
+
+
+class GetCurrentTimeToolTests(unittest.TestCase):
+    def test_get_current_time_spec_is_registered(self) -> None:
+        spec = TOOL_SPEC_BY_NAME.get("get_current_time")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.name, "get_current_time")
+        self.assertEqual(spec.enabled_by_default, True)
+        self.assertEqual(spec.allowed_risk_levels, ALL_RISK_LEVELS)
+        tool_def = spec.to_deepseek_tool()
+        self.assertEqual(tool_def["function"]["name"], "get_current_time")
+        self.assertEqual(tool_def["function"]["parameters"]["properties"], {})
+
+    def test_get_current_time_appears_in_low_risk_plan(self) -> None:
+        plan = build_dialogue_tool_plan(make_state())
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+
+        self.assertIn("get_current_time", tool_names)
+
+    def test_get_current_time_available_at_high_risk(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertIn("get_current_time", tool_names)
+
+    def test_get_current_time_available_with_memory_off(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(memory_mode="off"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertIn("get_current_time", tool_names)
+
+    def test_get_current_time_handler_returns_time_fields(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["get_current_time"]({})
+
+        self.assertIn("utc_iso", result)
+        self.assertIn("local_iso", result)
+        self.assertIn("timezone", result)
+        self.assertIn("weekday", result)
+        self.assertIn("session_elapsed_seconds", result)
+        self.assertEqual(result["timezone"], "Asia/Shanghai")
+        self.assertIn(result["weekday"], {"星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"})
+
+    def test_get_current_time_session_elapsed_starts_at_zero(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["get_current_time"]({})
+        self.assertEqual(result["session_elapsed_seconds"], 0.0)
+
+    def test_get_current_time_session_elapsed_increases(self) -> None:
+        import time
+
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        first = plan.tool_handlers["get_current_time"]({})
+        time.sleep(0.05)
+        second = plan.tool_handlers["get_current_time"]({})
+
+        self.assertGreater(second["session_elapsed_seconds"], first["session_elapsed_seconds"])
+
+    def test_get_current_time_records_preview(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        plan.tool_handlers["get_current_time"]({})
+
+        previews = plan.audit_capture.previews
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0]["name"], "get_current_time")
         self.assertEqual(previews[0]["status"], "completed")
 
 

@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.schemas.common import SafetyAudience
@@ -144,6 +144,7 @@ class ToolGate:
             names.extend(["search_memories", "save_memory_summary"])
         names.append("get_safety_resources")
         names.append("web_search")
+        names.append("get_current_time")
         if self.knowledge_enabled and not high_risk:
             names.append("ask_knowledge")
         return [name for name in names if self.allows(name)]
@@ -167,10 +168,10 @@ class ToolGate:
         if self.risk_level not in spec.allowed_risk_levels:
             return False
         if self.risk_level in HIGH_RISK_LEVELS:
-            return name in SAFETY_TOOL_NAMES
+            return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
         if self.memory_mode == "off":
-            return name in SAFETY_TOOL_NAMES
-        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
+            return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
+        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search", "get_current_time"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
 
 
 @dataclass
@@ -322,6 +323,16 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                 },
             },
             "required": ["query"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
+        name="get_current_time",
+        description="Get the current date, time, timezone, weekday, and how long the session has been running.",
+        allowed_risk_levels=ALL_RISK_LEVELS,
+        parameters={
+            "type": "object",
+            "properties": {},
             "additionalProperties": False,
         },
     ),
@@ -576,6 +587,37 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
     return web_search_tool
 
 
+def _build_get_current_time_handler(capture: ToolAuditCapture) -> ToolHandler:
+    tz_cn = timezone(timedelta(hours=8))
+    _WEEKDAY_NAMES = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    _session_start: datetime | None = None
+
+    def get_current_time(_arguments: dict[str, Any]) -> dict[str, Any]:
+        nonlocal _session_start
+        now = datetime.now(timezone.utc)
+        local = now.astimezone(tz_cn)
+        if _session_start is None:
+            _session_start = now
+            elapsed = 0.0
+        else:
+            elapsed = (now - _session_start).total_seconds()
+        result = {
+            "utc_iso": now.isoformat(),
+            "local_iso": local.strftime("%Y-%m-%d %H:%M:%S"),
+            "timezone": "Asia/Shanghai",
+            "weekday": _WEEKDAY_NAMES[local.weekday()],
+            "session_elapsed_seconds": round(elapsed, 1),
+        }
+        capture.record_preview(
+            "get_current_time",
+            status="completed",
+            preview={"local_iso": result["local_iso"], "weekday": result["weekday"]},
+        )
+        return result
+
+    return get_current_time
+
+
 def _tool_prompt_hint(tool_names: list[str]) -> str:
     if not tool_names:
         return ""
@@ -584,6 +626,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "save_memory_summary": "save_memory_summary: produce safe summaries/candidate memories for the backend memory pipeline; it does not write directly.",
         "get_safety_resources": "get_safety_resources: return minimal safety resources by region/audience when real-world support is relevant.",
         "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
+        "get_current_time": "get_current_time: return current UTC/local time, weekday, timezone, and session elapsed seconds.",
     }
     lines = [
         "",
@@ -627,6 +670,8 @@ def build_dialogue_tool_plan(
         handlers["get_safety_resources"] = _build_get_safety_resources_handler(state, capture)
     if "web_search" in allowed_names:
         handlers["web_search"] = _build_web_search_handler(state, capture)
+    if "get_current_time" in allowed_names:
+        handlers["get_current_time"] = _build_get_current_time_handler(capture)
 
     specs = [TOOL_SPEC_BY_NAME[name] for name in allowed_names if name in TOOL_SPEC_BY_NAME]
     return DialogueToolPlan(
