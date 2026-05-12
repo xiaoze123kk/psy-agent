@@ -63,6 +63,8 @@
 
 **额外加分**：HTTPS (+5)、URL 路径 ≤2 层 (+5)、标题含 "官方/热线/中心/医院/卫健委" 等 (+10)
 
+| 9 | 错误状态传递 | 2026-05-12 | `search_web` 返回 `(results, error)` 元组；handler 在超时/网络异常时设 `status="error"`，LLM 可区分"无结果"与"搜索失败" |
+
 ---
 
 ## get_current_time 工具
@@ -99,8 +101,8 @@ search_service.py
 
 | 测试文件 | 测试数 | 覆盖内容 |
 |----------|--------|----------|
-| `tests/test_tooling.py` | 22 | ToolGate 规则、所有 handler 行为、audit capture |
-| `tests/test_search_service.py` | 27 | 清洗、去重、截断、评分、低信息过滤、错误处理、超时 |
+| `tests/test_tooling.py` | 23 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递 |
+| `tests/test_search_service.py` | 29 | 清洗、去重、截断、评分、低信息过滤、错误处理、超时、error tuple |
 | `tests/test_tooling_integration.py` | 1 | 端到端 tool audit + memory patch 流转 |
 
-**全量**：298 passed, 2 skipped, 0 failures
+**全量**：301 passed, 2 skipped, 0 failures
