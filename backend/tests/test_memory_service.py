@@ -6,7 +6,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -25,6 +25,7 @@ from app.db.models import (
 from app.services.memory_service import (
     build_memory_index,
     consolidate_user_memories,
+    index_memory_embeddings,
     maybe_auto_consolidate_user_memories,
     retrieve_memories_for_turn,
     upsert_memory_candidates,
@@ -302,6 +303,86 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(results[0]["why_selected"], "vector_semantic_match")
         self.assertEqual(fake_store.calls[0]["user_id"], user.id)
         self.assertIn("support_strategy", fake_store.calls[0]["memory_types"])
+
+    def test_index_memory_embeddings_loads_existing_rows_once_for_multiple_memories(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        first = self.add_memory(user, memory_type="preference", content="prefers grounding before advice")
+        second = self.add_memory(user, memory_type="support_strategy", content="box breathing helps when anxious")
+        existing = memory_service.MemoryEmbedding(
+            memory_id=first.id,
+            user_id=user.id,
+            embedding=[0.1, 0.2],
+            embedding_model="test-model",
+            embedding_key="test:embedding:2",
+            content_hash="old-hash",
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        original_env = os.environ.get("MEMORY_EMBEDDINGS_ENABLED")
+        os.environ["MEMORY_EMBEDDINGS_ENABLED"] = "1"
+        original_client = memory_service.embedding_client
+
+        class FakeEmbeddingClient:
+            is_configured = True
+            model = "test-model"
+            embedding_key = "test:embedding:2"
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [[float(index + 1), float(index + 2)] for index, _ in enumerate(texts)]
+
+        fake_client = FakeEmbeddingClient()
+        memory_service.embedding_client = fake_client
+        original_store = memory_service.milvus_store
+
+        class FakeMilvusStore:
+            is_enabled = True
+
+            def upsert_memory_vectors(self, rows):
+                self.rows = rows
+
+        memory_service.milvus_store = FakeMilvusStore()
+        select_count = 0
+
+        def count_memory_embedding_selects(conn, cursor, statement, parameters, context, executemany):
+            nonlocal select_count
+            normalized = statement.lower()
+            if "select" in normalized and "from memory_embeddings" in normalized:
+                select_count += 1
+
+        event.listen(self.engine, "before_cursor_execute", count_memory_embedding_selects)
+        try:
+            import asyncio
+
+            asyncio.run(index_memory_embeddings(self.db, [first, second]))
+            self.db.commit()
+        finally:
+            event.remove(self.engine, "before_cursor_execute", count_memory_embedding_selects)
+            memory_service.embedding_client = original_client
+            memory_service.milvus_store = original_store
+            if original_env is None:
+                os.environ.pop("MEMORY_EMBEDDINGS_ENABLED", None)
+            else:
+                os.environ["MEMORY_EMBEDDINGS_ENABLED"] = original_env
+
+        embeddings = list(
+            self.db.scalars(
+                select(memory_service.MemoryEmbedding)
+                .where(memory_service.MemoryEmbedding.user_id == user.id)
+                .order_by(memory_service.MemoryEmbedding.memory_id)
+            )
+        )
+        self.db.refresh(existing)
+
+        self.assertEqual(select_count, 1)
+        self.assertEqual(len(embeddings), 2)
+        self.assertEqual(embeddings[0].memory_id, first.id)
+        self.assertEqual(embeddings[0].embedding, [1.0, 2.0])
+        self.assertEqual(embeddings[0].embedding_model, "test-model")
+        self.assertEqual(embeddings[0].embedding_key, "test:embedding:2")
+        self.assertEqual(embeddings[1].memory_id, second.id)
+        self.assertEqual(embeddings[1].embedding, [2.0, 3.0])
+        self.assertEqual(existing.embedding, [1.0, 2.0])
 
     def test_vector_retrieval_recall_and_precision_metrics(self) -> None:
         user = self.create_user(memory_mode="long_term")

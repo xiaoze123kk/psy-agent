@@ -841,15 +841,21 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
     vectors = await embedding_client.embed_texts(texts)
     if not vectors or len(vectors) != len(active_memories):
         return
+    memory_ids = [memory.id for memory in active_memories]
+    existing_embeddings: dict[str, MemoryEmbedding] = {}
+    for existing in db.scalars(
+        select(MemoryEmbedding)
+        .where(
+            MemoryEmbedding.memory_id.in_(memory_ids),
+            MemoryEmbedding.embedding_key == embedding_client.embedding_key,
+        )
+        .order_by(desc(MemoryEmbedding.updated_at), desc(MemoryEmbedding.created_at))
+    ):
+        existing_embeddings.setdefault(existing.memory_id, existing)
     milvus_rows: list[dict[str, Any]] = []
     for memory, vector in zip(active_memories, vectors):
         content_hash = sha256(memory.content.encode("utf-8")).hexdigest()
-        existing = db.scalar(
-            select(MemoryEmbedding).where(
-                MemoryEmbedding.memory_id == memory.id,
-                MemoryEmbedding.embedding_key == embedding_client.embedding_key,
-            )
-        )
+        existing = existing_embeddings.get(memory.id)
         if existing is None:
             db.add(
                 MemoryEmbedding(
