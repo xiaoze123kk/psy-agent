@@ -557,6 +557,7 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
                 "title": result.title,
                 "url": result.url,
                 "snippet": result.snippet,
+                "score": result.score,
             })
         capture.record_preview(
             "web_search",

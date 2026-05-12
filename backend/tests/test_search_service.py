@@ -36,7 +36,6 @@ _SEARCH_RESULT_LONG_ZH = {
     "href": "https://example.com/long",
     "body": "全国心理援助热线是为公众提供专业心理支持的公益服务。当您感到焦虑、抑郁或需要倾诉时，可以随时拨打热线电话获得帮助。经过专业培训的咨询师会倾听您的困扰，并提供有效的支持和建议。",
 }
-# Nearly identical snippet to _SEARCH_RESULT_FULL body (same phone number, similar text)
 _SEARCH_RESULT_DUPLICATE_CONTENT = {
     "title": "Another Source for Hotline",
     "href": "https://other.example.com/hotline-dup",
@@ -106,8 +105,6 @@ class SearchServiceDedupTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
 
     def test_deduplicates_by_snippet_similarity(self) -> None:
-        # _SEARCH_RESULT_FULL and _SEARCH_RESULT_DUPLICATE_CONTENT share the same
-        # phone number in the first 60 chars — should be treated as duplicates
         with patch(
             "app.services.search_service._ddg_text",
             return_value=[_SEARCH_RESULT_FULL, _SEARCH_RESULT_DUPLICATE_CONTENT],
@@ -147,7 +144,6 @@ class SearchServiceTruncationTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         snippet = results[0].snippet
         self.assertLessEqual(len(snippet), 300)
-        # Should end at a word boundary (space), not mid-word
         if len(snippet) < len(long_body):
             self.assertFalse(snippet[-1].isalnum())
 
@@ -161,12 +157,9 @@ class SearchServiceTruncationTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         snippet = results[0].snippet
         self.assertLessEqual(len(snippet), 300)
-        # Should end at CJK-safe boundary (, . ...  etc.)
         last_char = snippet[-1]
-        safe_endings = {"\u3002", "\uFF0C", "\uFF0E", "\uFF1F", "\uFF01", "\uFF1B"}
         if len(snippet) < 280 and last_char.isascii():
             self.assertIn(last_char, {" ", ".", "!", "?", ",", ":", ";", "\n"})
-        # Otherwise it was just long enough before the boundary check hit
 
     def test_short_content_not_truncated(self) -> None:
         with patch(
@@ -177,7 +170,6 @@ class SearchServiceTruncationTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertIn("400-161-9995", results[0].snippet)
-        # Full content should be present (it's short enough)
         self.assertTrue(results[0].snippet.startswith("全国心理援助热线"))
 
     def test_respects_max_results_after_dedup(self) -> None:
@@ -203,6 +195,104 @@ class SearchServiceTruncationTests(unittest.TestCase):
             results = search_web("test", max_results=3)
 
         self.assertEqual(len(results), 3)
+
+
+class SearchServiceScoringTests(unittest.TestCase):
+    def test_search_result_has_score_field(self) -> None:
+        sr = SearchResult(title="T", url="https://x.com", snippet="S")
+        self.assertEqual(sr.score, 0)
+        sr2 = SearchResult(title="T", url="https://x.com", snippet="S", score=105)
+        self.assertEqual(sr2.score, 105)
+
+    def test_gov_domain_scores_higher_than_random(self) -> None:
+        gov = {"title": "国家卫健委", "href": "https://www.nhc.gov.cn/health", "body": "心理援助热线资源汇总。"}
+        random = {"title": "某博客", "href": "https://blog.example.com/hotline", "body": "心理援助热线分享。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, gov]):
+            results = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        # gov should be first because it scores much higher
+        self.assertIn("nhc.gov.cn", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_edu_domain_scores_higher_than_random(self) -> None:
+        edu = {"title": "北大心理系", "href": "https://www.psych.pku.edu.cn/counseling", "body": "心理咨询服务介绍。"}
+        random = {"title": "某论坛", "href": "https://bbs.example.com/thread/123", "body": "心理咨询经验分享。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, edu]):
+            results = search_web("心理咨询", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertIn("pku.edu.cn", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_baike_scores_higher_than_random(self) -> None:
+        baike = {"title": "心理援助热线", "href": "https://baike.baidu.com/item/心理援助热线", "body": "心理援助热线是由专业机构设立的公益服务电话。"}
+        random = {"title": "随便说说", "href": "https://random.example.com/hotline", "body": "我觉得心理援助热线还挺有用的分享一些经验。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, baike]):
+            results = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertIn("baike.baidu.com", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_https_scores_higher_than_http(self) -> None:
+        https = {"title": "安全页面", "href": "https://secure.example.com/hotline", "body": "心理援助资源。"}
+        http = {"title": "非安全页面", "href": "http://insecure.example.com/hotline", "body": "心理援助资源介绍。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[http, https]):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertGreater(results[0].score, results[1].score)
+        self.assertTrue(results[0].url.startswith("https://"))
+
+    def test_shallow_path_scores_higher_than_deep(self) -> None:
+        shallow = {"title": "心理健康主页", "href": "https://example.com/mental-health", "body": "心理健康服务..."}
+        deep = {"title": "论坛帖子", "href": "https://example.com/forum/thread/999/page/3", "body": "心理健康讨论..."}
+
+        with patch("app.services.search_service._ddg_text", return_value=[deep, shallow]):
+            results = search_web("心理健康", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].url, "https://example.com/mental-health")
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_authority_title_scores_higher(self) -> None:
+        authority = {"title": "北京心理援助中心官方热线", "href": "https://example.com/a", "body": "心理咨询服务。"}
+        generic = {"title": "聊聊心理援助", "href": "https://example.com/b", "body": "心理咨询服务内容。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[generic, authority]):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertGreater(results[0].score, results[1].score)
+        self.assertIn("北京", results[0].title)
+
+    def test_respects_max_results_after_sorting(self) -> None:
+        items = []
+        for i in range(6):
+            items.append({
+                "title": f"Result {i}",
+                "href": f"https://x{i}.com/page",
+                "body": f"内容 {i} 心理援助信息。",
+            })
+
+        with patch("app.services.search_service._ddg_text", return_value=items):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 3)
+
+    def test_score_preserved_on_result(self) -> None:
+        raw = [{"title": "T", "href": "https://example.com", "body": "心理援助热线。"}]
+
+        with patch("app.services.search_service._ddg_text", return_value=raw):
+            results = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0].score, int)
 
 
 class SearchServiceErrorTests(unittest.TestCase):

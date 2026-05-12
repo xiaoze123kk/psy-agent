@@ -5,6 +5,7 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from duckduckgo_search import DDGS
 
@@ -21,7 +22,91 @@ _DEDUP_SNIPPET_PREFIX = 60
 _ELLIPSIS_RE = re.compile(r"^\.{2,}|\.{2,}$")
 _TRUNCATION_BOUNDARY_RE = re.compile(r"[。，、；：？！\u3000\s,.;:!?\n]")
 _DEDUP_RE = re.compile(r"[^\w\u4e00-\u9fff]+")
+_AUTHORITY_TITLE_WORDS_RE = re.compile(r"官方|热线|中心|医院|卫健委|教育部|研究所|学会|协会|政府|公益|卫生|疾控|精神卫生")
 
+# --- Domain authority scoring ---
+
+# Tier 1: government, institutional, academic — highest trust
+_TIER1_DOMAINS = frozenset({
+    # Chinese government
+    "gov.cn",
+    # Health authorities
+    "who.int", "nih.gov", "nhs.uk", "cdc.gov",
+    # Chinese academic
+    "edu.cn",
+    # Psychiatric / psychological professional orgs
+    "psych.ac.cn", "cma.org.cn", "cpma.org.cn",
+})
+
+# Tier 2: authoritative content platforms, major hospitals, professional portals
+_TIER2_GLOB = (
+    "baike.baidu.com",
+    "zh.wikipedia.org",
+    "yiyuan.health",
+    "jk.cn",
+    "medlive.cn",
+    "dxy.cn",
+)
+_TIER2_SUFFIX = (
+    ".hospital.",
+    ".yy.",
+    ".med.",
+    ".psy.",
+)
+
+
+def _score_domain(url: str) -> int:
+    """Score a URL by domain trust tier. Higher = more authoritative."""
+    try:
+        hostname = urlparse(url).hostname or ""
+    except Exception:
+        return 0
+
+    if not hostname:
+        return 0
+
+    hostname_lower = hostname.lower()
+
+    # Tier 1 exact match or suffix
+    if hostname_lower in _TIER1_DOMAINS or hostname_lower.endswith(".gov.cn") or hostname_lower.endswith(".edu.cn"):
+        if hostname_lower in _TIER1_DOMAINS or any(
+            hostname_lower.endswith(suffix)
+            for suffix in (".nhc.gov.cn", ".cdc.gov.cn", ".moe.gov.cn", ".cas.cn", ".ac.cn")
+        ):
+            return 100
+        return 100
+
+    # Tier 2 glob match
+    for glob in _TIER2_GLOB:
+        if glob in hostname_lower:
+            return 50
+    for suffix in _TIER2_SUFFIX:
+        if suffix in hostname_lower:
+            return 50
+
+    return 0
+
+
+def _score_https(url: str) -> int:
+    return 5 if url.startswith("https://") else 0
+
+
+def _score_path_shallow(url: str) -> int:
+    """Prefer URLs with ≤2 path segments (closer to root = more likely official page)."""
+    try:
+        path = urlparse(url).path or ""
+    except Exception:
+        return 0
+    segments = [s for s in path.strip("/").split("/") if s]
+    return 5 if len(segments) <= 2 else 0
+
+
+def _score_title_authority(title: str) -> int:
+    """Title containing authority keywords (医院, 官方, 热线, etc.) gets bonus."""
+    return 10 if _AUTHORITY_TITLE_WORDS_RE.search(title) else 0
+
+
+# --- Cleaning helpers ---
 
 def _strip_ellipsis(text: str) -> str:
     return _ELLIPSIS_RE.sub("", text).strip()
@@ -39,18 +124,17 @@ def _smart_truncate(text: str, max_chars: int) -> str:
     """Truncate text to max_chars, preferring CJK punctuation or whitespace boundaries."""
     if len(text) <= max_chars:
         return text
-    # Find the last boundary in the max_chars window
     window = text[:max_chars + 1]
     matches = list(_TRUNCATION_BOUNDARY_RE.finditer(window))
     for m in reversed(matches):
         candidate = text[: m.end()].rstrip()
         if len(candidate) <= max_chars and candidate:
-            # Ensure we don't end on an alphanumeric mid-word
             if not candidate[-1].isalnum() or m.group() in {"\n", "\u3002"}:
                 return candidate
-    # Fallback: hard truncate at max_chars and strip
     return text[:max_chars].rstrip()
 
+
+# --- Dedup helpers ---
 
 def _dedup_key(snippet: str) -> str:
     """Normalize the first N chars of a snippet for fuzzy dedup."""
@@ -77,12 +161,17 @@ def _is_similar_snippet(a: str, b: str) -> bool:
     return overlap >= 0.7
 
 
+# --- Data types ---
+
 @dataclass(frozen=True)
 class SearchResult:
     title: str
     url: str
     snippet: str
+    score: int = 0
 
+
+# --- Search ---
 
 def _ddg_text(query: str, *, region: str, max_results: int) -> list[dict[str, object]]:
     """Thin wrapper over DDGS for testability via patching."""
@@ -91,8 +180,12 @@ def _ddg_text(query: str, *, region: str, max_results: int) -> list[dict[str, ob
     return [dict(item) for item in raw if isinstance(item, dict)]
 
 
+def _compute_score(url: str, title: str) -> int:
+    return _score_domain(url) + _score_https(url) + _score_path_shallow(url) + _score_title_authority(title)
+
+
 def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> list[SearchResult]:
-    """Search DuckDuckGo for the given query, returning cleaned, deduplicated results.
+    """Search DuckDuckGo for the given query, returning cleaned, deduplicated results ranked by authority.
 
     Returns an empty list on any error (network, timeout, parse, etc.).
     """
@@ -113,9 +206,9 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
         logger.warning("DuckDuckGo search failed for query: %s", cleaned_query[:80])
         return []
 
-    results: list[SearchResult] = []
+    candidates: list[SearchResult] = []
     seen_urls: set[str] = set()
-    seen_snippets: list[str] = []  # Previous snippets for similarity check
+    seen_snippets: list[str] = []
 
     for item in raw_items:
         if not isinstance(item, dict):
@@ -133,15 +226,15 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
         if url in seen_urls:
             continue
 
-        # Check snippet similarity against already-accepted results
         if any(_is_similar_snippet(snippet, prev) for prev in seen_snippets):
             continue
 
         seen_urls.add(url)
         seen_snippets.append(snippet)
-        results.append(SearchResult(title=title, url=url, snippet=snippet))
 
-        if len(results) >= limit:
-            break
+        score = _compute_score(url, title)
+        candidates.append(SearchResult(title=title, url=url, snippet=snippet, score=score))
 
-    return results
+    # Sort by score descending (higher authority first), then take top-N
+    candidates.sort(key=lambda r: r.score, reverse=True)
+    return candidates[:limit]
