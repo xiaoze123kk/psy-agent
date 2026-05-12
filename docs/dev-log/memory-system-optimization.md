@@ -4,10 +4,9 @@
 
 ### 背景
 
-本轮迭代基于 `docs/memory-system-analysis.md` 的问题分析展开，优先处理记忆写入与检索链路中风险明确、收益清晰的优化项。不改对外 API，不调整数据库结构，只在现有服务层内收敛失败恢复、查询浪费和相似记忆匹配成本。
+本轮迭代基于 `docs/memory-system-analysis.md` 的问题分析展开，优先处理记忆写入与检索链路中的高收益、低耦合优化项。目标是不改动 API 形态和数据库结构，只在现有服务层内收敛失败恢复、去重成本、检索排序、向量同步与分页体验。
 
 关联资料：
-
 - `docs/memory-system-analysis.md`
 - `docs/superpowers/specs/2026-05-12-memory-system-optimization-design.md`
 - `docs/superpowers/plans/2026-05-12-memory-system-optimization.md`
@@ -38,9 +37,9 @@
 #### 4. 记忆类型过滤下推
 
 - `_base_memory_query()` 新增可选 `memory_types` 参数，并把 `UserMemory.memory_type.in_(...)` 下推到 SQL。
-- 当允许类型集合为空时，直接返回空结果查询，避免构造无效的 `IN ()`，同时保持 helper 的返回形状一致。
+- 当允许类型集合为空时，直接返回空结果查询，避免构造无效 `IN ()`。
 - `build_memory_index()` 与 `retrieve_memories_for_turn()` 不再在 Python 层二次过滤记忆类型。
-- 新增 `summary_only` 回归测试，确认 200 条高优先级 `preference` 记忆不会挤掉唯一的 `session_summary`。
+- 新增 `summary_only` 回归测试，确认高优先级 preference 不会挤掉唯一的 session_summary。
 
 #### 5. Milvus 向量同步清理
 
@@ -62,31 +61,49 @@
 - 保持按 `created_at` 排序和批量领取逻辑不变，只收紧领取阶段的并发控制。
 - 新增回归测试，确认领取查询会生成 `SKIP LOCKED`，并且 job 被标记为 `running` 后才提交。
 
+#### 8. 记忆列表与审计分页
+
+- `GET /memories` 和 `GET /memories/audit` 都支持 `limit` / `offset` 分页，并返回 `total` 供前端渲染分页器。
+- `SearchMemoriesRequest.limit` 增加上下界校验，避免异常大 limit 穿透到检索层。
+- 新增回归测试，确认记忆列表与审计接口都能按页返回，并且搜索接口会拒绝越界 limit。
+
 ### 验证结果
 
 在 `backend/` 目录执行：
-
 ```powershell
 & 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py -q
 ```
 
-结果：`42 passed, 2 warnings`。
+结果：`42 passed, 2 warnings`。warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
 
-warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示，非本轮改动引入。
-
-在 `backend/` 目录追加执行：
+追加执行：
 ```powershell
 & 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory_service.py tests/test_memory.py tests/test_privacy.py -q
 ```
 
 结果：`43 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
 
-在 `backend/` 目录追加执行：
+追加执行：
 ```powershell
 & 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py -q
 ```
 
 结果：`51 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
+
+追加执行：
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py::MemoryApiTests::test_memory_center_paginates_visible_memories_with_total tests/test_memory.py::MemoryApiTests::test_memory_audit_paginates_operations_with_total tests/test_memory.py::MemoryApiTests::test_search_memories_rejects_out_of_range_limit -q
+```
+
+结果：`3 passed, 1 warning`。
+
+追加执行：
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py -q
+```
+
+结果：`54 passed, 2 warnings`。warnings 仍来自 LangGraph / LangChain 的既有提示，以及 SQLAlchemy model 类名被 pytest 尝试收集的既有提示。
+
 ### 相关提交
 
 | Commit | 内容 |
@@ -98,13 +115,15 @@ warnings 来自 LangGraph / LangChain 的 pending deprecation warning，以及 S
 | `b888056` | 优化记忆 embedding 批量查询 |
 | `a03ad52` | 前置记忆类型过滤 |
 | `15ef4d3` | 同步清理记忆向量 |
+| `671b739` | 记忆向量写入重试与日志 |
+| `8edaf23` | 记忆任务领取使用行级锁 |
 
 ### 未纳入本轮
 
 以下问题仍留作后续迭代：
 
-- 记忆列表 / 审计接口分页。
+- 记忆文档导出的大文档分段与分页。
 
 ### 结论
 
-本轮完成了七类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引会跟随删除和过期状态清理，Milvus 写入失败时也会重试并留下失败线索，`claim_pending_memory_jobs()` 也会在并发领取时避开重复抢占。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。
+本轮完成了 8 类低耦合优化：memory job 失败恢复更稳，相似记忆去重更安全也更省计算，embedding 写入减少无效查询，`summary_only` 检索不再被无关高排序记忆挤掉，Milvus 向量索引会跟随删除和过期状态清理，Milvus 写入失败时也会重试并留下失败线索，`claim_pending_memory_jobs()` 在并发领取时也会避开重复抢占，记忆列表和审计接口则补上了分页。写入、检索和隐私清理链路都更接近预期，且现有测试整体保持通过。

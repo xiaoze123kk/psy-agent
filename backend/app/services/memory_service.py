@@ -1266,12 +1266,22 @@ def record_memory_feedback(
     return memory
 
 
-def list_memory_operations(db: Session, *, user_id: str, limit: int = 50) -> list[MemoryOperation]:
+def count_memory_operations(db: Session, *, user_id: str) -> int:
+    return int(
+        db.scalar(
+            select(func.count(MemoryOperation.id)).where(MemoryOperation.user_id == user_id)
+        )
+        or 0
+    )
+
+
+def list_memory_operations(db: Session, *, user_id: str, limit: int = 50, offset: int = 0) -> list[MemoryOperation]:
     return list(
         db.scalars(
             select(MemoryOperation)
             .where(MemoryOperation.user_id == user_id)
             .order_by(desc(MemoryOperation.created_at))
             .limit(max(1, min(limit, 200)))
+            .offset(max(offset, 0))
         )
     )

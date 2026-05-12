@@ -4,6 +4,7 @@ import asyncio
 import os
 import unittest
 from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from app.db.models import (
     ConversationThread,
     ConversationTurn,
     Message,
+    MemoryOperation,
     MoodLog,
     PendingMemoryJob,
     RiskEvent,
@@ -135,6 +137,29 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["content"] for item in response.json()["items"]], ["可见摘要"])
 
+    def test_memory_center_paginates_visible_memories_with_total(self) -> None:
+        user = self.create_user()
+        newest = self.add_memory(user, content="newest")
+        middle = self.add_memory(user, content="middle")
+        oldest = self.add_memory(user, content="oldest")
+        self.add_memory(user, content="hidden", visibility="internal_safety")
+        deleted = self.add_memory(user, content="deleted")
+        deleted.status = "deleted"
+        now = utcnow()
+        newest.updated_at = now
+        middle.updated_at = now - timedelta(minutes=1)
+        oldest.updated_at = now - timedelta(minutes=2)
+        self.db.commit()
+
+        response = self.client.get("/api/v1/memories?limit=2&offset=1", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual([item["content"] for item in payload["items"]], ["middle", "oldest"])
+
     def test_memory_mutations_are_scoped_to_owner_and_visible_memories(self) -> None:
         user = self.create_user("owner")
         other = self.create_user("other")
@@ -241,6 +266,39 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(owner_response.json()["items"], [])
         self.assertEqual(owner_audit.status_code, 200)
         self.assertEqual(owner_audit.json()["items"], [])
+
+    def test_memory_audit_paginates_operations_with_total(self) -> None:
+        user = self.create_user("owner")
+        other = self.create_user("other")
+        operations = [
+            MemoryOperation(user_id=user.id, action="first", actor="user"),
+            MemoryOperation(user_id=user.id, action="second", actor="user"),
+            MemoryOperation(user_id=user.id, action="third", actor="user"),
+            MemoryOperation(user_id=other.id, action="other", actor="user"),
+        ]
+        self.db.add_all(operations)
+        self.db.commit()
+
+        response = self.client.get("/api/v1/memories/audit?limit=2&offset=1", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertNotIn("other", [item["action"] for item in payload["items"]])
+
+    def test_search_memories_rejects_out_of_range_limit(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+
+        response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(user),
+            json={"query": "exam anxiety", "limit": 201},
+        )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_memory_feedback_can_disable_memory_and_audit_it(self) -> None:
         user = self.create_user()
