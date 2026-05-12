@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections import Counter, defaultdict
@@ -23,6 +24,9 @@ from app.db.models import (
 )
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
+
+
+logger = logging.getLogger(__name__)
 
 
 VISIBLE_MEMORY_TYPES = {
@@ -246,6 +250,17 @@ def log_memory_operation(
     db.add(operation)
     db.flush()
     return operation
+
+
+def remove_memory_vectors(memory_ids: list[str]) -> bool:
+    ids = [str(memory_id) for memory_id in dict.fromkeys(memory_ids) if str(memory_id)]
+    if not ids:
+        return True
+    try:
+        return bool(milvus_store.delete_memory_vectors(ids))
+    except Exception as exc:
+        logger.warning("Milvus memory vector delete failed: %s", exc)
+        return False
 
 
 def _base_memory_query(db: Session, user_id: str, memory_types: set[str] | None = None):
@@ -921,6 +936,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
         by_type[memory.memory_type].append(memory)
 
     touched = 0
+    deleted_memory_ids: list[str] = []
     for memory_type, group in by_type.items():
         kept: list[UserMemory] = []
         for memory in group:
@@ -946,6 +962,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
             memory.status = "deleted"
             memory.supersedes_id = match.id
             memory.updated_at = utcnow()
+            deleted_memory_ids.append(memory.id)
             touched += 2
             db.flush()
             log_memory_operation(
@@ -966,6 +983,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
                 after_value=_snapshot(memory),
                 reason=f"superseded_by:{match.id}",
             )
+    remove_memory_vectors(deleted_memory_ids)
     return touched
 
 
@@ -1084,6 +1102,7 @@ def _expire_old_memories(db: Session, user_id: str) -> int:
             after_value=_snapshot(memory),
             reason="expires_at_elapsed",
         )
+    remove_memory_vectors([memory.id for memory in expired])
     return len(expired)
 
 
@@ -1223,6 +1242,8 @@ def record_memory_feedback(
         reason=note or normalized,
         actor="user",
     )
+    if memory.status == "deleted":
+        remove_memory_vectors([memory.id])
     return memory
 
 

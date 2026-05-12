@@ -29,6 +29,7 @@ from app.services.memory_service import (
     list_memory_operations,
     log_memory_operation,
     record_memory_feedback,
+    remove_memory_vectors,
     retrieve_memories_for_turn_async,
 )
 
@@ -270,6 +271,7 @@ async def delete_memory(
         after_value={"content": memory.content, "status": memory.status},
         actor="user",
     )
+    remove_memory_vectors([memory.id])
     db.commit()
     return MemoryMutationResponse(memory_id=memory.id, status="deleted")
 
@@ -279,15 +281,21 @@ async def clear_memories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> StatusResponse:
+    memory_ids = list(
+        db.scalars(
+            select(UserMemory.id).where(
+                UserMemory.user_id == current_user.id,
+                UserMemory.status == "active",
+                UserMemory.visibility == "user_visible",
+            )
+        )
+    )
     rows = db.execute(
         update(UserMemory)
-        .where(
-            UserMemory.user_id == current_user.id,
-            UserMemory.status == "active",
-            UserMemory.visibility == "user_visible",
-        )
+        .where(UserMemory.id.in_(memory_ids))
         .values(status="deleted", updated_at=utcnow())
     )
+    remove_memory_vectors(memory_ids)
     log_memory_operation(
         db,
         user_id=current_user.id,

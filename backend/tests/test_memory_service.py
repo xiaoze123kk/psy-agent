@@ -805,8 +805,20 @@ class MemoryServiceTests(unittest.TestCase):
             ]
         )
         self.db.commit()
+        deleted_vector_ids: list[str] = []
 
-        result = consolidate_user_memories(self.db, user_id=user.id, force=True)
+        class FakeMilvusStore:
+            def delete_memory_vectors(self, memory_ids: list[str]) -> bool:
+                deleted_vector_ids.extend(memory_ids)
+                return True
+
+        original_store = memory_service.milvus_store
+        memory_service.milvus_store = FakeMilvusStore()
+        try:
+            result = consolidate_user_memories(self.db, user_id=user.id, force=True)
+        finally:
+            memory_service.milvus_store = original_store
+
         self.db.commit()
         self.db.refresh(first)
         self.db.refresh(duplicate)
@@ -824,6 +836,7 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual([first.status, duplicate.status].count("deleted"), 1)
         self.assertIn(duplicate.supersedes_id or first.supersedes_id, {first.id, duplicate.id})
         self.assertEqual(expired.status, "expired")
+        self.assertEqual(set(deleted_vector_ids), {expired.id, duplicate.id if duplicate.status == "deleted" else first.id})
         self.assertIsNotNone(state_memory)
         self.assertEqual(state_memory.structured_value["log_count"], 3)
         self.assertAlmostEqual(state_memory.structured_value["avg_mood_score"], 3.0)

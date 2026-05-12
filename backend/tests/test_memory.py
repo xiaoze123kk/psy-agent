@@ -176,13 +176,15 @@ class MemoryApiTests(unittest.TestCase):
         visible = self.add_memory(user, content="可见摘要")
         hidden = self.add_memory(user, content="内部安全记录", visibility="internal_safety")
 
-        response = self.client.delete("/api/v1/memories", headers=self.auth_headers(user))
+        with patch("app.api.v1.endpoints.memory.remove_memory_vectors", create=True) as remove_vectors:
+            response = self.client.delete("/api/v1/memories", headers=self.auth_headers(user))
         self.db.refresh(visible)
         self.db.refresh(hidden)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(visible.status, "deleted")
         self.assertEqual(hidden.status, "active")
+        remove_vectors.assert_called_once_with([visible.id])
 
     def test_search_memories_uses_mode_and_risk_filters(self) -> None:
         user = self.create_user(memory_mode="long_term")
