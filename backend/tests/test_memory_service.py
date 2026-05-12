@@ -4,6 +4,7 @@ import os
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -465,6 +466,196 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(len(memories), 1)
         self.assertEqual(written[0].memory_type, "safety_summary")
         self.assertEqual(written[0].visibility, "internal_safety")
+
+    def test_upsert_ignores_expired_memory_when_finding_similar_match(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        expired = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=5,
+            expires_at=utcnow() - timedelta(days=1),
+        )
+        decoy = self.add_memory(
+            user,
+            memory_type="preference",
+            content="enjoys tea and quiet mornings",
+            importance=1,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000101",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers reassurance before advice",
+                        "importance": 5,
+                    }
+                ],
+                "session_summary": "prefers reassurance before advice",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.commit()
+        self.db.refresh(expired)
+        self.db.refresh(decoy)
+
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertNotIn(written[0].id, {expired.id, decoy.id})
+        self.assertEqual(expired.version, 1)
+        self.assertEqual(decoy.version, 1)
+        self.assertEqual(len(memories), 3)
+
+    def test_upsert_ignores_do_not_use_memory_when_finding_similar_match(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        blocked = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers grounding before advice",
+            importance=5,
+            review_state="do_not_use",
+        )
+        decoy = self.add_memory(
+            user,
+            memory_type="preference",
+            content="enjoys tea and quiet mornings",
+            importance=1,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000102",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers grounding before advice",
+                        "importance": 5,
+                    }
+                ],
+                "session_summary": "prefers grounding before advice",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.commit()
+        self.db.refresh(blocked)
+        self.db.refresh(decoy)
+
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertNotIn(written[0].id, {blocked.id, decoy.id})
+        self.assertEqual(blocked.version, 1)
+        self.assertEqual(decoy.version, 1)
+        self.assertEqual(len(memories), 3)
+
+    def test_find_similar_memory_prefilter_skips_unrelated_candidates(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        anchor = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=4,
+        )
+        for idx in range(24):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"completely unrelated note about tea and weather {idx}",
+                importance=5,
+            )
+
+        similarity_calls = 0
+        original_similarity = memory_service._content_similarity
+
+        def counted_similarity(left: str, right: str) -> float:
+            nonlocal similarity_calls
+            similarity_calls += 1
+            return original_similarity(left, right)
+
+        with patch("app.services.memory_service._content_similarity", side_effect=counted_similarity):
+            written, decisions = upsert_memory_candidates(
+                self.db,
+                user=user,
+                thread=thread,
+                assistant_message_id="00000000-0000-0000-0000-000000000103",
+                assistant_result={
+                    "should_write_memory": True,
+                    "risk_level": "L0",
+                    "memory_candidates": [
+                        {
+                            "memory_type": "preference",
+                            "content": "prefers reassurance before advice.",
+                            "importance": 4,
+                        }
+                    ],
+                    "session_summary": "prefers reassurance before advice.",
+                    "memory_policy": "write_safe_summary",
+                },
+            )
+
+        self.db.refresh(anchor)
+
+        self.assertEqual(decisions[0]["status"], "updated")
+        self.assertEqual(written[0].id, anchor.id)
+        self.assertLessEqual(similarity_calls, 2)
+        self.assertEqual(anchor.version, 2)
+
+    def test_find_similar_memory_prefilter_still_allows_similar_merge(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        anchor = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="unrelated tea preference with no overlap",
+            importance=5,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000104",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers reassurance before advice.",
+                        "importance": 4,
+                    }
+                ],
+                "session_summary": "prefers reassurance before advice.",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.refresh(anchor)
+
+        self.assertEqual(decisions[0]["status"], "updated")
+        self.assertEqual(written[0].id, anchor.id)
+        self.assertEqual(anchor.version, 2)
 
     def test_consolidate_merges_expires_writes_state_and_audit(self) -> None:
         user = self.create_user(memory_mode="long_term")
