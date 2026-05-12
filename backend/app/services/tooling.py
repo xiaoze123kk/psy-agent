@@ -590,6 +590,8 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "Use tools only when they materially improve this turn. Do not call tools that are not listed.",
     ]
     lines.extend(f"- {descriptions[name]}" for name in tool_names if name in descriptions)
+    if "web_search" in tool_names:
+        lines.append("- web_search: Only search for psychological support resources or professional mental health information. Do NOT include any user personal information in the search query.")
     lines.append("Never claim a memory was permanently saved; the backend reviews candidates asynchronously.")
     return "\n".join(lines)
 
