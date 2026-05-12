@@ -248,9 +248,9 @@ def log_memory_operation(
     return operation
 
 
-def _base_memory_query(db: Session, user_id: str):
+def _base_memory_query(db: Session, user_id: str, memory_types: set[str] | None = None):
     now = utcnow()
-    return db.scalars(
+    stmt = (
         select(UserMemory)
         .where(
             UserMemory.user_id == user_id,
@@ -261,6 +261,11 @@ def _base_memory_query(db: Session, user_id: str):
         .order_by(desc(UserMemory.importance), desc(UserMemory.updated_at))
         .limit(200)
     )
+    if memory_types is not None:
+        if not memory_types:
+            return ()
+        stmt = stmt.where(UserMemory.memory_type.in_(tuple(memory_types)))
+    return db.scalars(stmt)
 
 
 def _allowed_memory_types_for_mode(memory_mode: str, *, include_internal: bool = False) -> set[str]:
@@ -288,9 +293,7 @@ def build_memory_index(
         return []
 
     items = []
-    for memory in _base_memory_query(db, user_id):
-        if memory.memory_type not in allowed_types:
-            continue
+    for memory in _base_memory_query(db, user_id, memory_types=allowed_types):
         if include_internal:
             if memory.visibility != "internal_safety":
                 continue
@@ -493,7 +496,7 @@ def retrieve_memories_for_turn(
         limit=limit,
     )
     candidate_memories: dict[str, UserMemory] = {}
-    for memory in _base_memory_query(db, user_id):
+    for memory in _base_memory_query(db, user_id, memory_types=allowed_types):
         if not _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level=risk_level):
             continue
         candidate_memories[memory.id] = memory

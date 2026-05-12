@@ -269,6 +269,56 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual([item["memory_id"] for item in high_risk_results], [safety.id])
         self.assertEqual([item["memory_id"] for item in high_risk_index], [safety.id])
 
+    def test_summary_only_build_memory_index_respects_memory_types_before_limit(self) -> None:
+        user = self.create_user(memory_mode="summary_only")
+        for index in range(200):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"preference memory {index}",
+                importance=5,
+            )
+        summary = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="last session summary about exam stress",
+            importance=1,
+        )
+
+        results = build_memory_index(
+            self.db,
+            user.id,
+            memory_mode="summary_only",
+        )
+
+        self.assertEqual([item["memory_id"] for item in results], [summary.id])
+
+    def test_summary_only_retrieve_memories_respects_memory_types_before_limit(self) -> None:
+        user = self.create_user(memory_mode="summary_only")
+        for index in range(200):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"preference memory {index}",
+                importance=5,
+            )
+        summary = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="last session summary about exam stress",
+            importance=1,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="exam stress",
+            memory_mode="summary_only",
+            limit=5,
+        )
+
+        self.assertEqual([item["memory_id"] for item in results], [summary.id])
+
     def test_vector_hits_are_merged_into_hybrid_retrieval(self) -> None:
         user = self.create_user(memory_mode="long_term")
         target = self.add_memory(
