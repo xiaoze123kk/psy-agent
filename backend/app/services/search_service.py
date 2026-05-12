@@ -142,22 +142,28 @@ def _dedup_key(snippet: str) -> str:
     return _DEDUP_RE.sub("", chunk)
 
 
-def _is_similar_snippet(a: str, b: str) -> bool:
-    """Check if two snippets are similar enough to be considered duplicates.
+def _ngram_fingerprint(text: str) -> tuple[str, int, frozenset[str] | None]:
+    """Return (dedup_key, length, 5-grams) for a deduplicated snippet prefix.
 
-    Uses overlapping 5-gram character sets within the first 60 chars of each snippet.
+    Pre-computed once per result, then compared cheaply via fingerprint_match().
     """
-    short = _dedup_key(a)
-    other = _dedup_key(b)
-    if len(short) < 10 or len(other) < 10:
-        return short == other
-    if short == other:
+    key = _dedup_key(text)
+    if len(key) < 10:
+        return key, len(key), None
+    ngrams = frozenset(key[i : i + 5] for i in range(len(key) - 4))
+    return key, len(key), ngrams
+
+
+def _fingerprints_match(fp_a: tuple[str, int, frozenset[str] | None], fp_b: tuple[str, int, frozenset[str] | None]) -> bool:
+    """Check if two pre-computed fingerprints indicate duplicate snippets."""
+    key_a, len_a, ngrams_a = fp_a
+    key_b, len_b, ngrams_b = fp_b
+    if len_a < 10 or len_b < 10:
+        return key_a == key_b
+    if key_a == key_b:
         return True
-    short_ngrams = {short[i : i + 5] for i in range(len(short) - 4)}
-    other_ngrams = {other[i : i + 5] for i in range(len(other) - 4)}
-    if not short_ngrams:
-        return False
-    overlap = len(short_ngrams & other_ngrams) / len(short_ngrams)
+    assert ngrams_a is not None and ngrams_b is not None
+    overlap = len(ngrams_a & ngrams_b) / len(ngrams_a)
     return overlap >= 0.7
 
 
@@ -208,7 +214,7 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
 
     candidates: list[SearchResult] = []
     seen_urls: set[str] = set()
-    seen_snippets: list[str] = []
+    seen_fingerprints: list[tuple[str, int, frozenset[str] | None]] = []
 
     for item in raw_items:
         if not isinstance(item, dict):
@@ -226,11 +232,12 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
         if url in seen_urls:
             continue
 
-        if any(_is_similar_snippet(snippet, prev) for prev in seen_snippets):
+        fp = _ngram_fingerprint(snippet)
+        if any(_fingerprints_match(fp, prev) for prev in seen_fingerprints):
             continue
 
         seen_urls.add(url)
-        seen_snippets.append(snippet)
+        seen_fingerprints.append(fp)
 
         score = _compute_score(url, title)
         candidates.append(SearchResult(title=title, url=url, snippet=snippet, score=score))
