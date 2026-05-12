@@ -44,7 +44,7 @@ class ToolGateTests(unittest.TestCase):
         plan = build_dialogue_tool_plan(make_state())
         tool_names = [tool["function"]["name"] for tool in plan.tools]
 
-        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time"])
+        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time", "get_weather"])
         self.assertEqual(plan.allowed_tool_names, tool_names)
         self.assertNotIn("ask_knowledge", tool_names)
         self.assertFalse(plan.blocked_tool_names)
@@ -351,6 +351,68 @@ class GetCurrentTimeToolTests(unittest.TestCase):
         self.assertEqual(len(previews), 1)
         self.assertEqual(previews[0]["name"], "get_current_time")
         self.assertEqual(previews[0]["status"], "completed")
+
+
+class GetWeatherToolTests(unittest.TestCase):
+    def test_get_weather_spec_is_registered(self) -> None:
+        spec = TOOL_SPEC_BY_NAME.get("get_weather")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.name, "get_weather")
+        self.assertEqual(spec.enabled_by_default, True)
+        self.assertEqual(spec.allowed_risk_levels, LOW_RISK_LEVELS)
+        tool_def = spec.to_deepseek_tool()
+        self.assertEqual(tool_def["function"]["name"], "get_weather")
+        self.assertIn("city", tool_def["function"]["parameters"]["properties"])
+
+    def test_get_weather_appears_in_low_risk_plan(self) -> None:
+        plan = build_dialogue_tool_plan(make_state())
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+
+        self.assertIn("get_weather", tool_names)
+
+    def test_get_weather_blocked_at_high_risk(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertNotIn("get_weather", tool_names)
+
+    def test_get_weather_handler_returns_weather(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch(
+            "app.services.weather_service.get_weather",
+            return_value=("晴 15°C 湿度45% 风速3km/h", None),
+        ):
+            result = plan.tool_handlers["get_weather"]({"city": "Beijing"})
+
+        self.assertEqual(result["city"], "Beijing")
+        self.assertIn("晴", result["weather"])
+        self.assertNotIn("error", result)
+
+    def test_get_weather_handler_reports_error(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch("app.services.weather_service.get_weather", return_value=("", "timeout")):
+            result = plan.tool_handlers["get_weather"]({"city": "Shanghai"})
+
+        self.assertEqual(result["weather"], "")
+        self.assertEqual(result["error"], "timeout")
+        previews = plan.audit_capture.previews
+        self.assertEqual(previews[0]["status"], "error")
+
+    def test_get_weather_defaults_city(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        with patch(
+            "app.services.weather_service.get_weather",
+            return_value=("阴 10°C 湿度60% 风速2km/h", None),
+        ):
+            result = plan.tool_handlers["get_weather"]({})
+
+        self.assertEqual(result["city"], "Beijing")
 
 
 if __name__ == "__main__":

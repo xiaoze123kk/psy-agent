@@ -145,6 +145,7 @@ class ToolGate:
         names.append("get_safety_resources")
         names.append("web_search")
         names.append("get_current_time")
+        names.append("get_weather")
         if self.knowledge_enabled and not high_risk:
             names.append("ask_knowledge")
         return [name for name in names if self.allows(name)]
@@ -171,7 +172,7 @@ class ToolGate:
             return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
         if self.memory_mode == "off":
             return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
-        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search", "get_current_time"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
+        return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search", "get_current_time", "get_weather"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
 
 
 @dataclass
@@ -333,6 +334,21 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         parameters={
             "type": "object",
             "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
+        name="get_weather",
+        description="Get current weather for a city. Use when the user's mood may be influenced by weather, or when weather context is helpful.",
+        allowed_risk_levels=LOW_RISK_LEVELS,
+        parameters={
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "City name, e.g. 'Beijing', 'Shanghai', 'Chengdu'.",
+                },
+            },
             "additionalProperties": False,
         },
     ),
@@ -626,6 +642,22 @@ def _build_get_current_time_handler(capture: ToolAuditCapture) -> ToolHandler:
     return get_current_time
 
 
+def _build_get_weather_handler(capture: ToolAuditCapture) -> ToolHandler:
+    def get_weather_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+        from app.services.weather_service import get_weather  # lazy import
+
+        city = _clean_text(arguments.get("city") or "", limit=40) or "Beijing"
+        text, error = get_weather(city)
+        status = "completed" if error is None else "error"
+        if error:
+            capture.record_preview("get_weather", status="error", error=f"weather_failed: {error}")
+            return {"city": city, "weather": "", "error": error}
+        capture.record_preview("get_weather", status="completed", preview={"city": city, "weather": text})
+        return {"city": city, "weather": text}
+
+    return get_weather_tool
+
+
 def _tool_prompt_hint(tool_names: list[str]) -> str:
     if not tool_names:
         return ""
@@ -635,6 +667,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "get_safety_resources": "get_safety_resources: return minimal safety resources by region/audience when real-world support is relevant.",
         "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
         "get_current_time": "get_current_time: return current UTC/local time, weekday, timezone, and session elapsed seconds.",
+        "get_weather": "get_weather: get current weather for a city via wttr.in; use sparingly, only when weather context helps understand user's mood or situation.",
     }
     lines = [
         "",
@@ -680,6 +713,8 @@ def build_dialogue_tool_plan(
         handlers["web_search"] = _build_web_search_handler(state, capture)
     if "get_current_time" in allowed_names:
         handlers["get_current_time"] = _build_get_current_time_handler(capture)
+    if "get_weather" in allowed_names:
+        handlers["get_weather"] = _build_get_weather_handler(capture)
 
     specs = [TOOL_SPEC_BY_NAME[name] for name in allowed_names if name in TOOL_SPEC_BY_NAME]
     return DialogueToolPlan(
