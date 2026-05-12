@@ -162,6 +162,23 @@ def _content_similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, left_text, right_text).ratio()
 
 
+def _should_compare_memory_content(existing_content: object, candidate_content: object) -> bool:
+    left = _clean_text(existing_content)
+    right = _clean_text(candidate_content)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+
+    shorter_length = min(len(left), len(right))
+    longer_length = max(len(left), len(right))
+    if shorter_length / longer_length < 0.45:
+        return False
+    if shorter_length < 12:
+        return True
+    return bool(_tokenize(left) & _tokenize(right))
+
+
 def _freshness_warning(memory: UserMemory) -> str:
     updated_at = memory.updated_at or memory.created_at
     if not updated_at:
@@ -625,6 +642,7 @@ def _find_similar_memory(
     visibility: str,
     content: str,
 ) -> UserMemory | None:
+    now = utcnow()
     rows = list(
         db.scalars(
             select(UserMemory)
@@ -633,6 +651,8 @@ def _find_similar_memory(
                 UserMemory.status == "active",
                 UserMemory.memory_type == memory_type,
                 UserMemory.visibility == visibility,
+                UserMemory.review_state != "do_not_use",
+                or_(UserMemory.expires_at.is_(None), UserMemory.expires_at > now),
             )
             .order_by(desc(UserMemory.updated_at))
             .limit(50)
@@ -643,6 +663,8 @@ def _find_similar_memory(
         return exact
     best: tuple[float, UserMemory] | None = None
     for memory in rows:
+        if not _should_compare_memory_content(memory.content, content):
+            continue
         similarity = _content_similarity(memory.content, content)
         if best is None or similarity > best[0]:
             best = (similarity, memory)
