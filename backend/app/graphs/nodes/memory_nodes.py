@@ -152,6 +152,34 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
     if has_any_text(
         text,
         (
+            "我想",
+            "我希望",
+            "目标",
+            "计划",
+            "打算",
+            "先把",
+            "理清楚",
+            "解决",
+            "要处理",
+            "当前任务",
+            "做到",
+            "完成",
+        ),
+    ):
+        candidates.append(
+            {
+                "memory_type": "goal",
+                "title": "当前目标",
+                "summary": f"用户表达了当前目标：{compact_text}",
+                "content": f"用户表达了当前目标：{compact_text}",
+                "importance": 4,
+                "tags": ["目标"],
+            }
+        )
+
+    if has_any_text(
+        text,
+        (
             "不要一上来",
             "别一上来",
             "不要直接",

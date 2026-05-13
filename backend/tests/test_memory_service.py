@@ -286,6 +286,58 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(results), 1)
         self.assertEqual(results[0]["memory_id"], target.id)
 
+    def test_retrieve_uses_goal_state_to_prioritize_user_context_memories(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近几轮都在讨论工作压力。",
+            importance=5,
+        )
+        self.add_memory(
+            user,
+            memory_type="goal",
+            content="用户目标：理清楚和主管沟通任务边界这件事。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="profile",
+            content="用户在重要沟通前会先写提纲。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮他梳理边界。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户希望先被安抚，再拆一个小步骤。",
+            importance=3,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="继续这个",
+            memory_mode="long_term",
+            goal_state={
+                "current_goal": "理清楚和主管沟通任务边界这件事",
+                "usage_goals": ["先安抚再拆小步骤"],
+                "goal_hints": ["和主管沟通任务边界"],
+                "open_threads": ["任务边界"],
+            },
+            limit=5,
+        )
+
+        result_types = [item["memory_type"] for item in results]
+        summary_index = result_types.index("session_summary")
+        for memory_type in ("goal", "profile", "correction", "preference"):
+            self.assertLess(result_types.index(memory_type), summary_index)
+
     def test_memory_modes_and_high_risk_internal_safety_filtering(self) -> None:
         user = self.create_user(memory_mode="summary_only")
         summary = self.add_memory(user, memory_type="session_summary", content="last session about exam stress")

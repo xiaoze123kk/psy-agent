@@ -12,6 +12,20 @@ from app.db.models import User, UserMemory
 DIGEST_SCHEMA_VERSION = 1
 MAX_LIST_ITEMS = 5
 MAX_ITEM_CHARS = 80
+GOAL_KEYWORDS = (
+    "我想",
+    "我希望",
+    "目标",
+    "计划",
+    "打算",
+    "先把",
+    "理清楚",
+    "解决",
+    "要处理",
+    "当前任务",
+    "做到",
+    "完成",
+)
 
 
 def _compact_text(value: object, *, limit: int) -> str:
@@ -82,6 +96,50 @@ def _memory_hints(db: Session, *, user_id: str) -> dict[str, list[str]]:
     return hints
 
 
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(keyword.lower() in lowered for keyword in keywords)
+
+
+def _goal_hints(db: Session, *, user_id: str) -> list[str]:
+    query = (
+        select(UserMemory)
+        .where(
+            UserMemory.user_id == user_id,
+            UserMemory.status == "active",
+            UserMemory.review_state != "do_not_use",
+            UserMemory.visibility == "user_visible",
+            UserMemory.memory_type == "goal",
+        )
+        .order_by(desc(UserMemory.importance), desc(UserMemory.updated_at))
+        .limit(10)
+    )
+    hints: list[str] = []
+    seen: set[str] = set()
+    for memory in db.scalars(query):
+        content = _compact_text(memory.summary or memory.content, limit=MAX_ITEM_CHARS)
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        hints.append(content)
+        if len(hints) >= MAX_LIST_ITEMS:
+            break
+    return hints
+
+
+def _digest_threads(session_digest: dict[str, Any] | None) -> list[str]:
+    if not isinstance(session_digest, dict):
+        return []
+    items: list[object] = []
+    for key in ("unresolved_threads", "significant_changes"):
+        value = session_digest.get(key)
+        if isinstance(value, list):
+            items.extend(value)
+        elif isinstance(value, str):
+            items.append(value)
+    return _compact_list(items, limit=MAX_LIST_ITEMS)
+
+
 def build_user_profile_digest(db: Session, *, user_id: str) -> dict[str, Any] | None:
     user = db.get(User, user_id)
     if user is None:
@@ -121,3 +179,38 @@ def build_user_profile_digest(db: Session, *, user_id: str) -> dict[str, Any] | 
     ):
         return None
     return digest
+
+
+def build_goal_state(
+    db: Session,
+    *,
+    user_id: str,
+    current_text: str = "",
+    session_digest: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    user = db.get(User, user_id)
+    if user is None:
+        return None
+
+    profile = user.profile
+    compact_current = _compact_text(current_text, limit=MAX_ITEM_CHARS)
+    current_goal = compact_current if compact_current and _contains_any(compact_current, GOAL_KEYWORDS) else ""
+    goal_state: dict[str, Any] = {
+        "schema_version": DIGEST_SCHEMA_VERSION,
+        "current_goal": current_goal,
+        "usage_goals": _compact_list(profile.usage_goals if profile else [], limit=MAX_LIST_ITEMS),
+        "goal_hints": _goal_hints(db, user_id=user_id),
+        "open_threads": _digest_threads(session_digest),
+    }
+
+    if not any(
+        goal_state[field]
+        for field in (
+            "current_goal",
+            "usage_goals",
+            "goal_hints",
+            "open_threads",
+        )
+    ):
+        return None
+    return goal_state

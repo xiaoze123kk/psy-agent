@@ -711,6 +711,37 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_message.meta["memory_job_status"], "completed")
         self.assertEqual(assistant_message.meta["memory_write_decisions"][0]["status"], "created")
 
+    async def test_long_term_turn_passes_goal_state_and_retrieves_goal_memory(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        user.profile.usage_goals = ["先安抚再拆沟通步骤"]
+        goal = self.add_memory(
+            user,
+            memory_type="goal",
+            content="用户目标：理清楚和主管沟通任务边界这件事。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近几轮都在讨论工作压力。",
+            importance=5,
+        )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我想先把和主管沟通任务边界这件事理清楚"),
+        )
+
+        call = fake_runtime.calls[0]
+        self.assertIn("主管沟通任务边界", call["goal_state"]["current_goal"])
+        self.assertIn("先安抚再拆沟通步骤", call["goal_state"]["usage_goals"])
+        self.assertEqual(call["retrieved_memories"][0]["id"], goal.id)
+
     async def test_failed_memory_job_does_not_issue_an_intermediate_commit(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
         turn = ConversationTurn(

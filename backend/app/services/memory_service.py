@@ -366,6 +366,7 @@ def _query_for_retrieval(
     recent_messages: list[dict[str, Any]] | None,
     last_summary: str | None,
     session_digest: dict[str, Any] | None,
+    goal_state: dict[str, Any] | None,
     control_category: str | None,
 ) -> str:
     recent_text = " ".join(str(message.get("content", "")) for message in (recent_messages or [])[-4:])
@@ -378,12 +379,43 @@ def _query_for_retrieval(
             elif isinstance(value, str) and value.strip():
                 digest_parts.append(value.strip())
     digest_text = " ".join(digest_parts)
-    return _clean_text(f"{query} {last_summary or ''} {control_category or ''} {digest_text} {recent_text}", limit=1200)
+    goal_parts: list[str] = []
+    if isinstance(goal_state, dict):
+        for key in ("current_goal", "usage_goals", "goal_hints", "open_threads"):
+            value = goal_state.get(key)
+            if isinstance(value, list):
+                goal_parts.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                goal_parts.append(value.strip())
+    goal_text = " ".join(goal_parts)
+    return _clean_text(
+        f"{query} {last_summary or ''} {control_category or ''} {goal_text} {digest_text} {recent_text}",
+        limit=1400,
+    )
 
 
-def _type_boost(memory_type: str, query_text: str, control_category: str | None) -> float:
+def _goal_state_has_context(goal_state: dict[str, Any] | None) -> bool:
+    if not isinstance(goal_state, dict):
+        return False
+    for key in ("current_goal", "usage_goals", "goal_hints", "open_threads"):
+        value = goal_state.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(str(item).strip() for item in value):
+            return True
+    return False
+
+
+def _type_boost(
+    memory_type: str,
+    query_text: str,
+    control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
+) -> float:
     text = query_text.lower()
     boost = 0.0
+    if memory_type == "goal" and any(term in text for term in ("目标", "计划", "打算", "我想", "希望", "理清", "解决")):
+        boost += 0.12
     if memory_type == "session_summary" and any(term in text for term in ("上次", "继续", "刚才", "最近")):
         boost += 0.08
     if memory_type == "session_summary" and any(term in text for term in ("职场", "工作", "压力", "主题", "方向", "讨论")):
@@ -402,10 +434,22 @@ def _type_boost(memory_type: str, query_text: str, control_category: str | None)
         boost += 0.07
     if control_category and memory_type in {"support_strategy", "recurring_trigger"}:
         boost += 0.03
+    if _goal_state_has_context(goal_state) and any(term in text for term in ("继续", "这个", "刚才", "还是", "接着")):
+        if memory_type == "goal":
+            boost += 0.18
+        elif memory_type in {"profile", "correction", "preference"}:
+            boost += 0.12
+        elif memory_type == "session_summary":
+            boost -= 0.04
     return boost
 
 
-def _score_memory(memory: UserMemory, query_text: str, control_category: str | None) -> tuple[float, str]:
+def _score_memory(
+    memory: UserMemory,
+    query_text: str,
+    control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
+) -> tuple[float, str]:
     document = _memory_document(memory)
     similarity = _term_similarity(query_text, document)
     importance_score = max(min(memory.importance, 5), 1) / 5
@@ -418,7 +462,7 @@ def _score_memory(memory: UserMemory, query_text: str, control_category: str | N
         + 0.28 * importance_score
         + 0.12 * freshness_score
         + 0.06 * access_score
-        + _type_boost(memory.memory_type, query_text, control_category)
+        + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
     if similarity >= 0.18:
         reason = "与当前输入或近期上下文相似"
@@ -444,6 +488,7 @@ def _vector_score_memory(
     vector_score: float,
     query_text: str,
     control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
     importance_score = max(min(memory.importance, 5), 1) / 5
     updated_at = memory.updated_at or memory.created_at
@@ -456,7 +501,7 @@ def _vector_score_memory(
         + 0.18 * importance_score
         + 0.10 * freshness_score
         + 0.04 * access_score
-        + _type_boost(memory.memory_type, query_text, control_category)
+        + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
     return round(score, 4), "vector_semantic_match"
 
@@ -524,6 +569,7 @@ def retrieve_memories_for_turn(
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
     session_digest: dict[str, Any] | None = None,
+    goal_state: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -546,6 +592,7 @@ def retrieve_memories_for_turn(
         recent_messages=recent_messages,
         last_summary=last_summary,
         session_digest=session_digest,
+        goal_state=goal_state,
         control_category=control_category,
     )
 
@@ -567,13 +614,14 @@ def retrieve_memories_for_turn(
 
     candidates: list[tuple[float, str, UserMemory]] = []
     for memory in candidate_memories.values():
-        score, reason = _score_memory(memory, query_text, control_category)
+        score, reason = _score_memory(memory, query_text, control_category, goal_state)
         if memory.id in vector_scores:
             vector_score, vector_reason = _vector_score_memory(
                 memory,
                 vector_score=vector_scores[memory.id],
                 query_text=query_text,
                 control_category=control_category,
+                goal_state=goal_state,
             )
             if vector_score >= score:
                 score, reason = vector_score, vector_reason
@@ -637,6 +685,7 @@ async def retrieve_memories_for_turn_async(
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
     session_digest: dict[str, Any] | None = None,
+    goal_state: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -655,6 +704,7 @@ async def retrieve_memories_for_turn_async(
             recent_messages=recent_messages,
             last_summary=last_summary,
             session_digest=session_digest,
+            goal_state=goal_state,
             control_category=control_category,
         )
         query_vector = await embedding_client.embed_query(query_text)
@@ -665,6 +715,7 @@ async def retrieve_memories_for_turn_async(
         recent_messages=recent_messages,
         last_summary=last_summary,
         session_digest=session_digest,
+        goal_state=goal_state,
         memory_mode=memory_mode,
         risk_level=risk_level,
         control_category=control_category,

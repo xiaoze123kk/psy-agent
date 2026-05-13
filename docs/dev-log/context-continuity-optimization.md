@@ -341,3 +341,47 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 结果：`36 passed, 1 warning`。
 
 warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
+### 目标状态与检索重排
+
+为了让模型更清楚“用户现在想解决什么”，本轮新增轻量 `goal_state`，并让目标相关记忆在模糊接续输入中更靠前。
+
+### 已完成改动
+
+#### 1. 新增目标状态汇总
+
+- `user_context_service.build_goal_state()` 会汇总当前显式目标、用户设置中的使用目标、长期 `goal` 记忆和会话全景中的未展开线索。
+- `chat_service` 在每轮准备上下文时构造 `goal_state`。
+- `GraphRuntime`、`AgentState` 和输入节点会透传 `goal_state`，普通回复与流式回复路径一致。
+
+#### 2. 显式目标候选提取
+
+- `memory_candidate_extract` 识别“我想 / 我希望 / 目标 / 计划 / 先把 / 理清楚 / 解决”等目标表达。
+- 命中后生成 `goal` 候选，保留为概括性的当前目标记忆。
+- `summary_only` 模式仍然只写会话摘要，不引入长期目标候选。
+
+#### 3. 目标感知检索重排
+
+- `retrieve_memories_for_turn()` 新增 `goal_state` 参数。
+- 检索 query 会合并当前目标、使用目标、目标记忆和未展开线索。
+- 当用户说“继续这个 / 接着刚才”这类模糊输入时，`goal`、`profile`、`correction`、`preference` 会获得目标上下文偏置，优先于普通 `session_summary`。
+
+### 验证结果
+
+先写失败测试后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory_service.py tests/test_memory.py tests/test_response_memory_continuity.py -q
+```
+
+红灯结果：`3 failed, 58 passed, 1 warning`，失败分别覆盖 `goal_state` 参数缺失、运行时未透传、目标候选未生成。
+
+补齐实现后再次运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory_service.py tests/test_memory.py tests/test_response_memory_continuity.py -q
+```
+
+结果：`61 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
