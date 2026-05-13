@@ -299,6 +299,20 @@ warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，
 
 warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 
+### 本轮组合回归
+
+四个优化点分别提交后，补跑连续性、记忆、隐私、幂等、工具和澄清相关回归集合。
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`136 passed, 2 warnings`。
+
+warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
+
 ### 纠错记忆写入与检索
 
 为了让模型记住用户明确表达过的“不要这样回应”，本轮把纠错偏好从普通偏好里拆成独立记忆类型。
