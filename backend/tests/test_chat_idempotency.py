@@ -301,6 +301,37 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(thread.session_digest["key_themes"], ["职场压力"])
         self.assertEqual(thread.session_digest["summary_200chars"], "用户本轮继续讨论职场压力。")
 
+    def test_recent_message_candidates_include_larger_context_window(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=40)
+        for index in range(30):
+            self.db.add(
+                Message(
+                    thread_id=thread.id,
+                    user_id=user.id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=f"历史消息 {index}",
+                    input_type="text",
+                    created_at=base_time + timedelta(seconds=index),
+                )
+            )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-wide-context", "content": "接着前面的任务边界聊"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        recent_messages = fake_runtime.calls[0]["recent_messages"]
+        self.assertEqual(len(recent_messages), 24)
+        self.assertEqual(recent_messages[0]["content"], "历史消息 7")
+        self.assertEqual(recent_messages[-1]["content"], "接着前面的任务边界聊")
+
     def test_stream_completed_turn_can_be_replayed_by_send_message_fallback(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)

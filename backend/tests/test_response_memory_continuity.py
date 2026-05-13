@@ -192,6 +192,42 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertEqual(captured_messages[-1]["role"], "user")
         self.assertIn("用户刚刚说：我还是很累", captured_messages[-1]["content"])
 
+    def test_companion_reply_trims_recent_messages_by_budget(self) -> None:
+        captured_messages: list[dict[str, str]] = []
+        long_history = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": f"旧消息{index}-" + ("很长的背景。" * 120),
+            }
+            for index in range(18)
+        ]
+        state = self.make_state(
+            normalized_text="我现在还是卡在沟通这一步",
+            recent_messages=[
+                *long_history,
+                {"role": "user", "content": "最近一直在聊任务边界"},
+                {"role": "assistant", "content": "你在试着把责任和界限分清楚。"},
+                {"role": "user", "content": "我现在还是卡在沟通这一步"},
+            ],
+        )
+
+        async def fake_chat(messages):
+            captured_messages.extend(messages)
+            return "这次卡住的点还是和任务边界有关。\n---\n继续说沟通"
+
+        with patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)):
+            _run(companion_response(state))
+
+        history_messages = captured_messages[1:-1]
+        history_text = "\n".join(message["content"] for message in history_messages)
+        self.assertLessEqual(sum(len(message["content"]) for message in history_messages), 1800)
+        self.assertNotIn("旧消息0-", history_text)
+        self.assertIn("最近一直在聊任务边界", history_text)
+        self.assertIn("你在试着把责任和界限分清楚。", history_text)
+        self.assertEqual(captured_messages[-1]["role"], "user")
+        self.assertIn("用户刚刚说：我现在还是卡在沟通这一步", captured_messages[-1]["content"])
+        self.assertNotIn("我现在还是卡在沟通这一步", history_text)
+
     def test_tool_reply_uses_multi_turn_messages(self) -> None:
         captured_messages: list[dict[str, str]] = []
         state = self.make_state(
@@ -224,4 +260,44 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertEqual(captured_messages[2]["content"], "这种反复醒来的疲惫会一直拖到白天。")
         self.assertEqual(captured_messages[-1]["role"], "user")
         self.assertIn("用户刚刚说：我还是睡不好", captured_messages[-1]["content"])
+
+    def test_tool_reply_uses_budgeted_recent_messages(self) -> None:
+        captured_messages: list[dict[str, str]] = []
+        state = self.make_state(
+            normalized_text="还是睡前最容易反复想",
+            tooling_enabled=True,
+            recent_messages=[
+                *[
+                    {
+                        "role": "user" if index % 2 == 0 else "assistant",
+                        "content": f"很早之前的睡眠背景{index}-" + ("反复铺垫。" * 120),
+                    }
+                    for index in range(18)
+                ],
+                {"role": "user", "content": "昨晚睡前又开始反刍"},
+                {"role": "assistant", "content": "睡前安静下来时，那些念头就更容易冒出来。"},
+            ],
+        )
+
+        async def fake_chat_with_tools(messages, **kwargs):
+            captured_messages.extend(messages)
+            return ToolChatResult(
+                content="睡前反刍像是这条线一直在延续。\n---\n说说睡前",
+                tool_events=[],
+                finish_reason="stop",
+                messages=messages,
+            )
+
+        with patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(side_effect=fake_chat_with_tools),
+        ):
+            _run(companion_response(state))
+
+        history_messages = captured_messages[1:-1]
+        history_text = "\n".join(message["content"] for message in history_messages)
+        self.assertLessEqual(sum(len(message["content"]) for message in history_messages), 1800)
+        self.assertNotIn("很早之前的睡眠背景0-", history_text)
+        self.assertIn("昨晚睡前又开始反刍", history_text)
+        self.assertIn("睡前安静下来时，那些念头就更容易冒出来。", history_text)
 

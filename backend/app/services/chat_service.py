@@ -32,6 +32,7 @@ graph_runtime = GraphRuntime()
 ChatStreamEvent = tuple[str, dict[str, object]]
 TURN_RUNNING_WAIT_SECONDS = 1.0
 TURN_RUNNING_POLL_INTERVAL_SECONDS = 0.1
+RECENT_MESSAGE_CANDIDATE_LIMIT = 24
 
 
 @dataclass
@@ -571,7 +572,7 @@ async def _prepare_turn_context(
 ) -> TurnContext:
     profile_user_mode = getattr(user.profile, "user_mode", "adult") if user.profile else "adult"
     effective_user_mode = payload.user_mode.value if payload.user_mode is not None else profile_user_mode
-    recent_messages = list_messages_for_thread(db, thread.id)[-8:]
+    recent_messages = list_messages_for_thread(db, thread.id)[-RECENT_MESSAGE_CANDIDATE_LIMIT:]
     memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
     serialized_recent_messages = _serialize_recent_messages(recent_messages)
     pre_risk_level = sync_risk_classify(payload.content)

@@ -126,3 +126,48 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 结果：`109 passed, 2 warnings`。
 
 warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
+
+### 多轮上下文动态预算裁剪
+
+在 `session_digest` 已经能够持续更新后，本轮继续优化回复链路里的多轮上下文窗口，避免固定条数带来的两类问题：短消息时上下文不够、长消息时 prompt 过长。
+
+### 已完成改动
+
+#### 1. 扩大候选历史窗口
+
+- `chat_service` 给图运行时提供的 `recent_messages` 候选从最近 8 条扩大到最近 24 条。
+- 候选扩大只影响进入图的上下文材料，不改变数据库消息存储和排序逻辑。
+
+#### 2. LLM 输入前按预算裁剪
+
+- `response_nodes` 在构造主回复和工具回复 messages 前，会先过滤最近对话。
+- 过滤规则从最新消息往前选，保留更近的上下文，旧消息超预算会被舍弃。
+- 单条历史消息会先做长度裁剪，历史消息总量控制在 1800 字符以内。
+- 如果 `recent_messages` 最后一条就是当前用户输入，会继续去重，避免当前轮重复注入。
+
+#### 3. 主回复和工具回复共用裁剪结果
+
+- 主回复分支和工具分支都仍然通过同一套 `_reply_messages()` 构造 messages。
+- 因此预算裁剪会同时作用于普通回复和带工具回复。
+
+### 验证结果
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_response_memory_continuity.py tests/test_chat_idempotency.py -q
+```
+
+结果：`20 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
+补充运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py -q
+```
+
+结果：`112 passed, 2 warnings`。
+
+warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。

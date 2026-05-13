@@ -16,6 +16,9 @@ from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 logger = logging.getLogger(__name__)
 _ACTIONS_SEPARATOR = "---"
 _STREAM_TAIL_CHARS = 8
+_RECENT_CHAT_CANDIDATE_LIMIT = 24
+_RECENT_CHAT_BUDGET_CHARS = 1800
+_RECENT_CHAT_MESSAGE_MAX_CHARS = 480
 
 
 class _VisibleReplyBuffer:
@@ -140,10 +143,24 @@ def examples_text_from_state(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _recent_chat_messages(state: AgentState, *, limit: int = 12) -> list[dict[str, str]]:
+def _trim_message_content(content: str, limit: int) -> str:
+    if len(content) <= limit:
+        return content
+    if limit <= 3:
+        return content[:limit]
+    return content[: limit - 3].rstrip() + "..."
+
+
+def _recent_chat_messages(
+    state: AgentState,
+    *,
+    limit: int = _RECENT_CHAT_CANDIDATE_LIMIT,
+    budget_chars: int = _RECENT_CHAT_BUDGET_CHARS,
+    message_max_chars: int = _RECENT_CHAT_MESSAGE_MAX_CHARS,
+) -> list[dict[str, str]]:
     current_text = str(state.get("normalized_text") or state.get("user_text") or "").strip()
     raw_messages = [message for message in state.get("recent_messages", []) if isinstance(message, dict)]
-    messages: list[dict[str, str]] = []
+    candidates: list[dict[str, str]] = []
     for index, message in enumerate(raw_messages):
         role = str(message.get("role") or "")
         if role not in {"user", "assistant"}:
@@ -153,8 +170,21 @@ def _recent_chat_messages(state: AgentState, *, limit: int = 12) -> list[dict[st
             continue
         if index == len(raw_messages) - 1 and role == "user" and current_text and content == current_text:
             continue
-        messages.append({"role": role, "content": safe_trim(content, 1200)})
-    return messages[-limit:]
+        candidates.append({"role": role, "content": _trim_message_content(content, message_max_chars)})
+
+    selected: list[dict[str, str]] = []
+    remaining = max(budget_chars, 0)
+    for message in reversed(candidates[-limit:]):
+        if remaining <= 0:
+            break
+        content = message["content"]
+        if len(content) > remaining:
+            content = _trim_message_content(content, remaining)
+        if not content:
+            continue
+        selected.append({"role": message["role"], "content": content})
+        remaining -= len(content)
+    return list(reversed(selected))
 
 
 def _reply_messages(state: AgentState, prompt_parts) -> list[dict[str, str]]:
