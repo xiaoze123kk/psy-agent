@@ -1,4 +1,4 @@
-# 测试中心题库
+﻿# 测试中心题库
 
 本目录管理测试中心所有测试的题目数据、评分规则和评分算法。
 
@@ -20,7 +20,8 @@ data/tests/
 | 分类 | 测试 ID | 状态 | 说明 |
 |------|---------|------|------|
 | `state` | `state-check-v1` | ✅ published | 今日状态测试（3题） |
-| `personality` | `mbti-sixteen-type` | ✅ published | MBTI 16型人格（80题） |
+| `personality` | `mbti-sixteen-type` | ✅ published | MBTI 16型人格（80题混合题库） |
+| `personality` | `mbti_sixteen_type_v2` | ✅ published | MBTI 16型人格 200题自研版 |
 | `anime` | `anime-match-v1` | 🏗️ draft | 动漫角色测试（未完成） |
 
 ---
