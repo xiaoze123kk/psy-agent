@@ -168,6 +168,25 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertEqual(result["session_summary"], "")
         self.assertEqual(result["session_digest"], existing_digest)
 
+    def test_summarize_turn_skips_llm_for_trivial_followup_when_digest_exists(self) -> None:
+        existing_digest = {
+            "key_themes": ["职场压力"],
+            "summary_200chars": "用户最近在聊职场压力和任务安排。",
+        }
+        state = self.make_state(
+            normalized_text="嗯",
+            assistant_text="嗯",
+            session_digest=existing_digest,
+            session_summary="",
+        )
+
+        with patch.object(deepseek_client, "chat", new=AsyncMock(return_value="不会被调用")) as chat:
+            result = _run(summarize_turn(state))
+
+        chat.assert_not_called()
+        self.assertEqual(result["session_digest"], existing_digest)
+        self.assertIn("本轮主题", result["session_summary"])
+
     def test_memory_candidate_extract_uses_session_digest_for_long_term_candidates(self) -> None:
         state = self.make_state(
             normalized_text="还是卡在这里",

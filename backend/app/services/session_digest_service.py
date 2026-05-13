@@ -42,6 +42,21 @@ HIGH_RISK_DETAIL_TERMS = (
     "roof",
     "bridge",
 )
+TRIVIAL_ACK_TERMS = {
+    "嗯",
+    "嗯嗯",
+    "哦",
+    "好",
+    "好吧",
+    "行",
+    "行吧",
+    "可以",
+    "对",
+    "对啊",
+    "知道了",
+    "了解",
+    "收到",
+}
 
 
 def _compact(value: object) -> str:
@@ -207,9 +222,28 @@ def _build_digest_messages(state: Mapping[str, Any]) -> list[dict[str, str]]:
     ]
 
 
+def _should_skip_llm_update(state: Mapping[str, Any], previous_digest: Mapping[str, Any]) -> bool:
+    if not previous_digest:
+        return False
+    risk_level = str(state.get("risk_level") or "L0")
+    if risk_level in {"L2", "L3"}:
+        return False
+    current_text = _compact(state.get("normalized_text") or state.get("user_text") or "")
+    assistant_text = _compact(state.get("assistant_text"))
+    if not current_text and not assistant_text:
+        return True
+    if current_text in TRIVIAL_ACK_TERMS and assistant_text in TRIVIAL_ACK_TERMS:
+        return True
+    if len(current_text) <= 2 and len(assistant_text) <= 2:
+        return True
+    return False
+
+
 async def update_session_digest_with_llm(state: Mapping[str, Any]) -> dict[str, Any] | None:
     risk_level = str(state.get("risk_level") or "L0")
     previous_digest = state.get("session_digest") if isinstance(state.get("session_digest"), Mapping) else {}
+    if _should_skip_llm_update(state, previous_digest):
+        return None
     try:
         reply = await asyncio.wait_for(
             deepseek_client.chat(

@@ -182,6 +182,40 @@ warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，
 
 结果：`13 passed, 1 warning`。
 
+### 跳过轻量轮次的摘要更新
+
+为了降低会话摘要更新的尾部延迟，本轮给 `session_digest` 更新加了一个轻量跳过条件。
+
+### 已完成改动
+
+#### 1. 轻量轮次直接回退
+
+- 当已有旧 `session_digest`，且当前轮只有超短确认词或近乎空内容时，`update_session_digest_with_llm` 会直接跳过 LLM。
+- 这样可以避免对没有新增信息的回合做无意义的模型调用。
+
+#### 2. 保持高风险回合和实质变化回合继续更新
+
+- `L2/L3` 风险回合不会被这个短路影响。
+- 只要当前轮有实质内容，仍然会照常更新 digest。
+
+### 验证结果
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_response_memory_continuity.py -q
+```
+
+结果：`14 passed, 1 warning`。
+
+补充运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py tests/test_dialogue_prompt_builder.py -q
+```
+
+结果：`117 passed, 2 warnings`。
+
 ### 多轮上下文动态预算裁剪
 
 在 `session_digest` 已经能够持续更新后，本轮继续优化回复链路里的多轮上下文窗口，避免固定条数带来的两类问题：短消息时上下文不够、长消息时 prompt 过长。
