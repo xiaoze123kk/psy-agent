@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 VISIBLE_MEMORY_TYPES = {
     "profile",
+    "correction",
     "preference",
     "session_summary",
     "recurring_trigger",
@@ -45,6 +46,7 @@ MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS = 3
 
 MEMORY_TYPE_LABELS = {
     "profile": "基础画像",
+    "correction": "纠错偏好",
     "session_summary": "对话摘要",
     "preference": "陪伴偏好",
     "recurring_trigger": "触发点",
@@ -57,6 +59,7 @@ MEMORY_TYPE_LABELS = {
 
 MEMORY_TYPE_ORDER = [
     "profile",
+    "correction",
     "preference",
     "session_summary",
     "recurring_trigger",
@@ -98,6 +101,7 @@ TAG_KEYWORDS = {
     "压力": ("压力", "考试", "工作", "学习", "任务"),
     "关系": ("朋友", "家人", "同学", "伴侣", "恋人", "关系"),
     "支持方式": ("呼吸", "练习", "陪", "安抚", "梳理", "倾听"),
+    "纠错": ("不要", "别", "纠正", "先听", "听我说", "不喜欢", "不是这个意思"),
 }
 
 
@@ -117,6 +121,8 @@ def _aware(value: datetime) -> datetime:
 def _normalize_memory_type(memory_type: object) -> str:
     raw = str(memory_type or "session_summary").strip()
     aliases = {
+        "feedback": "correction",
+        "style_feedback": "correction",
         "trigger": "recurring_trigger",
         "safety": "safety_summary",
         "summary": "session_summary",
@@ -384,6 +390,10 @@ def _type_boost(memory_type: str, query_text: str, control_category: str | None)
         boost += 0.1
     if memory_type == "preference" and any(term in text for term in ("喜欢", "希望", "不要", "别", "方式")):
         boost += 0.08
+    if memory_type == "correction" and any(
+        term in text for term in ("不要", "别", "纠正", "先听", "听我说", "不是", "不喜欢")
+    ):
+        boost += 0.16
     if memory_type in {"recurring_trigger", "state"} and any(term in text for term in ("焦虑", "睡", "压力", "每次", "总是")):
         boost += 0.07
     if memory_type == "support_strategy" and any(term in text for term in ("安抚", "呼吸", "练习", "帮助", "有效")):

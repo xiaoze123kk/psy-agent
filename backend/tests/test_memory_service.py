@@ -222,6 +222,38 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertNotIn(expired.id, result_ids)
         self.assertNotIn(do_not_use.id, result_ids)
 
+    def test_retrieve_prioritizes_correction_memory_for_style_feedback(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户明确纠正：不要一上来就分析，先听我说完。",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户喜欢温柔的陪伴语气。",
+            importance=5,
+        )
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近持续讨论工作压力。",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="别一上来分析，先听我说",
+            memory_mode="long_term",
+            limit=3,
+        )
+
+        self.assertEqual(results[0]["memory_id"], target.id)
+        self.assertEqual(results[0]["memory_type"], "correction")
+
     def test_retrieve_uses_session_digest_themes_for_vague_query(self) -> None:
         user = self.create_user(memory_mode="long_term")
         target = self.add_memory(
@@ -628,6 +660,35 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(memory.structured_value["basis"], "explicit_user_statement")
         self.assertEqual(memory.version, 2)
         self.assertEqual([operation.action for operation in operations], ["create", "update"])
+
+    def test_upsert_accepts_correction_memory_candidates(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000021",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "correction",
+                        "content": "用户明确纠正：不要一上来就分析，先听我说完。",
+                        "importance": 5,
+                        "tags": ["纠错"],
+                    }
+                ],
+            },
+        )
+        self.db.commit()
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertEqual(written[0].memory_type, "correction")
+        self.assertEqual(written[0].visibility, "user_visible")
+        self.assertIn("纠错", written[0].tags)
 
     def test_upsert_blocks_sensitive_visible_and_allows_high_risk_safety_summary(self) -> None:
         user = self.create_user(memory_mode="long_term")

@@ -149,6 +149,35 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
             }
         )
 
+    if has_any_text(
+        text,
+        (
+            "不要一上来",
+            "别一上来",
+            "不要直接",
+            "别直接",
+            "别急着",
+            "先别",
+            "先听我",
+            "听我说",
+            "别分析",
+            "不要分析",
+            "别下结论",
+            "不是这个意思",
+            "不喜欢你这样",
+        ),
+    ):
+        candidates.append(
+            {
+                "memory_type": "correction",
+                "title": "纠错偏好",
+                "summary": f"用户明确纠正陪伴方式：{compact_text}",
+                "content": f"用户明确纠正陪伴方式：{compact_text}",
+                "importance": 5,
+                "tags": ["纠错", "支持方式"],
+            }
+        )
+
     if has_any_text(text, ("喜欢", "希望", "更想", "更希望", "不要", "别", "少一点", "直接", "温柔", "安慰", "分析", "提问", "先听", "先陪")):
         candidates.append(
             {

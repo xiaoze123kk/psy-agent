@@ -214,6 +214,21 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertIn("先共情再轻量梳理", serialized)
         self.assertIn("如何和主管开口", serialized)
 
+    def test_memory_candidate_extract_creates_correction_candidate_for_explicit_feedback(self) -> None:
+        state = self.make_state(
+            normalized_text="不要一上来就分析，先听我说完，再给建议。",
+            memory_mode="long_term",
+            session_summary="用户明确纠正陪伴方式，希望先被倾听。",
+        )
+
+        result = _run(memory_candidate_extract(state))
+
+        candidates = result["memory_candidates"]
+        correction = next(candidate for candidate in candidates if candidate["memory_type"] == "correction")
+        self.assertIn("先听我说完", correction["content"])
+        self.assertGreaterEqual(correction["importance"], 4)
+        self.assertIn("纠错", correction["tags"])
+
     def test_memory_candidate_extract_does_not_use_digest_when_summary_only(self) -> None:
         state = self.make_state(
             memory_mode="summary_only",
