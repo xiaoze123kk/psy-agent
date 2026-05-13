@@ -127,6 +127,34 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 
 warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
 
+### `session_digest` 注入回复提示词
+
+在 `session_digest` 已经可持续更新、检索也已读取 digest 后，本轮把会话全景正式注入回复提示词，让 LLM 回复时直接知道当前对话在延续什么。
+
+### 已完成改动
+
+#### 1. 新增紧凑会话全景块
+
+- `dialogue_prompt_builder` 会从 `session_digest` 中抽取稳定字段，生成“会话全景”提示块。
+- 注入字段包括 `summary_200chars`、`key_themes`、`emotional_arc`、`effective_interventions`、`ineffective_interventions`、`unresolved_threads`、`significant_changes`。
+- 空字段不会进入 prompt，避免噪音。
+
+#### 2. 避免暴露调试字段和原始 JSON
+
+- prompt 不直接 dump 整段 `session_digest`。
+- `schema_version`、`last_updated_turn` 等内部字段不会暴露给 LLM。
+- 每个字段会做紧凑截断，避免会话全景块膨胀。
+
+### 验证结果
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_dialogue_prompt_builder.py -q
+```
+
+结果：`2 passed`。
+
 ### 多轮上下文动态预算裁剪
 
 在 `session_digest` 已经能够持续更新后，本轮继续优化回复链路里的多轮上下文窗口，避免固定条数带来的两类问题：短消息时上下文不够、长消息时 prompt 过长。

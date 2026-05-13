@@ -172,6 +172,73 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term.lower() in lowered for term in terms)
 
 
+def _compact_text(value: object, *, limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _compact_list(value: object, *, limit: int = 5) -> list[str]:
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw_item in raw_items:
+        item = _compact_text(raw_item, limit=60)
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _session_digest_prompt_block(state: AgentState) -> str:
+    digest = state.get("session_digest")
+    if not isinstance(digest, dict) or not digest:
+        return ""
+
+    lines: list[str] = []
+    summary = _compact_text(digest.get("summary_200chars"), limit=200)
+    if summary:
+        lines.append(f"会话摘要：{summary}")
+
+    key_themes = _compact_list(digest.get("key_themes"))
+    if key_themes:
+        lines.append(f"稳定主题：{'、'.join(key_themes)}")
+
+    emotional_arc = _compact_text(digest.get("emotional_arc"), limit=120)
+    if emotional_arc:
+        lines.append(f"情绪走向：{emotional_arc}")
+
+    effective = _compact_list(digest.get("effective_interventions"))
+    if effective:
+        lines.append(f"有效回应：{'、'.join(effective)}")
+
+    ineffective = _compact_list(digest.get("ineffective_interventions"))
+    if ineffective:
+        lines.append(f"需避开的回应：{'、'.join(ineffective)}")
+
+    unresolved = _compact_list(digest.get("unresolved_threads"))
+    if unresolved:
+        lines.append(f"未展开线索：{'、'.join(unresolved)}")
+
+    changes = _compact_list(digest.get("significant_changes"))
+    if changes:
+        lines.append(f"关键变化：{'、'.join(changes)}")
+
+    if not lines:
+        return ""
+    return "会话全景（仅供理解连续性，不要直接复述）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
+
+
 def select_dialogue_strategy(state: AgentState, mode: str) -> str:
     if state.get("route_priority") == "P0_immediate_safety" or state.get("risk_level") in {"L2", "L3"}:
         return "crisis"
@@ -231,6 +298,7 @@ def build_dialogue_prompt_parts(
     selected_strategy = select_dialogue_strategy(state, mode)
     style = build_companion_style_prompt(state.get("companion_preferences", {}).get("style", ""))
     last_summary = state.get("last_summary") or "无"
+    session_digest_text = _session_digest_prompt_block(state)
     control_category = state.get("control_category", "normal_support")
     route_priority = state.get("route_priority", "P2_support")
     mode_guidance = mode_guidance_for(mode, selected_strategy, str(user_mode))
@@ -256,6 +324,7 @@ def build_dialogue_prompt_parts(
         f"回复要求：{mode_guidance}\n"
         f"{examples_text}"
         f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
+        f"{session_digest_text}"
         f"可参考记忆：\n{memory_text}\n"
         f"用户刚刚说：{text}\n"
     )
