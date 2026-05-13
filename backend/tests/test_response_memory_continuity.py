@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.graphs.nodes.memory_nodes import summarize_turn
 from app.graphs.nodes.response_nodes import companion_response
 from app.graphs.state import AgentState
-from app.services.deepseek_client import ToolChatResult
+from app.services.deepseek_client import ToolChatResult, deepseek_client
 
 
 def _run(coro):
@@ -77,6 +78,95 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertIn("本轮主题", summary)
         self.assertNotIn("上次主要在聊", summary)
         self.assertNotIn("下次可以从", summary)
+
+    def test_summarize_turn_updates_session_digest_from_llm(self) -> None:
+        llm_digest = {
+            "key_themes": ["职场压力", "任务安排", "睡眠疲惫"],
+            "emotional_arc": "紧绷 -> 疲惫 -> 稍微松动",
+            "effective_interventions": ["先共情再轻量梳理"],
+            "ineffective_interventions": ["直接给建议"],
+            "unresolved_threads": ["和主管沟通任务边界"],
+            "significant_changes": ["用户提到沟通后稍微轻松"],
+            "last_updated_turn": 3,
+            "summary_200chars": "用户延续职场压力主题，谈到与主管沟通任务安排后稍微轻松，但仍有疲惫和睡眠困扰。",
+        }
+        state = self.make_state(
+            normalized_text="今天和主管谈了任务安排后，稍微轻松一点，但还是很累。",
+            assistant_text="你已经做了一次很重要的沟通，现在身体还在慢慢卸力。",
+            intent="light_counseling",
+            session_digest={
+                "key_themes": ["职场压力"],
+                "emotional_arc": "紧绷 -> 疲惫",
+                "unresolved_threads": ["任务安排"],
+                "last_updated_turn": 2,
+                "summary_200chars": "用户近期在聊职场压力和任务安排。",
+            },
+        )
+
+        with patch.object(deepseek_client, "chat", new=AsyncMock(return_value=json.dumps(llm_digest, ensure_ascii=False))):
+            result = _run(summarize_turn(state))
+
+        digest = result["session_digest"]
+        self.assertEqual(digest["schema_version"], 1)
+        self.assertEqual(digest["key_themes"], ["职场压力", "任务安排", "睡眠疲惫"])
+        self.assertEqual(digest["last_updated_turn"], 3)
+        self.assertEqual(digest["summary_200chars"], llm_digest["summary_200chars"])
+        self.assertEqual(result["session_summary"], llm_digest["summary_200chars"])
+
+    def test_summarize_turn_keeps_existing_digest_when_llm_json_invalid(self) -> None:
+        existing_digest = {
+            "key_themes": ["关系压力"],
+            "summary_200chars": "用户最近在聊关系压力。",
+        }
+        state = self.make_state(
+            normalized_text="我还是不知道怎么和朋友说",
+            intent="light_counseling",
+            session_digest=existing_digest,
+        )
+
+        with patch.object(deepseek_client, "chat", new=AsyncMock(return_value="不是 JSON")):
+            result = _run(summarize_turn(state))
+
+        self.assertEqual(result["session_digest"], existing_digest)
+        self.assertIn("本轮主题", result["session_summary"])
+
+    def test_summarize_turn_sanitizes_and_trims_digest_fields(self) -> None:
+        state = self.make_state(
+            normalized_text="我的邮箱是 test@example.com，电话 13812345678，最近工作压力很大。",
+            assistant_text="我会只保留对连续性有用的概括。",
+        )
+        llm_digest = {
+            "key_themes": ["职场压力", "睡眠", "关系", "自我要求", "边界", "额外主题"],
+            "emotional_arc": "焦虑" * 80,
+            "effective_interventions": ["先听再回应"] * 8,
+            "ineffective_interventions": [],
+            "unresolved_threads": ["联系 test@example.com 或 13812345678"] * 3,
+            "significant_changes": ["用户给出了手机号 13812345678"],
+            "last_updated_turn": 1,
+            "summary_200chars": "用户邮箱 test@example.com，电话 13812345678。" + ("工作压力仍在延续。" * 30),
+        }
+
+        with patch.object(deepseek_client, "chat", new=AsyncMock(return_value=json.dumps(llm_digest, ensure_ascii=False))):
+            result = _run(summarize_turn(state))
+
+        digest = result["session_digest"]
+        self.assertEqual(len(digest["key_themes"]), 5)
+        self.assertLessEqual(len(digest["effective_interventions"]), 5)
+        self.assertLessEqual(len(digest["summary_200chars"]), 200)
+        serialized = json.dumps(digest, ensure_ascii=False)
+        self.assertNotIn("test@example.com", serialized)
+        self.assertNotIn("13812345678", serialized)
+
+    def test_summarize_turn_failed_no_reply_does_not_update_session_digest(self) -> None:
+        existing_digest = {"key_themes": ["旧主题"], "summary_200chars": "旧摘要"}
+        state = self.make_state(delivery_status="failed_no_reply", session_digest=existing_digest)
+
+        with patch.object(deepseek_client, "chat", new=AsyncMock(return_value=json.dumps({"key_themes": ["新主题"]}, ensure_ascii=False))) as chat:
+            result = _run(summarize_turn(state))
+
+        chat.assert_not_called()
+        self.assertEqual(result["session_summary"], "")
+        self.assertEqual(result["session_digest"], existing_digest)
 
     def test_companion_reply_uses_multi_turn_messages(self) -> None:
         captured_messages: list[dict[str, str]] = []

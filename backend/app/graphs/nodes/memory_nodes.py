@@ -1,33 +1,23 @@
 from __future__ import annotations
 
-from app.graphs.nodes.common import AgentState, excerpt, has_any_text, last_user_message
+from app.graphs.nodes.common import AgentState, excerpt, has_any_text
+from app.services.session_digest_service import fallback_session_summary, update_session_digest_with_llm
 
 
 async def summarize_turn(state: AgentState) -> AgentState:
+    existing_digest = state.get("session_digest") if isinstance(state.get("session_digest"), dict) else {}
     if state.get("delivery_status") == "failed_no_reply":
-        return {"session_summary": ""}
+        return {"session_summary": "", "session_digest": existing_digest}
 
     existing_summary = str(state.get("session_summary") or "").strip()
-    if existing_summary:
-        return {"session_summary": existing_summary}
-
-    text = state.get("normalized_text", "")
-    risk_level = state.get("risk_level", "L0")
-    intent = state.get("intent", "other")
-    topic = excerpt(text or last_user_message(state.get("messages", [])) or "当前困扰", 30)
-
-    if risk_level in {"L2", "L3"}:
-        summary = f"本轮出现明显安全风险：{topic}；后续优先确认是否联系到可信任的人以及当前环境是否安全。"
-    else:
-        focus_map = {
-            "vent": "近期压力和情绪困扰",
-            "soothe": "焦虑或身体紧绷",
-            "light_counseling": "想理清事情与下一步",
-            "daily_checkin": "当天的情绪状态",
-            "other": "最近在意的困扰",
+    fallback_summary = existing_summary or fallback_session_summary(state)
+    session_digest = await update_session_digest_with_llm(state)
+    if session_digest:
+        return {
+            "session_summary": str(session_digest.get("summary_200chars") or fallback_summary),
+            "session_digest": session_digest,
         }
-        summary = f"本轮主题：{focus_map.get(intent, '最近在意的困扰')}；用户提到：{topic}；可延续点：最卡住的那一刻。"
-    return {"session_summary": summary}
+    return {"session_summary": fallback_summary, "session_digest": existing_digest}
 
 
 async def memory_candidate_extract(state: AgentState) -> AgentState:

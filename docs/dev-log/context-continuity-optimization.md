@@ -77,3 +77,52 @@
 结果：`105 passed, 2 warnings`。
 
 warnings 仍来自 LangGraph / LangChain 的既有提示，以及 `tests/test_privacy.py` 里对 SQLAlchemy model 类名的既有 pytest 收集提示。
+
+## 2026-05-13
+
+### LLM 更新 `session_digest`
+
+在上一轮已经打通 `session_digest` 的字段、运行时透传、持久化和检索读取之后，本轮补上真正的会话全景更新能力。
+
+### 已完成改动
+
+#### 1. 新增会话全景更新服务
+
+- 新增 `session_digest_service`，统一负责构造 LLM 更新提示词、解析 JSON、做 schema 归一化和长度限制。
+- 固定输出 `schema_version`、`key_themes`、`emotional_arc`、`effective_interventions`、`ineffective_interventions`、`unresolved_threads`、`significant_changes`、`last_updated_turn`、`summary_200chars`。
+- 对列表字段做最多 5 项限制，`summary_200chars` 控制在 200 字以内。
+
+#### 2. 隐私与高风险保护
+
+- 对邮箱、长数字联系方式等明显个人标识做过滤。
+- 当风险等级为 `L2/L3` 时，提示词要求只保留概括性安全连续性信息，不记录具体工具、地点、方法等可操作风险细节。
+- 服务端也会对常见高风险细节词做二次概括过滤。
+
+#### 3. 接入 `summarize_turn`
+
+- `summarize_turn` 现在会调用 LLM 合并旧 `session_digest` 与本轮信息。
+- LLM 返回合法 JSON 时，返回新的 `session_digest`，并优先用 `summary_200chars` 作为 `session_summary`。
+- LLM 不可用、超时、空响应或 JSON 无效时，保留旧 `session_digest`，并继续使用原有模板摘要作为回退。
+- `failed_no_reply` 不触发 LLM 更新，也不会覆盖旧 digest。
+
+### 验证结果
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_response_memory_continuity.py -q
+```
+
+结果：`9 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
+补充运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py -q
+```
+
+结果：`109 passed, 2 warnings`。
+
+warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
