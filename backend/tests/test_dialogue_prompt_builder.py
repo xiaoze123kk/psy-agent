@@ -27,7 +27,7 @@ class DialoguePromptBuilderTests(unittest.TestCase):
             session_digest={
                 "schema_version": 1,
                 "key_themes": ["职场压力", "任务边界"],
-                "emotional_arc": "紧绷 -> 疲惫 -> 稍微松动",
+                "emotional_arc": "紧张 -> 疲惫 -> 稍微松动",
                 "effective_interventions": ["先共情再轻量梳理"],
                 "ineffective_interventions": [],
                 "unresolved_threads": ["如何和主管开口"],
@@ -42,7 +42,7 @@ class DialoguePromptBuilderTests(unittest.TestCase):
             mode="companion",
             response_contract={"allow_rag": False},
             examples_text="",
-            memory_text="无",
+            memory_text="",
         )
 
         self.assertIn("会话全景", parts.user_prompt)
@@ -59,10 +59,41 @@ class DialoguePromptBuilderTests(unittest.TestCase):
             mode="companion",
             response_contract={"allow_rag": False},
             examples_text="",
-            memory_text="无",
+            memory_text="",
         )
 
         self.assertNotIn("会话全景", parts.user_prompt)
+
+    def test_prompt_includes_user_profile_digest_block(self) -> None:
+        state = self.make_state(
+            user_profile_digest={
+                "schema_version": 1,
+                "nickname": "小林",
+                "age_range": "18_plus",
+                "user_mode": "adult",
+                "usage_goals": ["先安抚再建议"],
+                "communication_preferences": ["先短短安抚我，再给一个小步骤"],
+                "profile_hints": ["用户遇到压力时习惯先沉默一会儿"],
+                "preference_hints": ["用户不喜欢一上来就连环追问"],
+                "correction_hints": ["不要直接下结论"],
+            }
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("用户画像", parts.user_prompt)
+        self.assertIn("先安抚再建议", parts.user_prompt)
+        self.assertIn("先短短安抚我，再给一个小步骤", parts.user_prompt)
+        self.assertIn("用户遇到压力时习惯先沉默一会儿", parts.user_prompt)
+        self.assertIn("用户不喜欢一上来就连环追问", parts.user_prompt)
+        self.assertIn("不要直接下结论", parts.user_prompt)
+        self.assertNotIn("schema_version", parts.user_prompt)
 
 
 if __name__ == "__main__":

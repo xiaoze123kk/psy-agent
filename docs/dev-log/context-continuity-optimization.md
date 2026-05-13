@@ -127,6 +127,44 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 
 warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
 
+### 长期用户画像透传到回复提示词
+
+为了让回复模型不只理解“这一轮说了什么”，还理解“这个用户稳定偏好是什么”，本轮新增轻量用户画像汇总。
+
+### 已完成改动
+
+#### 1. 新增用户上下文汇总服务
+
+- 新增 `user_context_service.build_user_profile_digest()`，从 `UserProfile`、`UserSettings` 和长期 `UserMemory` 中汇总稳定画像。
+- 输出字段包括昵称、年龄段、用户模式、使用目标、互动偏好、稳定画像线索、偏好线索和纠错线索。
+- 列表字段会去重、限量和截断，避免把原始数据库行或过长内容直接塞进 prompt。
+
+#### 2. 图运行时透传
+
+- `chat_service` 在准备一轮对话时构造 `user_profile_digest`。
+- `GraphRuntime`、`AgentState` 和 `load_user_profile` 都透传该字段。
+- 普通回复和流式回复路径都使用同一份用户画像上下文。
+
+#### 3. 回复提示词注入
+
+- `dialogue_prompt_builder` 新增“用户画像”提示块。
+- prompt 只展示稳定偏好和长期线索，不暴露 `schema_version` 等内部字段。
+- 纠错偏好保留独立短项，为后续纠错记忆优化预留入口。
+
+### 验证结果
+
+先按 TDD 写入失败测试；压缩前首次运行时因为 `user_context_service` 尚未实现，测试收集失败，符合预期红灯。
+
+补齐实现后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_service.py tests/test_dialogue_prompt_builder.py tests/test_chat_idempotency.py -q
+```
+
+结果：`14 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
 ### `session_digest` 注入回复提示词
 
 在 `session_digest` 已经可持续更新、检索也已读取 digest 后，本轮把会话全景正式注入回复提示词，让 LLM 回复时直接知道当前对话在延续什么。

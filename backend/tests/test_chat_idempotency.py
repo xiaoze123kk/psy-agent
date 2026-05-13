@@ -12,7 +12,18 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import chat
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, ConversationTurn, ConversationTurnTrace, Message, PendingMemoryJob, User
+from app.db.models import (
+    Base,
+    ConversationThread,
+    ConversationTurn,
+    ConversationTurnTrace,
+    Message,
+    PendingMemoryJob,
+    User,
+    UserMemory,
+    UserProfile,
+    UserSettings,
+)
 from app.db.session import get_db_session
 from app.services import chat_service
 
@@ -300,6 +311,58 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(thread.last_summary, "本轮摘要")
         self.assertEqual(thread.session_digest["key_themes"], ["职场压力"])
         self.assertEqual(thread.session_digest["summary_200chars"], "用户本轮继续讨论职场压力。")
+
+    def test_chat_turn_passes_user_profile_digest_to_graph_runtime(self) -> None:
+        user = self.create_user("profiled")
+        self.db.add_all(
+            [
+                UserProfile(
+                    user_id=user.id,
+                    nickname="小林",
+                    age_range="18_plus",
+                    user_mode="adult",
+                    usage_goals=["先安抚再建议"],
+                    onboarding_completed=True,
+                ),
+                UserSettings(
+                    user_id=user.id,
+                    memory_mode="long_term",
+                    companion_style="先短短安抚我，再给一个小步骤",
+                    voice_enabled=False,
+                    save_voice_audio=False,
+                    save_transcript=True,
+                    crisis_resource_region="CN",
+                ),
+                UserMemory(
+                    user_id=user.id,
+                    memory_type="preference",
+                    title="preference: 不要一上来就连环追问",
+                    summary="用户不喜欢一上来就连环追问",
+                    content="用户不喜欢一上来就连环追问",
+                    visibility="user_visible",
+                    status="active",
+                    review_state="normal",
+                ),
+            ]
+        )
+        self.db.commit()
+        thread = self.create_thread(user)
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-profile-digest", "content": "我今天有点乱"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        digest = fake_runtime.calls[0]["user_profile_digest"]
+        self.assertEqual(digest["nickname"], "小林")
+        self.assertEqual(digest["age_range"], "18_plus")
+        self.assertIn("先安抚再建议", digest["usage_goals"])
+        self.assertTrue(any("先短短安抚我" in item for item in digest["communication_preferences"]))
+        self.assertIn("用户不喜欢一上来就连环追问", digest["preference_hints"])
 
     def test_recent_message_candidates_include_larger_context_window(self) -> None:
         user = self.create_user()

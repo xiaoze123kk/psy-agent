@@ -239,6 +239,45 @@ def _session_digest_prompt_block(state: AgentState) -> str:
     return "会话全景（仅供理解连续性，不要直接复述）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
 
 
+def _user_profile_digest_prompt_block(state: AgentState) -> str:
+    digest = state.get("user_profile_digest")
+    if not isinstance(digest, dict) or not digest:
+        return ""
+
+    lines: list[str] = []
+    nickname = _compact_text(digest.get("nickname"), limit=40)
+    if nickname:
+        lines.append(f"昵称：{nickname}")
+
+    age_range = _compact_text(digest.get("age_range"), limit=24)
+    if age_range:
+        lines.append(f"年龄段：{age_range}")
+
+    usage_goals = _compact_list(digest.get("usage_goals"))
+    if usage_goals:
+        lines.append(f"使用目标：{'、'.join(usage_goals)}")
+
+    communication_preferences = _compact_list(digest.get("communication_preferences"))
+    if communication_preferences:
+        lines.append(f"互动偏好：{'、'.join(communication_preferences)}")
+
+    profile_hints = _compact_list(digest.get("profile_hints"))
+    if profile_hints:
+        lines.append(f"稳定线索：{'、'.join(profile_hints)}")
+
+    preference_hints = _compact_list(digest.get("preference_hints"))
+    if preference_hints:
+        lines.append(f"偏好提示：{'、'.join(preference_hints)}")
+
+    correction_hints = _compact_list(digest.get("correction_hints"))
+    if correction_hints:
+        lines.append(f"纠错提示：{'、'.join(correction_hints)}")
+
+    if not lines:
+        return ""
+    return "用户画像（只保留稳定偏好和长期线索，不要直接复述原始资料）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
+
+
 def select_dialogue_strategy(state: AgentState, mode: str) -> str:
     if state.get("route_priority") == "P0_immediate_safety" or state.get("risk_level") in {"L2", "L3"}:
         return "crisis"
@@ -299,6 +338,7 @@ def build_dialogue_prompt_parts(
     style = build_companion_style_prompt(state.get("companion_preferences", {}).get("style", ""))
     last_summary = state.get("last_summary") or "无"
     session_digest_text = _session_digest_prompt_block(state)
+    user_profile_digest_text = _user_profile_digest_prompt_block(state)
     control_category = state.get("control_category", "normal_support")
     route_priority = state.get("route_priority", "P2_support")
     mode_guidance = mode_guidance_for(mode, selected_strategy, str(user_mode))
@@ -323,6 +363,7 @@ def build_dialogue_prompt_parts(
         f"response_contract：{response_contract}\n"
         f"回复要求：{mode_guidance}\n"
         f"{examples_text}"
+        f"{user_profile_digest_text}"
         f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
         f"{session_digest_text}"
         f"可参考记忆：\n{memory_text}\n"

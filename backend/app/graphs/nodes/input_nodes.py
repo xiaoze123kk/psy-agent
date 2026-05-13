@@ -17,6 +17,7 @@ async def normalize_input(state: AgentState) -> AgentState:
 async def load_user_profile(state: AgentState) -> AgentState:
     existing_profile = state.get("profile", {})
     existing_preferences = state.get("companion_preferences", {})
+    existing_profile_digest = state.get("user_profile_digest", {})
     existing_response_style = state.get("response_style", {})
     user_mode = state.get("user_mode") or existing_profile.get("user_mode", "adult")
 
@@ -32,6 +33,7 @@ async def load_user_profile(state: AgentState) -> AgentState:
                 "low" if user_mode == "teen" else "medium",
             ),
         },
+        "user_profile_digest": existing_profile_digest if isinstance(existing_profile_digest, dict) else {},
         "memory_mode": state.get("memory_mode", "summary_only"),
         "response_style": {
             "short_sentences": existing_response_style.get("short_sentences", user_mode == "teen"),

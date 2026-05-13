@@ -25,6 +25,7 @@ from app.services.memory_service import (
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
 )
+from app.services.user_context_service import build_user_profile_digest
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class TurnContext:
     user_message: Message
     effective_user_mode: str
     serialized_recent_messages: list[dict]
+    user_profile_digest: dict
     memory_mode: str
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -194,6 +196,7 @@ async def _invoke_graph_with_fallback(
     payload: SendMessageRequest,
     effective_user_mode: str,
     serialized_recent_messages: list[dict],
+    user_profile_digest: dict,
     memory_mode: str,
     memory_index: list[dict],
     retrieved_memories: list[dict],
@@ -211,6 +214,7 @@ async def _invoke_graph_with_fallback(
                 recent_messages=serialized_recent_messages,
                 last_summary=thread.last_summary,
                 session_digest=thread.session_digest or {},
+                user_profile_digest=user_profile_digest,
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
@@ -573,6 +577,7 @@ async def _prepare_turn_context(
     profile_user_mode = getattr(user.profile, "user_mode", "adult") if user.profile else "adult"
     effective_user_mode = payload.user_mode.value if payload.user_mode is not None else profile_user_mode
     recent_messages = list_messages_for_thread(db, thread.id)[-RECENT_MESSAGE_CANDIDATE_LIMIT:]
+    user_profile_digest = build_user_profile_digest(db, user_id=user.id) or {}
     memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
     serialized_recent_messages = _serialize_recent_messages(recent_messages)
     pre_risk_level = sync_risk_classify(payload.content)
@@ -599,6 +604,7 @@ async def _prepare_turn_context(
         user_message=user_message,
         effective_user_mode=effective_user_mode,
         serialized_recent_messages=serialized_recent_messages,
+        user_profile_digest=user_profile_digest,
         memory_mode=memory_mode,
         memory_index=memory_index,
         retrieved_memories=retrieved_memories,
@@ -794,6 +800,7 @@ async def process_message_turn(
             payload=payload,
             effective_user_mode=context.effective_user_mode,
             serialized_recent_messages=context.serialized_recent_messages,
+            user_profile_digest=context.user_profile_digest,
             memory_mode=context.memory_mode,
             memory_index=context.memory_index,
             retrieved_memories=context.retrieved_memories,
@@ -872,6 +879,7 @@ async def process_message_turn_stream(
             recent_messages=context.serialized_recent_messages,
             last_summary=thread.last_summary,
             session_digest=thread.session_digest or {},
+            user_profile_digest=context.user_profile_digest,
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
