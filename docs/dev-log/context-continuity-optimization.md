@@ -155,6 +155,33 @@ warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，
 
 结果：`2 passed`。
 
+### 基于会话全景提取记忆候选
+
+在回复提示词已经能读取 `session_digest` 之后，本轮把记忆候选提取也接上会话全景，避免长期记忆只盯着单轮文本。
+
+### 已完成改动
+
+#### 1. 会话全景驱动长期记忆候选
+
+- `memory_candidate_extract` 在 `long_term` 模式下，会同时读取 `session_digest`。
+- 从 `summary_200chars`、`key_themes`、`emotional_arc`、`effective_interventions`、`unresolved_threads`、`significant_changes` 里抽取候选线索。
+- 这样即使当前轮文本很短或很模糊，也能保留会话级稳定主题和未展开线索。
+
+#### 2. 保持短摘要模式不膨胀
+
+- `summary_only` 仍然只保留 `session_summary`。
+- `skip_sensitive`、`failed_no_reply`、`memory_mode=off` 这些既有门禁继续优先。
+
+### 验证结果
+
+运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_response_memory_continuity.py -q
+```
+
+结果：`13 passed, 1 warning`。
+
 ### 多轮上下文动态预算裁剪
 
 在 `session_digest` 已经能够持续更新后，本轮继续优化回复链路里的多轮上下文窗口，避免固定条数带来的两类问题：短消息时上下文不够、长消息时 prompt 过长。

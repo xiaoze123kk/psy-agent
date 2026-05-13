@@ -71,6 +71,84 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
 
     text = state.get("normalized_text", "")
     compact_text = excerpt(text, 90)
+    digest = state.get("session_digest") if isinstance(state.get("session_digest"), dict) else {}
+
+    def _digest_text(*keys: str) -> str:
+        parts: list[str] = []
+        for key in keys:
+            value = digest.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                parts.extend(str(item).strip() for item in value if str(item).strip())
+        return "；".join(part for part in parts if part)
+
+    digest_summary = _digest_text("summary_200chars")
+    digest_themes = _digest_text("key_themes")
+    digest_arc = _digest_text("emotional_arc")
+    digest_effective = _digest_text("effective_interventions")
+    digest_unresolved = _digest_text("unresolved_threads")
+    digest_changes = _digest_text("significant_changes")
+
+    if digest_summary and digest_summary != summary:
+        candidates.append(
+            {
+                "memory_type": "state",
+                "title": "近期状态",
+                "summary": f"会话全景中的近期状态线索：{excerpt(digest_summary, 80)}",
+                "content": f"会话全景中的近期状态线索：{excerpt(digest_summary, 80)}",
+                "importance": 3,
+                "tags": ["状态"],
+            }
+        )
+    elif digest_themes or digest_arc:
+        candidates.append(
+            {
+                "memory_type": "state",
+                "title": "近期状态",
+                "summary": f"会话全景中的状态线索：{excerpt(digest_themes or digest_arc, 80)}",
+                "content": f"会话全景中的状态线索：{excerpt(digest_themes or digest_arc, 80)}",
+                "importance": 3,
+                "tags": ["状态"],
+            }
+        )
+
+    if digest_effective:
+        candidates.append(
+            {
+                "memory_type": "support_strategy",
+                "title": "有效支持方式",
+                "summary": f"会话全景记录的有效支持方式：{excerpt(digest_effective, 80)}",
+                "content": f"会话全景记录的有效支持方式：{excerpt(digest_effective, 80)}",
+                "importance": 4,
+                "tags": ["支持方式"],
+            }
+        )
+
+    if digest_unresolved:
+        candidates.append(
+            {
+                "memory_type": "recurring_trigger",
+                "title": "反复触发点",
+                "summary": f"会话全景记录的未展开线索：{excerpt(digest_unresolved, 80)}",
+                "content": f"会话全景记录的未展开线索：{excerpt(digest_unresolved, 80)}",
+                "importance": 4,
+                "tags": ["触发点"],
+            }
+        )
+
+    if digest_changes:
+        candidates.append(
+            {
+                "memory_type": "session_summary",
+                "title": "本轮对话摘要",
+                "summary": f"{summary}；会话全景补充：{excerpt(digest_changes, 80)}",
+                "content": f"{summary}；会话全景补充：{excerpt(digest_changes, 80)}",
+                "importance": 3,
+                "tags": ["摘要"],
+            }
+        )
+
     if has_any_text(text, ("喜欢", "希望", "更想", "更希望", "不要", "别", "少一点", "直接", "温柔", "安慰", "分析", "提问", "先听", "先陪")):
         candidates.append(
             {

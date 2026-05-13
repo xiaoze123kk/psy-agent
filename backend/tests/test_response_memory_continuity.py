@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.graphs.nodes.memory_nodes import summarize_turn
+from app.graphs.nodes.memory_nodes import memory_candidate_extract, summarize_turn
 from app.graphs.nodes.response_nodes import companion_response
 from app.graphs.state import AgentState
 from app.services.deepseek_client import ToolChatResult, deepseek_client
@@ -167,6 +167,48 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         chat.assert_not_called()
         self.assertEqual(result["session_summary"], "")
         self.assertEqual(result["session_digest"], existing_digest)
+
+    def test_memory_candidate_extract_uses_session_digest_for_long_term_candidates(self) -> None:
+        state = self.make_state(
+            normalized_text="还是卡在这里",
+            memory_mode="long_term",
+            session_summary="用户继续讨论职场压力。",
+            session_digest={
+                "key_themes": ["职场压力", "任务边界"],
+                "effective_interventions": ["先共情再轻量梳理"],
+                "unresolved_threads": ["如何和主管开口"],
+                "significant_changes": ["用户已经尝试整理任务清单"],
+                "summary_200chars": "用户持续讨论职场压力和任务边界。",
+            },
+        )
+
+        result = _run(memory_candidate_extract(state))
+
+        candidates = result["memory_candidates"]
+        candidate_types = [candidate["memory_type"] for candidate in candidates]
+        serialized = json.dumps(candidates, ensure_ascii=False)
+        self.assertIn("session_summary", candidate_types)
+        self.assertIn("state", candidate_types)
+        self.assertIn("support_strategy", candidate_types)
+        self.assertIn("recurring_trigger", candidate_types)
+        self.assertIn("职场压力", serialized)
+        self.assertIn("先共情再轻量梳理", serialized)
+        self.assertIn("如何和主管开口", serialized)
+
+    def test_memory_candidate_extract_does_not_use_digest_when_summary_only(self) -> None:
+        state = self.make_state(
+            memory_mode="summary_only",
+            session_summary="用户继续讨论职场压力。",
+            session_digest={
+                "key_themes": ["职场压力"],
+                "effective_interventions": ["先共情再轻量梳理"],
+                "unresolved_threads": ["如何和主管开口"],
+            },
+        )
+
+        result = _run(memory_candidate_extract(state))
+
+        self.assertEqual([candidate["memory_type"] for candidate in result["memory_candidates"]], ["session_summary"])
 
     def test_companion_reply_uses_multi_turn_messages(self) -> None:
         captured_messages: list[dict[str, str]] = []
