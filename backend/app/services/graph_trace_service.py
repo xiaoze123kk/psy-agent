@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db.models import ConversationTurn, ConversationTurnTrace, utcnow
+from app.services.tooling import summarize_tool_events
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 MAX_STRING_LENGTH = 160
 MAX_LIST_ITEMS = 10
 MAX_DICT_ITEMS = 20
+MAX_TRACE_STEPS = 12
+MAX_MEMORY_REFERENCES = 5
 
 BLOCKED_KEYS = {
     "assistant_text",
@@ -161,6 +164,15 @@ def summarize_node_output(node_name: str, node_output: object) -> dict[str, obje
         decisions = _summarize_memory_write_decisions(node_output["memory_write_decisions"])
         if decisions:
             summary["memory_write_decisions"] = decisions
+    if "tool_events" in node_output:
+        tool_summary = summarize_tool_events(node_output.get("tool_events"))
+        if int(tool_summary.get("tool_count") or 0) > 0:
+            summary["tool_event_count"] = tool_summary["tool_count"]
+            summary["tool_names"] = tool_summary.get("tool_names", [])
+            summary["tool_status_counts"] = tool_summary.get("status_counts", {})
+            summary["tool_error_count"] = tool_summary.get("error_count", 0)
+    if isinstance(node_output.get("tool_trace_summary"), dict):
+        summary["tool_trace_summary"] = _sanitize_summary(node_output["tool_trace_summary"])
 
     summary["node_name"] = _trim_string(node_name)
     return _sanitize_summary(summary)
@@ -170,6 +182,86 @@ def _as_string_list(value: object) -> list[str]:
     if not isinstance(value, list | tuple):
         return []
     return [_trim_string(item) for item in value[:MAX_LIST_ITEMS] if str(item or "").strip()]
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return max(0, int(value))
+    return None
+
+
+def _as_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _first_present(*values: object) -> object | None:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _latest_trace_value(graph_trace: list[dict[str, object]], key: str) -> object | None:
+    for record in reversed(graph_trace):
+        summary = _as_dict(record.get("output_summary"))
+        value = summary.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _latest_trace_int(graph_trace: list[dict[str, object]], key: str) -> int | None:
+    return _as_int(_latest_trace_value(graph_trace, key))
+
+
+def _latest_trace_bool(graph_trace: list[dict[str, object]], key: str) -> bool | None:
+    return _as_bool(_latest_trace_value(graph_trace, key))
+
+
+def _max_present_int(*values: object) -> int:
+    ints = [_as_int(value) for value in values]
+    return max((value for value in ints if value is not None), default=0)
+
+
+def _safe_memory_references(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list | tuple):
+        return []
+    references: list[dict[str, object]] = []
+    for item in list(value)[:MAX_MEMORY_REFERENCES]:
+        if not isinstance(item, dict):
+            continue
+        reference = {
+            "memory_id": _trim_string(item.get("memory_id", "")),
+            "memory_type": _trim_string(item.get("memory_type", "")),
+            "content": _trim_string(item.get("content", "")),
+        }
+        if reference["memory_id"] and reference["content"]:
+            references.append(reference)
+    return references
+
+
+def _safe_step(record: dict[str, object]) -> dict[str, object]:
+    output_summary = _sanitize_summary(record.get("output_summary") or {})
+    return _sanitize_summary(
+        {
+            "sequence": _as_int(record.get("sequence")),
+            "trace_type": str(record.get("trace_type") or "graph_node"),
+            "node_name": str(record.get("node_name") or "unknown"),
+            "status": str(record.get("status") or "completed"),
+            "duration_ms": _as_int(record.get("duration_ms")) or 0,
+            "reason_codes": _as_string_list(record.get("reason_codes")),
+            "error_code": record.get("error_code"),
+            "output_summary": output_summary,
+        }
+    )
 
 
 def extract_reason_codes(summary: dict[str, object]) -> list[str]:
@@ -264,6 +356,39 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
         record for record in graph_trace if isinstance(record.get("duration_ms"), int | float)
     ]
     slowest = max(duration_records, key=lambda record: int(record.get("duration_ms") or 0), default=None)
+    delivery_status = str(
+        _first_present(
+            result.get("delivery_status"),
+            _latest_trace_value(graph_trace, "delivery_status"),
+            "generated",
+        )
+    )
+    failure_reason = _first_present(result.get("failure_reason"), _latest_trace_value(graph_trace, "failure_reason"))
+    validator_reasons = _as_string_list(result.get("validator_reasons")) or _as_string_list(
+        _latest_trace_value(graph_trace, "validator_reasons")
+    )
+    referenced_memories = _safe_memory_references(result.get("referenced_memories"))
+    retrieved_memory_count = _max_present_int(
+        result.get("retrieved_memory_count"),
+        _latest_trace_int(graph_trace, "retrieved_memory_count"),
+        len(referenced_memories),
+    )
+    memory_write_decision_count = _max_present_int(
+        result.get("memory_write_decision_count"),
+        _latest_trace_int(graph_trace, "memory_write_decision_count"),
+        len(result.get("memory_write_decisions", [])) if isinstance(result.get("memory_write_decisions"), list) else None,
+    )
+    rag_used = _as_bool(result.get("rag_used"))
+    if rag_used is None:
+        rag_used = _latest_trace_bool(graph_trace, "rag_used") or False
+    validator_blocked = _as_bool(result.get("validator_blocked"))
+    if validator_blocked is None:
+        validator_blocked = _latest_trace_bool(graph_trace, "validator_blocked") or False
+    steps = [_safe_step(record) for record in graph_trace[:MAX_TRACE_STEPS]]
+    tooling = _sanitize_summary(result.get("tool_trace_summary") or {})
+    if not tooling:
+        tooling = summarize_tool_events(result.get("tool_events"))
+
     summary = {
         "node_count": len(graph_trace),
         "failed_nodes": [node for node in failed_nodes if node][:MAX_LIST_ITEMS],
@@ -276,9 +401,54 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
             else None
         ),
         "total_graph_duration_ms": sum(int(record.get("duration_ms") or 0) for record in duration_records),
-        "delivery_status": str(result.get("delivery_status") or "generated"),
-        "failure_reason": result.get("failure_reason"),
-        "validator_blocked": bool(result.get("validator_blocked", False)),
+        "delivery_status": delivery_status,
+        "failure_reason": failure_reason,
+        "validator_blocked": validator_blocked,
+        "mode": {
+            "intent": str(_first_present(result.get("intent"), _latest_trace_value(graph_trace, "intent"), "other")),
+            "control_category": str(
+                _first_present(result.get("control_category"), _latest_trace_value(graph_trace, "control_category"), "normal_support")
+            ),
+            "route_priority": str(
+                _first_present(result.get("route_priority"), _latest_trace_value(graph_trace, "route_priority"), "P2_support")
+            ),
+            "risk_level": str(_first_present(result.get("risk_level"), _latest_trace_value(graph_trace, "risk_level"), "L0")),
+        },
+        "memory": {
+            "memory_mode": result.get("memory_mode"),
+            "retrieved_count": retrieved_memory_count,
+            "referenced_count": len(referenced_memories),
+            "referenced_memories": referenced_memories,
+            "should_write": bool(result.get("should_write_memory", False)),
+            "write_decision_count": memory_write_decision_count,
+            "write_decisions": _summarize_memory_write_decisions(result.get("memory_write_decisions")),
+        },
+        "rag": {
+            "used": rag_used,
+            "skipped_reason": str(_first_present(result.get("rag_skipped_reason"), _latest_trace_value(graph_trace, "rag_skipped_reason"), "")),
+            "retrieved_example_count": _max_present_int(
+                result.get("retrieved_example_count"),
+                _latest_trace_int(graph_trace, "retrieved_example_count"),
+                len(result.get("referenced_counseling_examples", []))
+                if isinstance(result.get("referenced_counseling_examples"), list)
+                else None,
+            ),
+            "example_ids": _as_string_list(result.get("example_ids")),
+            "example_source_keys": _as_string_list(result.get("example_source_keys")),
+        },
+        "validator": {
+            "checked": any(str(record.get("node_name") or "") == "response_validator" for record in graph_trace),
+            "blocked": validator_blocked,
+            "reasons": validator_reasons,
+            "delivery_status": delivery_status,
+        },
+        "tooling": tooling,
+        "fallback": {
+            "triggered": delivery_status != "generated" or bool(failure_reason),
+            "reason": failure_reason,
+            "retryable": bool(result.get("retryable", False)),
+        },
+        "steps": steps,
     }
     return _sanitize_summary(summary)
 

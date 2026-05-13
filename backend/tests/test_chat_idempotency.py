@@ -12,9 +12,21 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import chat
 from app.core.security import create_access_token
-from app.db.models import Base, ConversationThread, ConversationTurn, ConversationTurnTrace, Message, PendingMemoryJob, User
+from app.db.models import (
+    Base,
+    ConversationThread,
+    ConversationTurn,
+    ConversationTurnTrace,
+    Message,
+    PendingMemoryJob,
+    User,
+    UserMemory,
+    UserProfile,
+    UserSettings,
+)
 from app.db.session import get_db_session
 from app.services import chat_service
+from app.services.graph_runtime import GraphRuntime
 
 
 class FakeGraphRuntime:
@@ -39,10 +51,17 @@ class FakeGraphRuntime:
             "risk_reasons": [],
             "suggested_actions": ["继续说"],
             "session_summary": "本轮摘要",
+            "session_digest": {
+                "key_themes": ["职场压力"],
+                "emotional_arc": "紧绷 -> 稍微稳定",
+                "summary_200chars": "用户本轮继续讨论职场压力。",
+            },
             "memory_candidates": self.memory_candidates,
             "should_write_memory": self.should_write_memory,
             "referenced_memories": [],
             "referenced_counseling_examples": [],
+            "rag_used": True,
+            "rag_skipped_reason": "",
             "graph_trace": [
                 {
                     "sequence": 0,
@@ -208,6 +227,7 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.json()["assistant_message"]["memory_job_status"], "pending")
         self.assertEqual(second.json()["assistant_message"]["memory_job_status"], "pending")
+        self.assertEqual(first.json()["assistant_message"]["trace_summary"]["memory"]["job_status"], "pending")
         self.assertEqual(self.memory_job_count(thread), 1)
         self.assertEqual(len(fake_runtime.calls), 1)
 
@@ -276,6 +296,123 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(self.message_count(thread), 2)
         self.assertEqual(self.turn_count(thread), 1)
 
+    def test_session_digest_persists_without_replacing_last_summary(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        chat_service.graph_runtime = FakeGraphRuntime()
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-digest", "content": "我最近工作压力很大"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.db.refresh(thread)
+        self.assertEqual(thread.last_summary, "本轮摘要")
+        self.assertEqual(thread.session_digest["key_themes"], ["职场压力"])
+        self.assertEqual(thread.session_digest["summary_200chars"], "用户本轮继续讨论职场压力。")
+
+    def test_chat_turn_passes_user_profile_digest_to_graph_runtime(self) -> None:
+        user = self.create_user("profiled")
+        self.db.add_all(
+            [
+                UserProfile(
+                    user_id=user.id,
+                    nickname="小林",
+                    age_range="18_plus",
+                    user_mode="adult",
+                    usage_goals=["先安抚再建议"],
+                    onboarding_completed=True,
+                ),
+                UserSettings(
+                    user_id=user.id,
+                    memory_mode="long_term",
+                    companion_style="先短短安抚我，再给一个小步骤",
+                    voice_enabled=False,
+                    save_voice_audio=False,
+                    save_transcript=True,
+                    crisis_resource_region="CN",
+                ),
+                UserMemory(
+                    user_id=user.id,
+                    memory_type="preference",
+                    title="preference: 不要一上来就连环追问",
+                    summary="用户不喜欢一上来就连环追问",
+                    content="用户不喜欢一上来就连环追问",
+                    visibility="user_visible",
+                    status="active",
+                    review_state="normal",
+                ),
+            ]
+        )
+        self.db.commit()
+        thread = self.create_thread(user)
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-profile-digest", "content": "我今天有点乱"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        digest = fake_runtime.calls[0]["user_profile_digest"]
+        self.assertEqual(digest["nickname"], "小林")
+        self.assertEqual(digest["age_range"], "18_plus")
+        self.assertIn("先安抚再建议", digest["usage_goals"])
+        self.assertTrue(any("先短短安抚我" in item for item in digest["communication_preferences"]))
+        self.assertIn("用户不喜欢一上来就连环追问", digest["preference_hints"])
+
+    def test_graph_runtime_input_state_includes_user_context_pack(self) -> None:
+        runtime = object.__new__(GraphRuntime)
+        pack = {
+            "schema_version": 1,
+            "active_goal": "理清楚主管沟通任务边界",
+            "style_corrections": ["不要直接给模板"],
+        }
+
+        state = runtime._build_input_state(
+            thread_id="thread-1",
+            user_id="user-1",
+            content="继续",
+            user_context_pack=pack,
+        )
+
+        self.assertEqual(state["user_context_pack"], pack)
+
+    def test_recent_message_candidates_include_larger_context_window(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=40)
+        for index in range(30):
+            self.db.add(
+                Message(
+                    thread_id=thread.id,
+                    user_id=user.id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=f"历史消息 {index}",
+                    input_type="text",
+                    created_at=base_time + timedelta(seconds=index),
+                )
+            )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-wide-context", "content": "接着前面的任务边界聊"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        recent_messages = fake_runtime.calls[0]["recent_messages"]
+        self.assertEqual(len(recent_messages), 24)
+        self.assertEqual(recent_messages[0]["content"], "历史消息 7")
+        self.assertEqual(recent_messages[-1]["content"], "接着前面的任务边界聊")
+
     def test_stream_completed_turn_can_be_replayed_by_send_message_fallback(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)
@@ -333,5 +470,12 @@ class ChatIdempotencyTests(unittest.TestCase):
 
         assistant_message = self.db.get(Message, response.json()["assistant_message_id"])
         turn = self.db.scalar(select(ConversationTurn).where(ConversationTurn.thread_id == thread.id))
+        response_trace = response.json()["assistant_message"]["trace_summary"]
+        self.assertEqual(response_trace["node_count"], 2)
+        self.assertEqual(response_trace["mode"]["risk_level"], "L0")
+        self.assertEqual(response_trace["memory"]["retrieved_count"], 0)
+        self.assertTrue(response_trace["rag"]["used"])
+        self.assertFalse(response_trace["validator"]["blocked"])
+        self.assertEqual(response_trace["steps"][1]["node_name"], "response_validator")
         self.assertEqual(assistant_message.meta["trace_summary"]["node_count"], 2)
         self.assertEqual(turn.response_snapshot["trace_summary"]["node_count"], 2)

@@ -4,11 +4,13 @@ import asyncio
 import os
 import unittest
 from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import create_engine
@@ -18,7 +20,9 @@ from app.core.security import create_access_token
 from app.db.models import (
     Base,
     ConversationThread,
+    ConversationTurn,
     Message,
+    MemoryOperation,
     MoodLog,
     PendingMemoryJob,
     RiskEvent,
@@ -26,11 +30,12 @@ from app.db.models import (
     UserMemory,
     UserProfile,
     UserSettings,
+    utcnow,
 )
 from app.db.session import get_db_session
 from app.schemas.chat import SendMessageRequest
 from app.services import chat_service
-from app.services.memory_job_service import process_pending_memory_jobs
+from app.services.memory_job_service import claim_pending_memory_jobs, process_memory_job, process_pending_memory_jobs
 
 
 class MemoryApiTests(unittest.TestCase):
@@ -132,6 +137,29 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["content"] for item in response.json()["items"]], ["可见摘要"])
 
+    def test_memory_center_paginates_visible_memories_with_total(self) -> None:
+        user = self.create_user()
+        newest = self.add_memory(user, content="newest")
+        middle = self.add_memory(user, content="middle")
+        oldest = self.add_memory(user, content="oldest")
+        self.add_memory(user, content="hidden", visibility="internal_safety")
+        deleted = self.add_memory(user, content="deleted")
+        deleted.status = "deleted"
+        now = utcnow()
+        newest.updated_at = now
+        middle.updated_at = now - timedelta(minutes=1)
+        oldest.updated_at = now - timedelta(minutes=2)
+        self.db.commit()
+
+        response = self.client.get("/api/v1/memories?limit=2&offset=1", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual([item["content"] for item in payload["items"]], ["middle", "oldest"])
+
     def test_memory_mutations_are_scoped_to_owner_and_visible_memories(self) -> None:
         user = self.create_user("owner")
         other = self.create_user("other")
@@ -174,13 +202,15 @@ class MemoryApiTests(unittest.TestCase):
         visible = self.add_memory(user, content="可见摘要")
         hidden = self.add_memory(user, content="内部安全记录", visibility="internal_safety")
 
-        response = self.client.delete("/api/v1/memories", headers=self.auth_headers(user))
+        with patch("app.api.v1.endpoints.memory.remove_memory_vectors", create=True) as remove_vectors:
+            response = self.client.delete("/api/v1/memories", headers=self.auth_headers(user))
         self.db.refresh(visible)
         self.db.refresh(hidden)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(visible.status, "deleted")
         self.assertEqual(hidden.status, "active")
+        remove_vectors.assert_called_once_with([visible.id])
 
     def test_search_memories_uses_mode_and_risk_filters(self) -> None:
         user = self.create_user(memory_mode="long_term")
@@ -236,6 +266,39 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(owner_response.json()["items"], [])
         self.assertEqual(owner_audit.status_code, 200)
         self.assertEqual(owner_audit.json()["items"], [])
+
+    def test_memory_audit_paginates_operations_with_total(self) -> None:
+        user = self.create_user("owner")
+        other = self.create_user("other")
+        operations = [
+            MemoryOperation(user_id=user.id, action="first", actor="user"),
+            MemoryOperation(user_id=user.id, action="second", actor="user"),
+            MemoryOperation(user_id=user.id, action="third", actor="user"),
+            MemoryOperation(user_id=other.id, action="other", actor="user"),
+        ]
+        self.db.add_all(operations)
+        self.db.commit()
+
+        response = self.client.get("/api/v1/memories/audit?limit=2&offset=1", headers=self.auth_headers(user))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertNotIn("other", [item["action"] for item in payload["items"]])
+
+    def test_search_memories_rejects_out_of_range_limit(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+
+        response = self.client.post(
+            "/api/v1/memories/search",
+            headers=self.auth_headers(user),
+            json={"query": "exam anxiety", "limit": 201},
+        )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_memory_feedback_can_disable_memory_and_audit_it(self) -> None:
         user = self.create_user()
@@ -435,6 +498,52 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(thread)
         return user, thread
 
+    async def test_claim_pending_memory_jobs_uses_row_level_lock(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        turn = ConversationTurn(
+            user_id=user.id,
+            thread_id=thread.id,
+            client_message_id="client-claim-lock",
+            request_hash="hash-claim-lock",
+            turn_status="completed",
+            response_snapshot={},
+        )
+        self.db.add(turn)
+        self.db.flush()
+        job = PendingMemoryJob(
+            user_id=user.id,
+            thread_id=thread.id,
+            turn_id=turn.id,
+            assistant_message_id=None,
+            job_type="memory_write",
+            status="pending",
+            attempt_count=0,
+            max_attempts=3,
+            next_run_at=utcnow(),
+            payload={"should_write_memory": False},
+        )
+        self.db.add(job)
+        self.db.commit()
+
+        captured_statement = None
+
+        def fake_scalars(statement):
+            nonlocal captured_statement
+            captured_statement = statement
+            return [job]
+
+        with patch.object(self.db, "scalars", side_effect=fake_scalars):
+            claimed = claim_pending_memory_jobs(self.db, limit=1, worker_id="worker-a")
+
+        self.assertEqual(claimed, [job])
+        self.assertIsNotNone(captured_statement)
+        self.assertIn("FOR UPDATE", str(captured_statement.compile(dialect=postgresql.dialect())).upper())
+        self.assertIn("SKIP LOCKED", str(captured_statement.compile(dialect=postgresql.dialect())).upper())
+        self.db.refresh(job)
+        self.assertEqual(job.status, "running")
+        self.assertEqual(job.attempt_count, 1)
+        self.assertEqual(job.locked_by, "worker-a")
+
     def add_memory(
         self,
         user: User,
@@ -601,6 +710,164 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(assistant_message)
         self.assertEqual(assistant_message.meta["memory_job_status"], "completed")
         self.assertEqual(assistant_message.meta["memory_write_decisions"][0]["status"], "created")
+
+    async def test_long_term_turn_passes_goal_state_and_retrieves_goal_memory(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        user.profile.usage_goals = ["先安抚再拆沟通步骤"]
+        goal = self.add_memory(
+            user,
+            memory_type="goal",
+            content="用户目标：理清楚和主管沟通任务边界这件事。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近几轮都在讨论工作压力。",
+            importance=5,
+        )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我想先把和主管沟通任务边界这件事理清楚"),
+        )
+
+        call = fake_runtime.calls[0]
+        self.assertIn("主管沟通任务边界", call["goal_state"]["current_goal"])
+        self.assertIn("先安抚再拆沟通步骤", call["goal_state"]["usage_goals"])
+        self.assertEqual(call["retrieved_memories"][0]["id"], goal.id)
+
+    async def test_long_term_turn_passes_user_context_pack_to_runtime(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        user.profile.usage_goals = ["先安抚再拆沟通步骤"]
+        thread.session_digest = {
+            "summary_200chars": "用户持续讨论职场压力和任务边界。",
+            "key_themes": ["职场压力", "任务边界"],
+            "unresolved_threads": ["如何和主管开口"],
+        }
+        self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮他梳理边界。",
+            importance=5,
+        )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我想先把和主管沟通任务边界这件事理清楚"),
+        )
+
+        pack = fake_runtime.calls[0]["user_context_pack"]
+        self.assertIn("主管沟通任务边界", pack["active_goal"])
+        self.assertIn("职场压力", pack["conversation_focus"])
+        self.assertTrue(any("不要直接给模板" in item for item in pack["style_corrections"]))
+        self.assertIn("如何和主管开口", pack["open_threads"])
+
+    async def test_clarification_answer_updates_goal_state_for_next_turn(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        self.db.add(
+            Message(
+                thread_id=thread.id,
+                user_id=user.id,
+                role="assistant",
+                content="我先确认一下：你想从具体发生的事说起，还是先说现在的感觉？",
+                input_type="system",
+                risk_level="L0",
+                meta={
+                    "clarification_needed": True,
+                    "clarification_reason": "vague_without_context",
+                    "control_category": "clarification_needed",
+                },
+            )
+        )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="主管那件事"),
+        )
+
+        call = fake_runtime.calls[0]
+        self.assertEqual(call["goal_state"]["clarification_answer"], "主管那件事")
+        self.assertEqual(call["goal_state"]["clarification_reason"], "vague_without_context")
+        self.assertIn("主管那件事", call["goal_state"]["current_goal"])
+
+    async def test_failed_memory_job_does_not_issue_an_intermediate_commit(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        turn = ConversationTurn(
+            user_id=user.id,
+            thread_id=thread.id,
+            client_message_id="client-memory-job-failure",
+            request_hash="hash-memory-job-failure",
+            turn_status="completed",
+            response_snapshot={},
+        )
+        assistant_message = Message(
+            thread_id=thread.id,
+            user_id=user.id,
+            role="assistant",
+            content="assistant reply",
+            meta={},
+        )
+        self.db.add_all([turn, assistant_message])
+        self.db.flush()
+
+        job = PendingMemoryJob(
+            user_id=user.id,
+            thread_id=thread.id,
+            turn_id=turn.id,
+            assistant_message_id=assistant_message.id,
+            job_type="memory_write",
+            status="pending",
+            attempt_count=0,
+            max_attempts=1,
+            next_run_at=utcnow(),
+            payload={
+                "should_write_memory": True,
+                "memory_candidates": [{"memory_type": "session_summary", "content": "keep this"}],
+                "session_summary": "keep this",
+                "risk_level": "L0",
+                "memory_policy": "write_safe_summary",
+                "memory_mode": "summary_only",
+            },
+        )
+        self.db.add(job)
+        self.db.commit()
+
+        with patch.object(self.db, "commit", wraps=self.db.commit) as commit_spy:
+            with patch(
+                "app.services.memory_job_service.upsert_memory_candidates",
+                side_effect=RuntimeError("boom"),
+            ):
+                result = await process_memory_job(self.db, job.id)
+
+        self.db.refresh(job)
+        self.db.refresh(assistant_message)
+        self.db.refresh(turn)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(commit_spy.call_count, 1)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.attempt_count, 1)
+        self.assertIsNone(job.locked_at)
+        self.assertIsNone(job.locked_by)
+        self.assertTrue((job.last_error or "").startswith("RuntimeError: boom"))
+        self.assertEqual(assistant_message.meta["memory_job_status"], "failed")
+        self.assertEqual(turn.response_snapshot["memory_job_status"], "failed")
 
     async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")

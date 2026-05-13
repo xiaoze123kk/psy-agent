@@ -18,6 +18,8 @@ def route_by_control(state: AgentState) -> str:
         return "boundary_response"
     if control_category in {"abusive_to_assistant", "sexual_boundary", "dependency_risk"}:
         return "boundary_response"
+    if state.get("clarification_needed"):
+        return "clarification_response"
     return "intent_classifier"
 
 

@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    CompanionStyle,
     ConversationThread,
     Message,
     MoodLog,
@@ -23,6 +24,7 @@ from app.db.models import (
 )
 from app.schemas.privacy import PrivacyDataCounts, PrivacyMutationResponse, PrivacySettingsSnapshot, PrivacySummaryResponse
 from app.services.companion_style import normalize_custom_companion_style
+from app.services.memory_service import remove_memory_vectors
 
 
 def _count(db: Session, statement) -> int:
@@ -99,6 +101,13 @@ def build_privacy_summary(db: Session, user: User) -> PrivacySummaryResponse:
 def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
     profile = user.profile
     settings = user.settings
+    companion_styles = list(
+        db.scalars(
+            select(CompanionStyle)
+            .where(CompanionStyle.user_id == user.id)
+            .order_by(CompanionStyle.sort_order.asc(), CompanionStyle.updated_at.desc())
+        )
+    )
     active_threads = list(
         db.scalars(
             select(ConversationThread)
@@ -172,6 +181,17 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
             "save_transcript": bool(settings.save_transcript) if settings else True,
             "crisis_resource_region": settings.crisis_resource_region if settings else "CN",
         },
+        "companion_styles": [
+            {
+                "style_id": style.id,
+                "title": style.title,
+                "definition": normalize_custom_companion_style(style.definition),
+                "is_default": bool(style.is_default),
+                "created_at": _dt(style.created_at),
+                "updated_at": _dt(style.updated_at),
+            }
+            for style in companion_styles
+        ],
         "memories": [
             {
                 "memory_id": memory.id,
@@ -196,6 +216,7 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
                 "title": thread.title,
                 "mode": thread.mode,
                 "last_summary": thread.last_summary,
+                "session_digest": thread.session_digest,
                 "last_risk_level": thread.last_risk_level,
                 "created_at": _dt(thread.created_at),
                 "updated_at": _dt(thread.updated_at),
@@ -282,11 +303,15 @@ def _log_privacy_action(db: Session, *, user_id: str, action: str, scope: str, a
 
 
 def _delete_memories(db: Session, user_id: str) -> int:
+    memory_ids = list(
+        db.scalars(select(UserMemory.id).where(UserMemory.user_id == user_id, UserMemory.status == "active"))
+    )
     rows = db.execute(
         update(UserMemory)
-        .where(UserMemory.user_id == user_id, UserMemory.status == "active")
+        .where(UserMemory.id.in_(memory_ids))
         .values(status="deleted", updated_at=utcnow())
     )
+    remove_memory_vectors(memory_ids)
     return int(rows.rowcount or 0)
 
 
@@ -295,23 +320,29 @@ def _delete_chat(db: Session, user_id: str) -> dict[str, int]:
     if not thread_ids:
         return {"chat_threads": 0, "chat_messages": 0, "chat_memories": 0}
 
+    memory_ids = list(
+        db.scalars(
+            select(UserMemory.id).where(
+                UserMemory.user_id == user_id,
+                UserMemory.visibility == "user_visible",
+                UserMemory.status == "active",
+                UserMemory.source_thread_id.in_(thread_ids),
+            )
+        )
+    )
     db.execute(update(RiskEvent).where(RiskEvent.user_id == user_id).values(message_id=None))
     message_rows = db.execute(delete(Message).where(Message.thread_id.in_(thread_ids)))
     thread_rows = db.execute(
         update(ConversationThread)
         .where(ConversationThread.id.in_(thread_ids), ConversationThread.user_id == user_id)
-        .values(archived_at=utcnow(), last_summary=None, updated_at=utcnow())
+        .values(archived_at=utcnow(), last_summary=None, session_digest={}, updated_at=utcnow())
     )
     memory_rows = db.execute(
         update(UserMemory)
-        .where(
-            UserMemory.user_id == user_id,
-            UserMemory.visibility == "user_visible",
-            UserMemory.status == "active",
-            UserMemory.source_thread_id.in_(thread_ids),
-        )
+        .where(UserMemory.id.in_(memory_ids))
         .values(status="deleted", updated_at=utcnow())
     )
+    remove_memory_vectors(memory_ids)
     return {
         "chat_threads": int(thread_rows.rowcount or 0),
         "chat_messages": int(message_rows.rowcount or 0),
@@ -386,10 +417,14 @@ def delete_account(db: Session, user: User) -> PrivacyMutationResponse:
         user.profile.updated_at = utcnow()
     if user.settings is not None:
         user.settings.memory_mode = "off"
+        user.settings.companion_style = ""
         user.settings.voice_enabled = False
         user.settings.save_voice_audio = False
         user.settings.save_transcript = False
         user.settings.updated_at = utcnow()
+
+    style_rows = db.execute(delete(CompanionStyle).where(CompanionStyle.user_id == user.id))
+    affected["companion_styles"] = int(style_rows.rowcount or 0)
 
     user.username = f"deleted_{user.id.replace('-', '')[:20]}"
     user.email = None

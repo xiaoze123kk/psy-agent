@@ -19,10 +19,16 @@ class AgentState(TypedDict, total=False):
     messages: list[dict]
     recent_messages: list[dict]
     last_summary: str
+    session_digest: dict
+    user_profile_digest: dict
+    goal_state: dict
+    user_context_pack: dict
 
     profile: dict
     companion_preferences: dict
     memory_mode: Literal["off", "summary_only", "long_term"]
+    crisis_resource_region: str
+    tooling_enabled: bool
 
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -52,6 +58,8 @@ class AgentState(TypedDict, total=False):
     control_category: str
     control_reasons: list[str]
     control_confidence: float
+    clarification_needed: bool
+    clarification_reason: str
     risk_formulation: dict
     response_contract: dict
     memory_policy: Literal["write_safe_summary", "skip_sensitive", "crisis_audit_only"]
@@ -70,6 +78,8 @@ class AgentState(TypedDict, total=False):
 
     assistant_text: str
     suggested_actions: list[str]
+    tool_events: list[dict]
+    tool_trace_summary: dict
 
     session_summary: str
     memory_candidates: list[dict]

@@ -25,6 +25,8 @@ from app.services.memory_service import (
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
 )
+from app.services.user_context_pack_service import build_user_context_pack
+from app.services.user_context_service import build_goal_state, build_user_profile_digest
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ graph_runtime = GraphRuntime()
 ChatStreamEvent = tuple[str, dict[str, object]]
 TURN_RUNNING_WAIT_SECONDS = 1.0
 TURN_RUNNING_POLL_INTERVAL_SECONDS = 0.1
+RECENT_MESSAGE_CANDIDATE_LIMIT = 24
 
 
 @dataclass
@@ -40,6 +43,9 @@ class TurnContext:
     user_message: Message
     effective_user_mode: str
     serialized_recent_messages: list[dict]
+    user_profile_digest: dict
+    goal_state: dict
+    user_context_pack: dict
     memory_mode: str
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -193,6 +199,9 @@ async def _invoke_graph_with_fallback(
     payload: SendMessageRequest,
     effective_user_mode: str,
     serialized_recent_messages: list[dict],
+    user_profile_digest: dict,
+    goal_state: dict,
+    user_context_pack: dict,
     memory_mode: str,
     memory_index: list[dict],
     retrieved_memories: list[dict],
@@ -209,9 +218,14 @@ async def _invoke_graph_with_fallback(
                 user_mode=effective_user_mode,
                 recent_messages=serialized_recent_messages,
                 last_summary=thread.last_summary,
+                session_digest=thread.session_digest or {},
+                user_profile_digest=user_profile_digest,
+                goal_state=goal_state,
+                user_context_pack=user_context_pack,
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
+                crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
                 retrieved_memories=retrieved_memories,
                 memory_index=memory_index,
             ),
@@ -569,9 +583,17 @@ async def _prepare_turn_context(
 ) -> TurnContext:
     profile_user_mode = getattr(user.profile, "user_mode", "adult") if user.profile else "adult"
     effective_user_mode = payload.user_mode.value if payload.user_mode is not None else profile_user_mode
-    recent_messages = list_messages_for_thread(db, thread.id)[-8:]
-    memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
+    recent_messages = list_messages_for_thread(db, thread.id)[-RECENT_MESSAGE_CANDIDATE_LIMIT:]
     serialized_recent_messages = _serialize_recent_messages(recent_messages)
+    user_profile_digest = build_user_profile_digest(db, user_id=user.id) or {}
+    goal_state = build_goal_state(
+        db,
+        user_id=user.id,
+        current_text=payload.content,
+        session_digest=thread.session_digest or {},
+        recent_messages=serialized_recent_messages,
+    ) or {}
+    memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
     pre_risk_level = sync_risk_classify(payload.content)
     memory_index = build_memory_index(
         db,
@@ -585,16 +607,29 @@ async def _prepare_turn_context(
         query=payload.content,
         recent_messages=serialized_recent_messages,
         last_summary=thread.last_summary,
+        session_digest=thread.session_digest or {},
+        goal_state=goal_state,
         memory_mode=memory_mode,
         risk_level=pre_risk_level,
         limit=5,
         record_access=True,
+    )
+    user_context_pack = build_user_context_pack(
+        current_text=payload.content,
+        risk_level=pre_risk_level,
+        session_digest=thread.session_digest or {},
+        user_profile_digest=user_profile_digest,
+        goal_state=goal_state,
+        retrieved_memories=retrieved_memories,
     )
     return TurnContext(
         turn=turn,
         user_message=user_message,
         effective_user_mode=effective_user_mode,
         serialized_recent_messages=serialized_recent_messages,
+        user_profile_digest=user_profile_digest,
+        goal_state=goal_state,
+        user_context_pack=user_context_pack,
         memory_mode=memory_mode,
         memory_index=memory_index,
         retrieved_memories=retrieved_memories,
@@ -612,6 +647,8 @@ async def _persist_turn_result(
     assistant_result: dict[str, object],
 ) -> tuple[Message | None, dict[str, object]]:
     assistant_result = _coerce_delivery_result(assistant_result, pre_risk_level=context.pre_risk_level)
+    assistant_result["memory_mode"] = context.memory_mode
+    assistant_result["retrieved_memory_count"] = len(context.retrieved_memories)
     delivery_status = str(assistant_result.get("delivery_status", "generated"))
     graph_trace = _pop_graph_trace(assistant_result)
     trace_summary = assistant_result.get("trace_summary", {})
@@ -643,8 +680,14 @@ async def _persist_turn_result(
         "risk_source": assistant_result.get("risk_source", ""),
         "risk_reason_codes": assistant_result.get("risk_reason_codes", []),
         "requires_safety_check": bool(assistant_result.get("requires_safety_check", False)),
+        "control_category": assistant_result.get("control_category", "normal_support"),
+        "control_reasons": assistant_result.get("control_reasons", []),
+        "control_confidence": assistant_result.get("control_confidence", 0.0),
+        "clarification_needed": bool(assistant_result.get("clarification_needed", False)),
+        "clarification_reason": assistant_result.get("clarification_reason", ""),
         "suggested_actions": assistant_result.get("suggested_actions", []),
         "session_summary": assistant_result.get("session_summary", ""),
+        "session_digest": assistant_result.get("session_digest", {}),
         "should_write_memory": assistant_result.get("should_write_memory", False),
         "referenced_memories": assistant_result.get("referenced_memories", []),
         "referenced_counseling_examples": assistant_result.get("referenced_counseling_examples", []),
@@ -654,6 +697,7 @@ async def _persist_turn_result(
         "delivery_status": delivery_status,
         "failure_reason": assistant_result.get("failure_reason"),
         "retryable": bool(assistant_result.get("retryable", False)),
+        "tool_trace_summary": assistant_result.get("tool_trace_summary", {}),
         "trace_summary": trace_summary,
     }
     assistant_message = Message(
@@ -670,6 +714,9 @@ async def _persist_turn_result(
     context.turn.assistant_message_id = assistant_message.id
 
     thread.last_summary = str(assistant_result.get("session_summary", "") or "")
+    session_digest = assistant_result.get("session_digest")
+    if isinstance(session_digest, dict) and session_digest:
+        thread.session_digest = session_digest
 
     risk_level = str(assistant_result.get("risk_level", "L0"))
     if risk_level in {"L2", "L3"}:
@@ -711,11 +758,22 @@ async def _persist_turn_result(
     assistant_result["memory_write_decisions"] = memory_write_decisions
     assistant_result["memory_job_id"] = memory_job_id
     assistant_result["memory_job_status"] = memory_job_status
+    if isinstance(trace_summary, dict):
+        memory_summary = dict(trace_summary.get("memory") or {}) if isinstance(trace_summary.get("memory"), dict) else {}
+        memory_summary["job_status"] = memory_job_status
+        if memory_job_id is not None:
+            memory_summary["job_id"] = memory_job_id
+        if memory_write_decisions:
+            memory_summary["write_decisions"] = memory_write_decisions
+            memory_summary["write_decision_count"] = len(memory_write_decisions)
+        trace_summary = {**trace_summary, "memory": memory_summary}
+        assistant_result["trace_summary"] = trace_summary
     assistant_message.meta = {
         **assistant_metadata,
         "memory_job_id": memory_job_id,
         "memory_job_status": memory_job_status,
         "memory_write_decisions": memory_write_decisions,
+        "trace_summary": trace_summary,
     }
 
     assistant_result = _complete_turn(
@@ -772,6 +830,9 @@ async def process_message_turn(
             payload=payload,
             effective_user_mode=context.effective_user_mode,
             serialized_recent_messages=context.serialized_recent_messages,
+            user_profile_digest=context.user_profile_digest,
+            goal_state=context.goal_state,
+            user_context_pack=context.user_context_pack,
             memory_mode=context.memory_mode,
             memory_index=context.memory_index,
             retrieved_memories=context.retrieved_memories,
@@ -849,9 +910,14 @@ async def process_message_turn_stream(
             user_mode=context.effective_user_mode,
             recent_messages=context.serialized_recent_messages,
             last_summary=thread.last_summary,
+            session_digest=thread.session_digest or {},
+            user_profile_digest=context.user_profile_digest,
+            goal_state=context.goal_state,
+            user_context_pack=context.user_context_pack,
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
+            crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
             retrieved_memories=context.retrieved_memories,
             memory_index=context.memory_index,
         )

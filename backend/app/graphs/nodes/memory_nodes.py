@@ -1,29 +1,23 @@
 from __future__ import annotations
 
-from app.graphs.nodes.common import AgentState, excerpt, has_any_text, last_user_message
+from app.graphs.nodes.common import AgentState, excerpt, has_any_text
+from app.services.session_digest_service import fallback_session_summary, update_session_digest_with_llm
 
 
 async def summarize_turn(state: AgentState) -> AgentState:
+    existing_digest = state.get("session_digest") if isinstance(state.get("session_digest"), dict) else {}
     if state.get("delivery_status") == "failed_no_reply":
-        return {"session_summary": ""}
+        return {"session_summary": "", "session_digest": existing_digest}
 
-    text = state.get("normalized_text", "")
-    risk_level = state.get("risk_level", "L0")
-    intent = state.get("intent", "other")
-    topic = excerpt(text or last_user_message(state.get("messages", [])) or "当前困扰", 30)
-
-    if risk_level in {"L2", "L3"}:
-        summary = f"本轮出现明显安全风险：{topic}；后续优先确认是否联系到可信任的人以及当前环境是否安全。"
-    else:
-        focus_map = {
-            "vent": "近期压力和情绪困扰",
-            "soothe": "焦虑或身体紧绷",
-            "light_counseling": "想理清事情与下一步",
-            "daily_checkin": "当天的情绪状态",
-            "other": "最近在意的困扰",
+    existing_summary = str(state.get("session_summary") or "").strip()
+    fallback_summary = existing_summary or fallback_session_summary(state)
+    session_digest = await update_session_digest_with_llm(state)
+    if session_digest:
+        return {
+            "session_summary": str(session_digest.get("summary_200chars") or fallback_summary),
+            "session_digest": session_digest,
         }
-        summary = f"本轮主题：{focus_map.get(intent, '最近在意的困扰')}；用户提到：{topic}；可延续点：最卡住的那一刻。"
-    return {"session_summary": summary}
+    return {"session_summary": fallback_summary, "session_digest": existing_digest}
 
 
 async def memory_candidate_extract(state: AgentState) -> AgentState:
@@ -37,6 +31,16 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
     summary = state.get("session_summary", "")
     if not summary:
         return {"memory_candidates": [], "memory_policy_reason": "empty_summary"}
+    existing_candidates = [
+        dict(candidate)
+        for candidate in (state.get("memory_candidates") or [])
+        if isinstance(candidate, dict) and str(candidate.get("content") or "").strip()
+    ]
+    if existing_candidates:
+        return {
+            "memory_candidates": existing_candidates[:8],
+            "memory_policy_reason": "tool_provided",
+        }
     if memory_policy == "crisis_audit_only":
         return {
             "memory_candidates": [
@@ -67,6 +71,155 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
 
     text = state.get("normalized_text", "")
     compact_text = excerpt(text, 90)
+    digest = state.get("session_digest") if isinstance(state.get("session_digest"), dict) else {}
+    goal_state = state.get("goal_state") if isinstance(state.get("goal_state"), dict) else {}
+
+    def _digest_text(*keys: str) -> str:
+        parts: list[str] = []
+        for key in keys:
+            value = digest.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                parts.extend(str(item).strip() for item in value if str(item).strip())
+        return "；".join(part for part in parts if part)
+
+    digest_summary = _digest_text("summary_200chars")
+    digest_themes = _digest_text("key_themes")
+    digest_arc = _digest_text("emotional_arc")
+    digest_effective = _digest_text("effective_interventions")
+    digest_unresolved = _digest_text("unresolved_threads")
+    digest_changes = _digest_text("significant_changes")
+
+    if digest_summary and digest_summary != summary:
+        candidates.append(
+            {
+                "memory_type": "state",
+                "title": "近期状态",
+                "summary": f"会话全景中的近期状态线索：{excerpt(digest_summary, 80)}",
+                "content": f"会话全景中的近期状态线索：{excerpt(digest_summary, 80)}",
+                "importance": 3,
+                "tags": ["状态"],
+            }
+        )
+    elif digest_themes or digest_arc:
+        candidates.append(
+            {
+                "memory_type": "state",
+                "title": "近期状态",
+                "summary": f"会话全景中的状态线索：{excerpt(digest_themes or digest_arc, 80)}",
+                "content": f"会话全景中的状态线索：{excerpt(digest_themes or digest_arc, 80)}",
+                "importance": 3,
+                "tags": ["状态"],
+            }
+        )
+
+    if digest_effective:
+        candidates.append(
+            {
+                "memory_type": "support_strategy",
+                "title": "有效支持方式",
+                "summary": f"会话全景记录的有效支持方式：{excerpt(digest_effective, 80)}",
+                "content": f"会话全景记录的有效支持方式：{excerpt(digest_effective, 80)}",
+                "importance": 4,
+                "tags": ["支持方式"],
+            }
+        )
+
+    if digest_unresolved:
+        candidates.append(
+            {
+                "memory_type": "recurring_trigger",
+                "title": "反复触发点",
+                "summary": f"会话全景记录的未展开线索：{excerpt(digest_unresolved, 80)}",
+                "content": f"会话全景记录的未展开线索：{excerpt(digest_unresolved, 80)}",
+                "importance": 4,
+                "tags": ["触发点"],
+            }
+        )
+
+    if digest_changes:
+        candidates.append(
+            {
+                "memory_type": "session_summary",
+                "title": "本轮对话摘要",
+                "summary": f"{summary}；会话全景补充：{excerpt(digest_changes, 80)}",
+                "content": f"{summary}；会话全景补充：{excerpt(digest_changes, 80)}",
+                "importance": 3,
+                "tags": ["摘要"],
+            }
+        )
+
+    if has_any_text(
+        text,
+        (
+            "我想",
+            "我希望",
+            "目标",
+            "计划",
+            "打算",
+            "先把",
+            "理清楚",
+            "解决",
+            "要处理",
+            "当前任务",
+            "做到",
+            "完成",
+        ),
+    ):
+        candidates.append(
+            {
+                "memory_type": "goal",
+                "title": "当前目标",
+                "summary": f"用户表达了当前目标：{compact_text}",
+                "content": f"用户表达了当前目标：{compact_text}",
+                "importance": 4,
+                "tags": ["目标"],
+            }
+        )
+
+    clarification_answer = excerpt(str(goal_state.get("clarification_answer") or ""), 90)
+    if clarification_answer:
+        candidates.append(
+            {
+                "memory_type": "goal",
+                "title": "当前目标",
+                "summary": f"用户澄清当前想继续谈的方向：{clarification_answer}",
+                "content": f"用户澄清当前想继续谈的方向：{clarification_answer}",
+                "importance": 4,
+                "tags": ["目标", "澄清"],
+            }
+        )
+
+    if has_any_text(
+        text,
+        (
+            "不要一上来",
+            "别一上来",
+            "不要直接",
+            "别直接",
+            "别急着",
+            "先别",
+            "先听我",
+            "听我说",
+            "别分析",
+            "不要分析",
+            "别下结论",
+            "不是这个意思",
+            "不喜欢你这样",
+        ),
+    ):
+        candidates.append(
+            {
+                "memory_type": "correction",
+                "title": "纠错偏好",
+                "summary": f"用户明确纠正陪伴方式：{compact_text}",
+                "content": f"用户明确纠正陪伴方式：{compact_text}",
+                "importance": 5,
+                "tags": ["纠错", "支持方式"],
+            }
+        )
+
     if has_any_text(text, ("喜欢", "希望", "更想", "更希望", "不要", "别", "少一点", "直接", "温柔", "安慰", "分析", "提问", "先听", "先陪")):
         candidates.append(
             {

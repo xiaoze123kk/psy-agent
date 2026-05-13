@@ -33,6 +33,9 @@ class MemoryReferenceResponse(BaseModel):
 
 class ListMemoriesResponse(BaseModel):
     items: list[MemoryItemResponse]
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
 
 
 class UpdateMemoryRequest(BaseModel):
@@ -55,7 +58,7 @@ class SearchMemoriesRequest(BaseModel):
     query: str
     risk_level: str = "L0"
     control_category: str | None = None
-    limit: int = 5
+    limit: int = Field(default=5, ge=1, le=200)
 
 
 class SearchMemoryItem(BaseModel):
@@ -95,6 +98,9 @@ class MemoryAuditItem(BaseModel):
 
 class MemoryAuditResponse(BaseModel):
     items: list[MemoryAuditItem]
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
 
 
 class MemoryConsolidationResponse(BaseModel):

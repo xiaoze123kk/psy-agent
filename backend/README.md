@@ -41,6 +41,11 @@ psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0006_privacy.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0007_counseling_corpus_milvus.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0008_app_runtime_schema_alignment.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0009_memory_system.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0010_chat_turn_idempotency.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0011_conversation_turn_traces.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0012_pending_memory_jobs.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f database/migrations/0013_companion_styles.sql
 ```
 
 Milvus vector search is optional. For local standalone Milvus:
@@ -91,6 +96,28 @@ uvicorn app.main:app --reload --port 8000
 
 - Health: `GET /health`
 - API v1 root: `GET /api/v1`
+
+## Terminal Chat
+
+For local dialog testing without the frontend, run:
+
+```bash
+python scripts/terminal_chat.py
+```
+
+Useful commands:
+
+- `/new [title]`
+- `/threads`
+- `/use <thread_id>`
+- `/history [n]`
+- `/exit`
+
+For a one-shot smoke test:
+
+```bash
+python scripts/terminal_chat.py --message "我最近有点累"
+```
 
 ## Structure
 

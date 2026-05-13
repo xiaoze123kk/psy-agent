@@ -5,9 +5,10 @@ from collections.abc import Callable
 
 from langgraph.config import get_stream_writer
 
-from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, recent_context, safe_trim
+from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, safe_trim
 from app.graphs.nodes.control_nodes import base_contract
 from app.graphs.nodes.rag_nodes import example_hit_to_dict
+from app.services import tooling as dialogue_tooling
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 
@@ -15,6 +16,9 @@ from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 logger = logging.getLogger(__name__)
 _ACTIONS_SEPARATOR = "---"
 _STREAM_TAIL_CHARS = 8
+_RECENT_CHAT_CANDIDATE_LIMIT = 24
+_RECENT_CHAT_BUDGET_CHARS = 1800
+_RECENT_CHAT_MESSAGE_MAX_CHARS = 480
 
 
 class _VisibleReplyBuffer:
@@ -63,6 +67,14 @@ def _write_assistant_token(writer: Callable[[dict[str, object]], None], text: st
     if not text:
         return
     writer({"type": "assistant_token", "text": text})
+
+
+def _write_final_visible_text(text: str, *, chunk_size: int = 8) -> None:
+    writer = _assistant_stream_writer()
+    if writer is None or not text:
+        return
+    for start in range(0, len(text), chunk_size):
+        _write_assistant_token(writer, text[start : start + chunk_size])
 
 
 async def _non_streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[str, list[str]]:
@@ -131,6 +143,58 @@ def examples_text_from_state(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _trim_message_content(content: str, limit: int) -> str:
+    if len(content) <= limit:
+        return content
+    if limit <= 3:
+        return content[:limit]
+    return content[: limit - 3].rstrip() + "..."
+
+
+def _recent_chat_messages(
+    state: AgentState,
+    *,
+    limit: int = _RECENT_CHAT_CANDIDATE_LIMIT,
+    budget_chars: int = _RECENT_CHAT_BUDGET_CHARS,
+    message_max_chars: int = _RECENT_CHAT_MESSAGE_MAX_CHARS,
+) -> list[dict[str, str]]:
+    current_text = str(state.get("normalized_text") or state.get("user_text") or "").strip()
+    raw_messages = [message for message in state.get("recent_messages", []) if isinstance(message, dict)]
+    candidates: list[dict[str, str]] = []
+    for index, message in enumerate(raw_messages):
+        role = str(message.get("role") or "")
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if index == len(raw_messages) - 1 and role == "user" and current_text and content == current_text:
+            continue
+        candidates.append({"role": role, "content": _trim_message_content(content, message_max_chars)})
+
+    selected: list[dict[str, str]] = []
+    remaining = max(budget_chars, 0)
+    for message in reversed(candidates[-limit:]):
+        if remaining <= 0:
+            break
+        content = message["content"]
+        if len(content) > remaining:
+            content = _trim_message_content(content, remaining)
+        if not content:
+            continue
+        selected.append({"role": message["role"], "content": content})
+        remaining -= len(content)
+    return list(reversed(selected))
+
+
+def _reply_messages(state: AgentState, prompt_parts) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": prompt_parts.system_prompt},
+        *_recent_chat_messages(state),
+        {"role": "user", "content": prompt_parts.user_prompt},
+    ]
+
+
 async def _model_reply_with_actions(
     state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
 ) -> tuple[str, list[str]]:
@@ -141,46 +205,77 @@ async def _model_reply_with_actions(
         response_contract=response_contract,
         examples_text=examples_text_from_state(state),
         memory_text=memory_context(state.get("retrieved_memories", [])),
-        recent_text=recent_context(state),
     )
 
-    reply_messages = [
-        {"role": "system", "content": prompt_parts.system_prompt},
-        {"role": "user", "content": prompt_parts.user_prompt},
-    ]
-    return await _streamed_reply_with_actions(reply_messages)
+    return await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
+
+
+async def _model_reply_state_update(
+    state: AgentState, *, mode: str, fallback: str, default_actions: list[str]
+) -> AgentState:
+    response_contract = state.get("response_contract", {}) or base_contract(allow_rag=False)
+    prompt_parts = build_dialogue_prompt_parts(
+        state,
+        mode=mode,
+        response_contract=response_contract,
+        examples_text=examples_text_from_state(state),
+        memory_text=memory_context(state.get("retrieved_memories", [])),
+    )
+    tool_plan = dialogue_tooling.build_dialogue_tool_plan(state)
+    if tool_plan.tools:
+        result = await dialogue_tooling.run_dialogue_reply_with_tools(
+            state,
+            system_prompt=prompt_parts.system_prompt,
+            user_prompt=prompt_parts.user_prompt,
+            messages=_reply_messages(state, prompt_parts),
+            tool_plan=tool_plan,
+        )
+        _write_final_visible_text(str(result.get("assistant_text") or ""))
+        return result
+
+    assistant_text, suggested_actions = await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
+    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def companion_response(state: AgentState) -> AgentState:
     intent = state.get("intent", "other")
     mode = "vent" if intent == "vent" else "companion"
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode=mode,
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def soothing_response(state: AgentState) -> AgentState:
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode="soothe",
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
 async def counseling_response(state: AgentState) -> AgentState:
-    assistant_text, suggested_actions = await _model_reply_with_actions(
+    return await _model_reply_state_update(
         state,
         mode="counseling",
         fallback="",
         default_actions=[],
     )
-    return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
+
+
+async def clarification_response(state: AgentState) -> AgentState:
+    goal_state = state.get("goal_state") if isinstance(state.get("goal_state"), dict) else {}
+    current_goal = safe_trim(goal_state.get("current_goal"), 28) if goal_state else ""
+    if current_goal:
+        assistant_text = f"我先确认一下：围绕“{current_goal}”，你现在最卡的是哪一点？"
+    elif state.get("clarification_reason") == "vague_without_context":
+        assistant_text = "我先确认一下：你想从具体发生的事说起，还是先说现在的感觉？"
+    else:
+        assistant_text = "我先确认一下：你现在最想让我陪你看哪一块？"
+    return {"assistant_text": assistant_text, "suggested_actions": []}
 
 
 async def crisis_response(state: AgentState) -> AgentState:

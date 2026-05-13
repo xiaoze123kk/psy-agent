@@ -1,0 +1,167 @@
+# 工具系统开发记录
+
+## 工具总览
+
+当前系统共有 **7 个 Tool**（6 个正式 + 1 个设计中），全部基于 DeepSeek/OpenAI function-calling 协议，定义在 `backend/app/services/tooling.py`，由 LLM 在对话中自主调用。
+
+| # | 工具名 | 用途 | 风险等级 | 需要知识库开关 | 状态 |
+|---|--------|------|----------|---------------|------|
+| 1 | `search_memories` | 搜索用户可见记忆索引，返回记忆引用（非原始内容） | L0-L1 | 否 | 正式 |
+| 2 | `save_memory_summary` | 生成安全会话摘要和候选记忆，提交后台记忆管道 | L0-L1 | 否 | 正式 |
+| 3 | `get_safety_resources` | 按地区和受众返回安全支持资源（热线等） | L0-L3 | 否 | 正式 |
+| 4 | `web_search` | 搜索互联网获取实时心理支持资源、热线和专业信息 | L0-L1 | 否 | 正式 |
+| 5 | `get_current_time` | 获取当前 UTC/本地时间、星期、时区、会话已持续时间 | L0-L3 | 否 | 正式 |
+| 6 | `get_weather` | 获取城市当前天气（wttr.in 免费 API），辅助理解用户情绪与天气的关联 | L0-L1 | 否 | 正式 |
+| 7 | `summarize_session` | 面向用户端的会话总结，返回主题/情绪/建议的结构化数据 | L0-L3 | 否 | 正式 |
+| - | `ask_knowledge` | 知识库查询（占位，v1 禁用） | L0-L1 | 是 | 禁用 |
+
+### 工具门控规则
+
+| 条件 | 可用工具 |
+|------|----------|
+| 低风险 (L0-L1) + memory on | `search_memories`, `save_memory_summary`, `get_safety_resources`, `web_search`, `get_current_time` |
+| 低风险 (L0-L1) + memory off | `get_safety_resources`, `get_current_time` |
+| 高风险 (L2-L3) | `get_safety_resources`, `get_current_time` |
+| 知识库启用 + 低风险 | 以上 + `ask_knowledge` |
+
+---
+
+## web_search 工具
+
+### 初次实现 (2026-05-11)
+
+- **搜索后端**：DuckDuckGo（`duckduckgo_search` 库，MIT 协议，免费无需 API key）
+- **调用方式**：Tool（LLM 自主判断何时搜索）
+- **region**：固定 `cn`（中国大陆）
+- **核心文件**：
+  - `backend/app/services/search_service.py` — 搜索逻辑
+  - `backend/app/services/tooling.py` — Tool 注册、handler、ToolGate
+- **定位**：长期保留，未来与知识库互补（知识库做深度，搜索做广度）
+
+### 迭代优化记录
+
+| # | 优化项 | 日期 | 描述 |
+|---|--------|------|------|
+| 1 | PII 排除提示 | 2026-05-11 | system prompt 约束：不将用户个人信息拼入搜索 query |
+| 2 | 清洗优化 | 2026-05-11 | 去除首尾省略号 (`...`)、解码 HTML 实体 (`&amp;` → `&`)、空白符规范化 |
+| 3 | 去重优化 | 2026-05-11 | 两层去重：URL 精确匹配 + snippet 前 60 字符 5-gram 重叠率 ≥70% 判为重复 |
+| 4 | 截断优化 | 2026-05-11 | 智能边界截断：优先在 CJK 标点（`。，、；：？！`）或空格处断开，不在字符中间切断 |
+| 5 | 超时控制 | 2026-05-11 | `ThreadPoolExecutor` + `future.result(timeout=8s)`，防止慢响应阻塞对话轮次 |
+| 6 | 权威评分 | 2026-05-12 | 域名分三级（gov/edu +100，baike/医院 +50，其余 0），HTTPS +5，路径浅层 +5，标题权威词 +10，结果按分降序 |
+| 7 | 去重性能优化 | 2026-05-12 | 预计算 `_ngram_fingerprint`（key + 5-gram set），避免循环内重复正则和集合构建 |
+| 8 | 低信息过滤 | 2026-05-12 | 丢弃 snippet < 12 字符或含 "点击查看"/"read more" 等无价值 boilerplate 的结果 |
+
+#### 权威评分域名细则
+
+**Tier 1 (+100)**：政府/机构/学术
+- `gov.cn` 系列、`who.int`、`nih.gov`、`nhs.uk`、`cdc.gov`
+- `edu.cn` 系列
+- `psych.ac.cn`、`cma.org.cn`
+
+**Tier 2 (+50)**：权威内容平台
+- `baike.baidu.com`、`zh.wikipedia.org`
+- `dxy.cn`（丁香园）、`medlive.cn`（医脉通）
+- 含 `.hospital.`、`.med.`、`.psy.` 的域名
+
+**额外加分**：HTTPS (+5)、URL 路径 ≤2 层 (+5)、标题含 "官方/热线/中心/医院/卫健委" 等 (+10)
+
+| 9 | 错误状态传递 | 2026-05-12 | `search_web` 返回 `(results, error)` 元组；handler 在超时/网络异常时设 `status="error"`，LLM 可区分"无结果"与"搜索失败" |
+
+---
+
+## get_current_time 工具
+
+### 实现 (2026-05-12)
+
+- **返回内容**：`utc_iso`、`local_iso`（Asia/Shanghai）、`weekday`（中文）、`session_elapsed_seconds`
+- **会话计时**：handler 闭包记录首次调用时间，后续调用返回增量
+- **可用范围**：所有风险等级，包括 memory-off 和高风险场景
+
+---
+
+## get_weather 工具
+
+### 实现 (2026-05-12)
+
+- **后端**：`wttr.in` 免费 API（无需 key），`format=%C+%t+%h+%w` 返回中文简短天气
+- **参数**：`city` 可选（默认 Beijing），5 秒超时
+- **返回**：`{city, weather, error?}` — weather 为如 "晴 15°C 湿度45% 风速3km/h"
+- **可用范围**：L0-L1（低风险），高风险不可用
+- **核心文件**：`backend/app/services/weather_service.py`
+
+---
+
+## summarize_session 工具
+
+### 设计 (2026-05-12)
+
+- **定位**：面向用户端的会话总结工具，与 `save_memory_summary`（写后台记忆）互补
+- **设计文档**：`docs/superpowers/specs/2026-05-12-summarize-session-design.md`
+- **数据来源**：AgentState 内已有字段（`recent_messages`, `last_summary`, `session_summary`, `intent`），不做新 LLM 调用
+- **参数**：`format` — `brief`（1-2句概述）、`detailed`（主题/情绪/建议完整总结）、`themes_only`（仅核心主题）、`progress`（与之前轮次对比进展）
+- **副作用**：无（纯读操作，不写数据库）
+- **可用范围**：L0-L3（全部风险等级），无需 memory_mode 或 knowledge_enabled
+- **状态**：已实现
+- **实现细节**：
+  - **话题提取**：用户消息 2-4 字滑动窗口 + 摘要字段加权（2 倍），去停用词，按频率取前 6
+  - **建议提取**：正则匹配 `建议`/`可以试试`/`不妨` 引导的短句（3-60 字）
+  - **情绪标注**：关键词匹配 23 个常见情绪词
+  - **默认格式**：无参调用时默认 `brief`
+  - **preview**：记录 format / theme_count / turn_count / mood_count
+- **改动文件**：`tooling.py`（ToolSpec + handler + ToolGate + prompt_hint），`tests/test_tooling.py`（12 test cases）
+
+---
+
+## 小目标管理 (goal memory type)
+
+### 实现 (2026-05-12)
+
+- **设计原则**：复用现有 `UserMemory` 表 + `save_memory_summary` / `search_memories` 管线，无需新 tool
+- **memory_type**：`"goal"`，加入 `VISIBLE_MEMORY_TYPES`
+- **存储**：目标属性 (`goal_status`, `goal_category`, `completed_at`) 存 `structured_value` JSON
+- **LLM 使用**：
+  - 创建目标：`save_memory_summary` 传 `memory_type: "goal"` + `structured_value: {goal_status: "active", ...}`
+  - 查询目标：`search_memories` 传 `memory_types: ["goal"]`
+  - 更新状态：同创建，`goal_status` 改为 `"completed"` / `"abandoned"`，管线自动 merge 已有记忆
+- **goal_category**：`behavior` | `emotion` | `social` | `routine` | `other`
+- 改动文件：`tooling.py`（VISIBLE_MEMORY_TYPES + structured_value 透传）、`memory_service.py`（VISIBLE_MEMORY_TYPES + LABELS + ORDER）
+
+---
+
+## 架构说明
+
+```
+tooling.py
+├── TOOL_SPECS          → 7 个 ToolSpec 定义（tool 元数据 + 参数 schema）
+├── ToolGate            → 按 risk_level / memory_mode / knowledge_enabled 控制可用性
+
+```
+tooling.py
+├── TOOL_SPECS          → 7 个 ToolSpec 定义（tool 元数据 + 参数 schema）
+├── ToolGate            → 按 risk_level / memory_mode / knowledge_enabled 控制可用性
+├── DialogueToolPlan    → 一次性组装 tools + handlers + prompt_hint + audit
+├── _build_*_handler    → 每个 tool 的 handler factory（闭包捕获 state / capture）
+├── _tool_prompt_hint   → 注入 system prompt 的 tool 使用策略说明
+└── run_dialogue_reply_with_tools → 对话入口，调用 deepseek_client.chat_with_tools()
+
+weather_service.py
+├── get_weather() → httpx GET wttr.in → (text, error)
+
+search_service.py
+├── SearchResult        → 数据类（title, url, snippet, score）
+├── search_web()        → 搜索入口（DuckDuckGo → 清洗 → 去重 → 评分 → 排序）
+├── _ddg_text()         → DDGS 封装（便于测试 mock）
+├── 评分函数              → _score_domain / _score_https / _score_path_shallow / _score_title_authority
+├── 清洗函数              → _strip_ellipsis / _unescape_html / _smart_truncate / _is_low_info
+└── 去重函数              → _ngram_fingerprint / _fingerprints_match
+```
+
+## 测试覆盖
+
+| 测试文件 | 测试数 | 覆盖内容 |
+|----------|--------|----------|
+| `tests/test_tooling.py` | 43 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递、goal memory candidate、summarize_session（12 tests） |
+| `tests/test_search_service.py` | 29 | 清洗、去重、截断、评分、低信息过滤、错误处理、超时、error tuple |
+| `tests/test_tooling_integration.py` | 1 | 端到端 tool audit + memory patch 流转 |
+
+**全量**：330 passed, 2 skipped, 0 failures

@@ -33,6 +33,7 @@ SEXUAL_BOUNDARY_TERMS = ("操你", "操死", "做爱", "约炮", "裸照", "色�
 ABUSE_TO_ASSISTANT_TERMS = ("你是傻逼", "你傻逼", "你有病", "垃圾ai", "垃圾 AI", "滚", "废物")
 SMALL_TALK_TERMS = ("你好", "在吗", "吃饭了吗", "今天天气", "随便聊聊", "讲个笑话", "你是谁")
 SUPPORT_TERMS = ("烦", "难受", "焦虑", "压力", "委屈", "想哭", "崩溃", "失眠", "害怕", "孤独", "没人理解")
+VAGUE_FOLLOWUP_TERMS = ("继续", "接着", "然后呢", "这个", "那个", "随便", "都行", "不知道", "说不清", "有点乱")
 
 
 def base_contract(*, allow_rag: bool) -> dict:
@@ -50,6 +51,40 @@ def base_contract(*, allow_rag: bool) -> dict:
             "unverified_resources",
         ],
     }
+
+
+def _has_context_for_vague_turn(state: AgentState) -> bool:
+    if str(state.get("last_summary") or "").strip():
+        return True
+    session_digest = state.get("session_digest")
+    if isinstance(session_digest, dict):
+        for key in ("summary_200chars", "key_themes", "unresolved_threads"):
+            value = session_digest.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, list) and any(str(item).strip() for item in value):
+                return True
+    goal_state = state.get("goal_state")
+    if isinstance(goal_state, dict):
+        for key in ("current_goal", "goal_hints", "open_threads"):
+            value = goal_state.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, list) and any(str(item).strip() for item in value):
+                return True
+    return False
+
+
+def _clarification_reason(state: AgentState, text: str) -> str:
+    compact = "".join(str(text or "").split())
+    if not compact:
+        return "empty_input"
+    has_context = _has_context_for_vague_turn(state)
+    if not has_context and (len(compact) <= 4 or compact in VAGUE_FOLLOWUP_TERMS):
+        return "vague_without_context"
+    if not has_context and has_any_text(text, VAGUE_FOLLOWUP_TERMS) and not has_any_text(text, SUPPORT_TERMS):
+        return "ambiguous_need"
+    return ""
 
 
 async def control_plane(state: AgentState) -> AgentState:
@@ -195,6 +230,18 @@ async def control_plane(state: AgentState) -> AgentState:
             reasons.extend(state.get("risk_reasons", []) or risk_reason_codes[:3])
         confidence = 0.7 if not has_any_text(text, SUPPORT_TERMS) else 0.82
 
+    clarification_reason = ""
+    clarification_needed = False
+    if route_priority == "P2_support" and risk_level == "L0":
+        clarification_reason = _clarification_reason(state, text)
+        clarification_needed = bool(clarification_reason)
+        if clarification_needed:
+            category = "clarification_needed"
+            allow_rag = False
+            confidence = min(confidence, 0.62)
+            labels.append("low_confidence_clarification")
+            reasons.append(clarification_reason)
+
     contract = base_contract(allow_rag=allow_rag)
     if route_priority == "P0_immediate_safety":
         contract["allowed_moves"] = ["brief_empathy", "one_safety_check", "real_world_support"]
@@ -204,6 +251,9 @@ async def control_plane(state: AgentState) -> AgentState:
         contract["allowed_moves"] = ["brief_boundary", "safe_alternative"]
     elif category in {"abusive_to_assistant", "sexual_boundary", "dependency_risk", "anger_toward_other"}:
         contract["allowed_moves"] = ["brief_empathy", "boundary_or_deescalation", "return_to_feelings"]
+    elif clarification_needed:
+        contract["allowed_moves"] = ["one_clarifying_question"]
+        contract["max_chars"] = 120
 
     rag_skip_reason = "" if allow_rag else f"{route_priority}:{category}"
     return {
@@ -212,6 +262,8 @@ async def control_plane(state: AgentState) -> AgentState:
         "control_category": category,
         "control_reasons": reasons[:6],
         "control_confidence": confidence,
+        "clarification_needed": clarification_needed,
+        "clarification_reason": clarification_reason,
         "risk_formulation": {
             "labels": list(dict.fromkeys(labels)),
             "observed_reasons": reasons[:6],
