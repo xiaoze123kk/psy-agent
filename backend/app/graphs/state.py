@@ -57,6 +57,8 @@ class AgentState(TypedDict, total=False):
     control_category: str
     control_reasons: list[str]
     control_confidence: float
+    clarification_needed: bool
+    clarification_reason: str
     risk_formulation: dict
     response_contract: dict
     memory_policy: Literal["write_safe_summary", "skip_sensitive", "crisis_audit_only"]

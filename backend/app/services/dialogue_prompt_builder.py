@@ -339,6 +339,11 @@ def build_dialogue_prompt_parts(
     last_summary = state.get("last_summary") or "无"
     session_digest_text = _session_digest_prompt_block(state)
     user_profile_digest_text = _user_profile_digest_prompt_block(state)
+    clarification_text = (
+        "澄清模式：当前信息不足时，只问一个关键问题；不要顺手给建议清单。\n"
+        if state.get("clarification_needed")
+        else ""
+    )
     control_category = state.get("control_category", "normal_support")
     route_priority = state.get("route_priority", "P2_support")
     mode_guidance = mode_guidance_for(mode, selected_strategy, str(user_mode))
@@ -362,6 +367,7 @@ def build_dialogue_prompt_parts(
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
         f"回复要求：{mode_guidance}\n"
+        f"{clarification_text}"
         f"{examples_text}"
         f"{user_profile_digest_text}"
         f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"

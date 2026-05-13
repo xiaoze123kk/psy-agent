@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.rag_nodes import example_retriever
-from app.graphs.nodes.response_nodes import _model_reply_with_actions
+from app.graphs.nodes.response_nodes import _model_reply_with_actions, clarification_response
+from app.graphs.routing import route_by_control
 from app.graphs.nodes.validator_nodes import response_validator, validator_reasons
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
@@ -80,6 +81,29 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertTrue(result["rag_used"])
         self.assertEqual(result["retrieved_counseling_examples"][0]["chunk_id"], "chunk-1")
         self.assertEqual(result["rag_skipped_reason"], "")
+
+    def test_vague_low_confidence_turn_routes_to_clarification(self) -> None:
+        state = self.make_state("继续", last_summary="", session_digest={}, goal_state={})
+        state.update(_run(control_plane(state)))
+
+        self.assertTrue(state["clarification_needed"])
+        self.assertEqual(state["clarification_reason"], "vague_without_context")
+        self.assertEqual(route_by_control(state), "clarification_response")
+
+    def test_clarification_response_asks_one_question_without_advice(self) -> None:
+        state = self.make_state(
+            "继续",
+            clarification_needed=True,
+            clarification_reason="vague_without_context",
+            goal_state={},
+        )
+
+        result = _run(clarification_response(state))
+
+        self.assertEqual(result["assistant_text"].count("？"), 1)
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertNotIn("建议", result["assistant_text"])
+        self.assertNotIn("你可以", result["assistant_text"])
 
     def test_boundary_turn_skips_fewshot_examples(self) -> None:
         state = self.make_state("你是傻逼")

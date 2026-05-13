@@ -7,6 +7,7 @@ from app.graphs.nodes.rag_nodes import example_retriever
 from app.graphs.nodes.response_nodes import (
     boundary_response,
     clinical_red_flag_response,
+    clarification_response,
     companion_response,
     crisis_response,
     counseling_response,
@@ -30,6 +31,7 @@ def build_main_graph():
 
     workflow.add_node("boundary_response", boundary_response)
     workflow.add_node("clinical_red_flag_response", clinical_red_flag_response)
+    workflow.add_node("clarification_response", clarification_response)
     workflow.add_node("companion_response", companion_response)
     workflow.add_node("soothing_response", soothing_response)
     workflow.add_node("counseling_response", counseling_response)
@@ -53,6 +55,7 @@ def build_main_graph():
             "crisis_response": "crisis_response",
             "clinical_red_flag_response": "clinical_red_flag_response",
             "boundary_response": "boundary_response",
+            "clarification_response": "clarification_response",
             "intent_classifier": "intent_classifier",
         },
     )
@@ -71,6 +74,7 @@ def build_main_graph():
 
     workflow.add_edge("boundary_response", "response_validator")
     workflow.add_edge("clinical_red_flag_response", "response_validator")
+    workflow.add_edge("clarification_response", "response_validator")
     workflow.add_edge("companion_response", "response_validator")
     workflow.add_edge("soothing_response", "response_validator")
     workflow.add_edge("counseling_response", "response_validator")

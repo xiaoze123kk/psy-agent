@@ -385,3 +385,47 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 结果：`61 passed, 1 warning`。
 
 warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
+### 低置信度澄清路由
+
+为了避免用户只说“继续 / 有点乱 / 说不清”时模型硬给一长串建议，本轮新增低置信度澄清分支。
+
+### 已完成改动
+
+#### 1. 控制面识别信息不足
+
+- `control_plane` 在低风险普通支持场景中检查输入是否过短、过模糊，以及是否缺少 `last_summary`、`session_digest` 或 `goal_state` 可承接上下文。
+- 命中后设置 `clarification_needed` 和 `clarification_reason`。
+- 澄清场景关闭 RAG，并把 response contract 收窄为 `one_clarifying_question`。
+
+#### 2. 独立澄清回复节点
+
+- 新增 `clarification_response`，只返回一个关键问题，不调用 LLM 扩写。
+- 如果已有当前目标，会围绕该目标追问最卡的一点；如果完全缺上下文，会先确认用户想从事件还是感受说起。
+- 不返回建议动作，避免把澄清轮变成建议轮。
+
+#### 3. 主图路由接入
+
+- `route_by_control` 在安全、红旗和边界分支之后识别澄清分支。
+- `main_graph` 新增 `clarification_response` 节点，并接入 validator、摘要和记忆候选后续链路。
+- `dialogue_prompt_builder` 也补充澄清模式提示，防止未来复用 LLM 回复路径时退化。
+
+### 验证结果
+
+先写失败测试后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+红灯结果：`2 errors, 1 warning`，失败来自 `clarification_response` 尚未实现。
+
+补齐实现后再次运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`14 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。

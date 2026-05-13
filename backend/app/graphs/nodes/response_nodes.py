@@ -266,6 +266,18 @@ async def counseling_response(state: AgentState) -> AgentState:
     )
 
 
+async def clarification_response(state: AgentState) -> AgentState:
+    goal_state = state.get("goal_state") if isinstance(state.get("goal_state"), dict) else {}
+    current_goal = safe_trim(goal_state.get("current_goal"), 28) if goal_state else ""
+    if current_goal:
+        assistant_text = f"我先确认一下：围绕“{current_goal}”，你现在最卡的是哪一点？"
+    elif state.get("clarification_reason") == "vague_without_context":
+        assistant_text = "我先确认一下：你想从具体发生的事说起，还是先说现在的感觉？"
+    else:
+        assistant_text = "我先确认一下：你现在最想让我陪你看哪一块？"
+    return {"assistant_text": assistant_text, "suggested_actions": []}
+
+
 async def crisis_response(state: AgentState) -> AgentState:
     teen_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult")) == "teen"
     if teen_mode:
