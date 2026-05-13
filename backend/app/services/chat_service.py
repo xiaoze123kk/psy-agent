@@ -25,6 +25,7 @@ from app.services.memory_service import (
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
 )
+from app.services.user_context_pack_service import build_user_context_pack
 from app.services.user_context_service import build_goal_state, build_user_profile_digest
 
 
@@ -44,6 +45,7 @@ class TurnContext:
     serialized_recent_messages: list[dict]
     user_profile_digest: dict
     goal_state: dict
+    user_context_pack: dict
     memory_mode: str
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -199,6 +201,7 @@ async def _invoke_graph_with_fallback(
     serialized_recent_messages: list[dict],
     user_profile_digest: dict,
     goal_state: dict,
+    user_context_pack: dict,
     memory_mode: str,
     memory_index: list[dict],
     retrieved_memories: list[dict],
@@ -218,6 +221,7 @@ async def _invoke_graph_with_fallback(
                 session_digest=thread.session_digest or {},
                 user_profile_digest=user_profile_digest,
                 goal_state=goal_state,
+                user_context_pack=user_context_pack,
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
@@ -610,6 +614,14 @@ async def _prepare_turn_context(
         limit=5,
         record_access=True,
     )
+    user_context_pack = build_user_context_pack(
+        current_text=payload.content,
+        risk_level=pre_risk_level,
+        session_digest=thread.session_digest or {},
+        user_profile_digest=user_profile_digest,
+        goal_state=goal_state,
+        retrieved_memories=retrieved_memories,
+    )
     return TurnContext(
         turn=turn,
         user_message=user_message,
@@ -617,6 +629,7 @@ async def _prepare_turn_context(
         serialized_recent_messages=serialized_recent_messages,
         user_profile_digest=user_profile_digest,
         goal_state=goal_state,
+        user_context_pack=user_context_pack,
         memory_mode=memory_mode,
         memory_index=memory_index,
         retrieved_memories=retrieved_memories,
@@ -819,6 +832,7 @@ async def process_message_turn(
             serialized_recent_messages=context.serialized_recent_messages,
             user_profile_digest=context.user_profile_digest,
             goal_state=context.goal_state,
+            user_context_pack=context.user_context_pack,
             memory_mode=context.memory_mode,
             memory_index=context.memory_index,
             retrieved_memories=context.retrieved_memories,
@@ -899,6 +913,7 @@ async def process_message_turn_stream(
             session_digest=thread.session_digest or {},
             user_profile_digest=context.user_profile_digest,
             goal_state=context.goal_state,
+            user_context_pack=context.user_context_pack,
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,

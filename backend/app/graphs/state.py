@@ -22,6 +22,7 @@ class AgentState(TypedDict, total=False):
     session_digest: dict
     user_profile_digest: dict
     goal_state: dict
+    user_context_pack: dict
 
     profile: dict
     companion_preferences: dict

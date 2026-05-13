@@ -742,6 +742,37 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("先安抚再拆沟通步骤", call["goal_state"]["usage_goals"])
         self.assertEqual(call["retrieved_memories"][0]["id"], goal.id)
 
+    async def test_long_term_turn_passes_user_context_pack_to_runtime(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="long_term")
+        user.profile.usage_goals = ["先安抚再拆沟通步骤"]
+        thread.session_digest = {
+            "summary_200chars": "用户持续讨论职场压力和任务边界。",
+            "key_themes": ["职场压力", "任务边界"],
+            "unresolved_threads": ["如何和主管开口"],
+        }
+        self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮他梳理边界。",
+            importance=5,
+        )
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我想先把和主管沟通任务边界这件事理清楚"),
+        )
+
+        pack = fake_runtime.calls[0]["user_context_pack"]
+        self.assertIn("主管沟通任务边界", pack["active_goal"])
+        self.assertIn("职场压力", pack["conversation_focus"])
+        self.assertTrue(any("不要直接给模板" in item for item in pack["style_corrections"]))
+        self.assertIn("如何和主管开口", pack["open_threads"])
+
     async def test_clarification_answer_updates_goal_state_for_next_turn(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")
         self.db.add(

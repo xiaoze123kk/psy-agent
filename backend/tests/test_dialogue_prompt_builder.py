@@ -95,6 +95,43 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("不要直接下结论", parts.user_prompt)
         self.assertNotIn("schema_version", parts.user_prompt)
 
+    def test_prompt_prefers_user_context_pack_over_separate_blocks(self) -> None:
+        state = self.make_state(
+            session_digest={
+                "summary_200chars": "旧的会话摘要不应重复注入。",
+                "key_themes": ["旧主题"],
+            },
+            user_profile_digest={
+                "nickname": "小林",
+                "usage_goals": ["旧画像目标"],
+            },
+            user_context_pack={
+                "schema_version": 1,
+                "active_goal": "理清楚和主管沟通任务边界",
+                "conversation_focus": "用户持续讨论职场压力和任务边界。",
+                "style_corrections": ["不要直接给模板"],
+                "profile_hints": ["重要沟通前会先写提纲"],
+                "open_threads": ["如何和主管开口"],
+                "retrieved_memory_hints": ["目标记忆：理清楚任务边界"],
+                "priority_notes": ["优先围绕当前目标和澄清答案回应"],
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("用户上下文优先级包", parts.user_prompt)
+        self.assertIn("当前目标：理清楚和主管沟通任务边界", parts.user_prompt)
+        self.assertIn("纠错提示：不要直接给模板", parts.user_prompt)
+        self.assertNotIn("会话全景", parts.user_prompt)
+        self.assertNotIn("用户画像", parts.user_prompt)
+        self.assertNotIn("旧的会话摘要不应重复注入", parts.user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

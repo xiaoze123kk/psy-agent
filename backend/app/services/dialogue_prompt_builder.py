@@ -200,6 +200,45 @@ def _compact_list(value: object, *, limit: int = 5) -> list[str]:
     return items
 
 
+def _user_context_pack_prompt_block(state: AgentState) -> str:
+    pack = state.get("user_context_pack")
+    if not isinstance(pack, dict) or not pack:
+        return ""
+
+    lines: list[str] = []
+    active_goal = _compact_text(pack.get("active_goal"), limit=120)
+    if active_goal:
+        lines.append(f"当前目标：{active_goal}")
+
+    conversation_focus = _compact_text(pack.get("conversation_focus"), limit=180)
+    if conversation_focus:
+        lines.append(f"会话焦点：{conversation_focus}")
+
+    style_corrections = _compact_list(pack.get("style_corrections"))
+    if style_corrections:
+        lines.append(f"纠错提示：{'、'.join(style_corrections)}")
+
+    profile_hints = _compact_list(pack.get("profile_hints"))
+    if profile_hints:
+        lines.append(f"画像线索：{'、'.join(profile_hints)}")
+
+    open_threads = _compact_list(pack.get("open_threads"))
+    if open_threads:
+        lines.append(f"未展开线索：{'、'.join(open_threads)}")
+
+    retrieved_memory_hints = _compact_list(pack.get("retrieved_memory_hints"))
+    if retrieved_memory_hints:
+        lines.append(f"检索记忆：{'、'.join(retrieved_memory_hints)}")
+
+    priority_notes = _compact_list(pack.get("priority_notes"))
+    if priority_notes:
+        lines.append(f"优先级提示：{'、'.join(priority_notes)}")
+
+    if not lines:
+        return ""
+    return "用户上下文优先级包（按优先级理解用户，不要直接复述）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
+
+
 def _session_digest_prompt_block(state: AgentState) -> str:
     digest = state.get("session_digest")
     if not isinstance(digest, dict) or not digest:
@@ -337,8 +376,9 @@ def build_dialogue_prompt_parts(
     selected_strategy = select_dialogue_strategy(state, mode)
     style = build_companion_style_prompt(state.get("companion_preferences", {}).get("style", ""))
     last_summary = state.get("last_summary") or "无"
-    session_digest_text = _session_digest_prompt_block(state)
-    user_profile_digest_text = _user_profile_digest_prompt_block(state)
+    user_context_pack_text = _user_context_pack_prompt_block(state)
+    session_digest_text = "" if user_context_pack_text else _session_digest_prompt_block(state)
+    user_profile_digest_text = "" if user_context_pack_text else _user_profile_digest_prompt_block(state)
     clarification_text = (
         "澄清模式：当前信息不足时，只问一个关键问题；不要顺手给建议清单。\n"
         if state.get("clarification_needed")
@@ -369,6 +409,7 @@ def build_dialogue_prompt_parts(
         f"回复要求：{mode_guidance}\n"
         f"{clarification_text}"
         f"{examples_text}"
+        f"{user_context_pack_text}"
         f"{user_profile_digest_text}"
         f"上一轮内部摘要（仅供理解，不要直接复述）：{last_summary}\n"
         f"{session_digest_text}"

@@ -196,6 +196,89 @@ warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 
 warnings 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示，以及 `tests/test_privacy.py` 中 SQLAlchemy `TestHistory` 类名触发的既有 pytest 收集提示。
 
+### 统一用户上下文打包器
+
+在 `session_digest`、`user_profile_digest`、`goal_state`、澄清答案和纠错记忆都已经可用后，本轮新增统一 `user_context_pack`，避免 prompt 中多个分散上下文块互相抢优先级。
+
+### 已完成改动
+
+#### 1. 新增 `user_context_pack_service`
+
+- 新增 `build_user_context_pack()`，把当前文本、会话全景、用户画像、目标状态和检索记忆合并成一个紧凑 dict。
+- 固定输出 `schema_version`、`active_goal`、`conversation_focus`、`style_corrections`、`profile_hints`、`open_threads`、`retrieved_memory_hints`、`priority_notes`。
+- 列表字段统一去重、截断、限量，避免把长记忆或原始 JSON 直接塞进 prompt。
+- `L2/L3` 高风险场景只保留安全连续性和当前安全处理，不注入普通画像、普通偏好或普通检索记忆。
+
+#### 2. 图运行时透传
+
+- `chat_service._prepare_turn_context()` 在完成记忆检索后构造 `user_context_pack`。
+- `TurnContext`、`GraphRuntime.invoke_turn()`、`GraphRuntime.stream_turn()` 和 `_build_input_state()` 都透传该字段。
+- `AgentState` 和 `input_nodes.load_user_profile()` 保留已有 pack，确保普通回复和流式回复路径一致。
+
+#### 3. Prompt 优先读取统一上下文
+
+- `dialogue_prompt_builder` 新增“用户上下文优先级包”提示块。
+- 当 `user_context_pack` 存在时，不再重复注入旧的“用户画像”和“会话全景”块。
+- pack 内显式写出当前目标、会话焦点、纠错提示、画像线索、未展开线索、检索记忆和优先级提示，让模型按同一套顺序理解用户。
+
+### 验证结果
+
+先写失败测试后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_pack_service.py -q
+```
+
+红灯结果：`1 error`，失败来自 `user_context_pack_service` 尚未实现。
+
+补齐服务后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_pack_service.py -q
+```
+
+结果：`3 passed`。
+
+继续写运行时和 prompt 失败测试：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py::ChatMemoryModeTests::test_long_term_turn_passes_user_context_pack_to_runtime tests/test_chat_idempotency.py::ChatIdempotencyTests::test_graph_runtime_input_state_includes_user_context_pack tests/test_dialogue_prompt_builder.py::DialoguePromptBuilderTests::test_prompt_prefers_user_context_pack_over_separate_blocks -q
+```
+
+红灯结果：`3 failed, 1 warning`，失败分别覆盖 chat 未传 pack、GraphRuntime 不接收 pack、prompt 仍使用旧分散块。
+
+补齐透传和 prompt 接入后再次运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_memory.py::ChatMemoryModeTests::test_long_term_turn_passes_user_context_pack_to_runtime tests/test_chat_idempotency.py::ChatIdempotencyTests::test_graph_runtime_input_state_includes_user_context_pack tests/test_dialogue_prompt_builder.py::DialoguePromptBuilderTests::test_prompt_prefers_user_context_pack_over_separate_blocks -q
+```
+
+结果：`3 passed, 1 warning`。
+
+集中上下文回归：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_pack_service.py tests/test_dialogue_prompt_builder.py tests/test_memory.py tests/test_chat_idempotency.py -q
+```
+
+结果：`43 passed, 1 warning`。
+
+相关连续性回归：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_pack_service.py tests/test_user_context_service.py tests/test_dialogue_prompt_builder.py tests/test_memory.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_memory_service.py tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`100 passed, 1 warning`。
+
+最终扩展回归集合：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_pack_service.py tests/test_user_context_service.py tests/test_dialogue_prompt_builder.py tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`151 passed, 2 warnings`。两个 warning 分别为既有 LangGraph pending deprecation 和 `TestHistory` pytest collection 提示。
+
 ### `session_digest` 注入回复提示词
 
 在 `session_digest` 已经可持续更新、检索也已读取 digest 后，本轮把会话全景正式注入回复提示词，让 LLM 回复时直接知道当前对话在延续什么。

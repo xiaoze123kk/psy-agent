@@ -26,6 +26,7 @@ from app.db.models import (
 )
 from app.db.session import get_db_session
 from app.services import chat_service
+from app.services.graph_runtime import GraphRuntime
 
 
 class FakeGraphRuntime:
@@ -363,6 +364,23 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertIn("先安抚再建议", digest["usage_goals"])
         self.assertTrue(any("先短短安抚我" in item for item in digest["communication_preferences"]))
         self.assertIn("用户不喜欢一上来就连环追问", digest["preference_hints"])
+
+    def test_graph_runtime_input_state_includes_user_context_pack(self) -> None:
+        runtime = object.__new__(GraphRuntime)
+        pack = {
+            "schema_version": 1,
+            "active_goal": "理清楚主管沟通任务边界",
+            "style_corrections": ["不要直接给模板"],
+        }
+
+        state = runtime._build_input_state(
+            thread_id="thread-1",
+            user_id="user-1",
+            content="继续",
+            user_context_pack=pack,
+        )
+
+        self.assertEqual(state["user_context_pack"], pack)
 
     def test_recent_message_candidates_include_larger_context_window(self) -> None:
         user = self.create_user()
