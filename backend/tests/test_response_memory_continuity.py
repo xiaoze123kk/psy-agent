@@ -244,6 +244,24 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
         self.assertGreaterEqual(goal["importance"], 4)
         self.assertIn("目标", goal["tags"])
 
+    def test_memory_candidate_extract_creates_goal_from_clarification_answer(self) -> None:
+        state = self.make_state(
+            normalized_text="主管那件事",
+            memory_mode="long_term",
+            session_summary="用户澄清了当前想继续谈主管相关事件。",
+            goal_state={
+                "current_goal": "用户澄清当前想谈：主管那件事",
+                "clarification_answer": "主管那件事",
+                "clarification_reason": "vague_without_context",
+            },
+        )
+
+        result = _run(memory_candidate_extract(state))
+
+        goal = next(candidate for candidate in result["memory_candidates"] if candidate["memory_type"] == "goal")
+        self.assertIn("主管那件事", goal["content"])
+        self.assertIn("澄清", goal["tags"])
+
     def test_memory_candidate_extract_does_not_use_digest_when_summary_only(self) -> None:
         state = self.make_state(
             memory_mode="summary_only",

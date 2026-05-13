@@ -72,6 +72,7 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
     text = state.get("normalized_text", "")
     compact_text = excerpt(text, 90)
     digest = state.get("session_digest") if isinstance(state.get("session_digest"), dict) else {}
+    goal_state = state.get("goal_state") if isinstance(state.get("goal_state"), dict) else {}
 
     def _digest_text(*keys: str) -> str:
         parts: list[str] = []
@@ -174,6 +175,19 @@ async def memory_candidate_extract(state: AgentState) -> AgentState:
                 "content": f"用户表达了当前目标：{compact_text}",
                 "importance": 4,
                 "tags": ["目标"],
+            }
+        )
+
+    clarification_answer = excerpt(str(goal_state.get("clarification_answer") or ""), 90)
+    if clarification_answer:
+        candidates.append(
+            {
+                "memory_type": "goal",
+                "title": "当前目标",
+                "summary": f"用户澄清当前想继续谈的方向：{clarification_answer}",
+                "content": f"用户澄清当前想继续谈的方向：{clarification_answer}",
+                "importance": 4,
+                "tags": ["目标", "澄清"],
             }
         )
 

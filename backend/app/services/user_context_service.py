@@ -26,6 +26,21 @@ GOAL_KEYWORDS = (
     "做到",
     "完成",
 )
+VAGUE_FOLLOWUP_TERMS = (
+    "继续",
+    "接着",
+    "然后呢",
+    "这个",
+    "那个",
+    "随便",
+    "都行",
+    "不知道",
+    "说不清",
+    "有点乱",
+    "嗯",
+    "好",
+    "可以",
+)
 
 
 def _compact_text(value: object, *, limit: int) -> str:
@@ -99,6 +114,63 @@ def _memory_hints(db: Session, *, user_id: str) -> dict[str, list[str]]:
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     lowered = text.lower()
     return any(keyword.lower() in lowered for keyword in keywords)
+
+
+def _message_metadata(message: dict[str, Any]) -> dict[str, Any]:
+    metadata = message.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    metadata = message.get("meta")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _last_assistant_message(recent_messages: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for message in reversed(recent_messages or []):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "")
+        if role == "assistant":
+            return message
+    return None
+
+
+def _is_clarification_message(message: dict[str, Any] | None) -> bool:
+    if not isinstance(message, dict):
+        return False
+    metadata = _message_metadata(message)
+    if bool(metadata.get("clarification_needed")):
+        return True
+    if metadata.get("control_category") == "clarification_needed":
+        return True
+    content = str(message.get("content") or "")
+    return content.startswith("我先确认一下") and "？" in content
+
+
+def _clarification_context(recent_messages: list[dict[str, Any]] | None) -> dict[str, str] | None:
+    message = _last_assistant_message(recent_messages)
+    if not _is_clarification_message(message):
+        return None
+    assert message is not None
+    metadata = _message_metadata(message)
+    return {
+        "clarification_reason": _compact_text(metadata.get("clarification_reason"), limit=40),
+        "clarification_prompt": _compact_text(message.get("content"), limit=120),
+    }
+
+
+def _clarification_answer(current_text: str, recent_messages: list[dict[str, Any]] | None) -> dict[str, str]:
+    context = _clarification_context(recent_messages)
+    if not context:
+        return {}
+    compact = _compact_text(current_text, limit=MAX_ITEM_CHARS)
+    normalized = "".join(compact.split())
+    if not normalized or normalized in VAGUE_FOLLOWUP_TERMS:
+        return {}
+    return {
+        **context,
+        "clarification_answer": compact,
+        "current_goal": f"用户澄清当前想谈：{compact}",
+    }
 
 
 def _goal_hints(db: Session, *, user_id: str) -> list[str]:
@@ -187,6 +259,7 @@ def build_goal_state(
     user_id: str,
     current_text: str = "",
     session_digest: dict[str, Any] | None = None,
+    recent_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     user = db.get(User, user_id)
     if user is None:
@@ -194,13 +267,19 @@ def build_goal_state(
 
     profile = user.profile
     compact_current = _compact_text(current_text, limit=MAX_ITEM_CHARS)
-    current_goal = compact_current if compact_current and _contains_any(compact_current, GOAL_KEYWORDS) else ""
+    clarification = _clarification_answer(compact_current, recent_messages)
+    current_goal = clarification.get("current_goal") or (
+        compact_current if compact_current and _contains_any(compact_current, GOAL_KEYWORDS) else ""
+    )
     goal_state: dict[str, Any] = {
         "schema_version": DIGEST_SCHEMA_VERSION,
         "current_goal": current_goal,
         "usage_goals": _compact_list(profile.usage_goals if profile else [], limit=MAX_LIST_ITEMS),
         "goal_hints": _goal_hints(db, user_id=user_id),
         "open_threads": _digest_threads(session_digest),
+        "clarification_answer": clarification.get("clarification_answer", ""),
+        "clarification_reason": clarification.get("clarification_reason", ""),
+        "clarification_prompt": clarification.get("clarification_prompt", ""),
     }
 
     if not any(
@@ -210,6 +289,7 @@ def build_goal_state(
             "usage_goals",
             "goal_hints",
             "open_threads",
+            "clarification_answer",
         )
     ):
         return None

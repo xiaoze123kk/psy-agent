@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.models import Base, User, UserMemory, UserProfile, UserSettings
-from app.services.user_context_service import build_user_profile_digest
+from app.services.user_context_service import build_goal_state, build_user_profile_digest
 
 
 class UserContextServiceTests(unittest.TestCase):
@@ -93,6 +93,31 @@ class UserContextServiceTests(unittest.TestCase):
         self.assertIn("用户遇到压力时习惯先沉默一会儿", digest["profile_hints"])
         self.assertIn("用户不喜欢一上来就连环追问", digest["preference_hints"])
         self.assertEqual(digest["correction_hints"], [])
+
+    def test_build_goal_state_binds_previous_clarification_answer(self) -> None:
+        user = self.create_user()
+
+        goal_state = build_goal_state(
+            self.db,
+            user_id=user.id,
+            current_text="主管那件事",
+            recent_messages=[
+                {
+                    "role": "assistant",
+                    "content": "我先确认一下：你想从具体发生的事说起，还是先说现在的感觉？",
+                    "metadata": {
+                        "clarification_needed": True,
+                        "clarification_reason": "vague_without_context",
+                        "control_category": "clarification_needed",
+                    },
+                }
+            ],
+        )
+
+        self.assertIsNotNone(goal_state)
+        self.assertEqual(goal_state["clarification_answer"], "主管那件事")
+        self.assertEqual(goal_state["clarification_reason"], "vague_without_context")
+        self.assertIn("主管那件事", goal_state["current_goal"])
 
 
 if __name__ == "__main__":

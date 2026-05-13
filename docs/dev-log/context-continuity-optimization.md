@@ -117,6 +117,75 @@ warnings 仍来自 LangGraph / LangChain 的既有提示，以及 `tests/test_pr
 
 warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
 
+### 澄清闭环与记忆冲突仲裁
+
+本轮继续优化“让模型更懂用户”的连续性路径，优先完成澄清闭环和记忆冲突仲裁，避免系统问完澄清问题后下一轮又丢失答案，也避免旧偏好压过用户后来的明确纠错。
+
+### 已完成改动
+
+#### 1. 澄清答案进入目标状态
+
+- `GraphRuntime` 和 `chat_service` 保留 `clarification_needed`、`clarification_reason` 与 `control_category` metadata。
+- `user_context_service.build_goal_state()` 新增 `recent_messages` 参数，识别最近一条助手澄清问题。
+- 用户下一轮回答如“主管那件事”时，会生成 `clarification_answer` 和 `current_goal = 用户澄清当前想谈：...`。
+- `chat_service` 在准备一轮对话时，把序列化后的最近消息传给 `build_goal_state()`，让澄清答案参与本轮回复和记忆检索。
+
+#### 2. 澄清答案沉淀为目标候选
+
+- `memory_candidate_extract` 在 `long_term` 模式下读取 `goal_state.clarification_answer`。
+- 即使用户输入不包含“我想 / 目标 / 理清楚”等显式目标词，也会生成 `goal` 候选。
+- `summary_only` 仍保持只写会话摘要，不引入长期目标候选。
+
+#### 3. 纠错记忆优先于冲突旧偏好
+
+- `retrieve_memories_for_turn()` 的检索 query 纳入 `clarification_answer`。
+- 当上下文包含“不要 / 别 / 先听 / 不是 / 不喜欢”等纠错信号时，`correction` 类型获得冲突仲裁加权。
+- 同一场景下 `preference` 和 `support_strategy` 轻度降权，避免旧偏好压过新的明确纠错。
+- `needs_review` 记忆检索降权，但不彻底隐藏，保留用户审核和恢复空间。
+
+#### 4. 写入纠错时标记冲突旧记忆
+
+- 写入或更新 `correction` 记忆后，会扫描同用户可见的 `preference` / `support_strategy`。
+- 若主题词明显重合，会把旧记忆标记为 `needs_review`。
+- 旧记忆的 `structured_value.memory_conflict` 会记录新纠错记忆 id、冲突原因、命中词和时间。
+- 标记操作写入 `MemoryOperation(action="feedback")`，保持审计可追踪。
+
+### 验证结果
+
+先写失败测试后运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_service.py::UserContextServiceTests::test_build_goal_state_binds_previous_clarification_answer tests/test_memory.py::ChatMemoryModeTests::test_clarification_answer_updates_goal_state_for_next_turn tests/test_response_memory_continuity.py::ResponseMemoryContinuityTests::test_memory_candidate_extract_creates_goal_from_clarification_answer tests/test_memory_service.py::MemoryServiceTests::test_retrieve_uses_correction_over_conflicting_preference tests/test_memory_service.py::MemoryServiceTests::test_upsert_correction_marks_conflicting_preference_for_review -q
+```
+
+红灯结果：`5 failed, 1 warning`，失败分别覆盖 `build_goal_state` 尚不接收 `recent_messages`、运行时未绑定澄清答案、澄清答案未生成目标候选、冲突检索未仲裁、旧偏好未标记。
+
+补齐实现后再次运行：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_service.py::UserContextServiceTests::test_build_goal_state_binds_previous_clarification_answer tests/test_memory.py::ChatMemoryModeTests::test_clarification_answer_updates_goal_state_for_next_turn tests/test_response_memory_continuity.py::ResponseMemoryContinuityTests::test_memory_candidate_extract_creates_goal_from_clarification_answer tests/test_memory_service.py::MemoryServiceTests::test_retrieve_uses_correction_over_conflicting_preference tests/test_memory_service.py::MemoryServiceTests::test_upsert_correction_marks_conflicting_preference_for_review -q
+```
+
+结果：`5 passed, 1 warning`。
+
+warning 仍来自 LangGraph / LangChain 的既有 pending deprecation 提示。
+
+本轮相关回归集合：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_service.py tests/test_response_memory_continuity.py tests/test_memory_service.py tests/test_memory.py tests/test_chat_idempotency.py tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`91 passed, 1 warning`。
+
+最终扩展回归集合：
+
+```powershell
+& 'E:\心理咨询agent\backend\.venv\Scripts\python.exe' -m pytest tests/test_user_context_service.py tests/test_memory.py tests/test_memory_service.py tests/test_privacy.py tests/test_chat_idempotency.py tests/test_response_memory_continuity.py tests/test_tooling.py tests/test_tooling_integration.py tests/test_conversation_control_rag.py tests/test_conversation_quality.py -q
+```
+
+结果：`142 passed, 2 warnings`。两个 warning 分别为既有 LangGraph pending deprecation 和 `TestHistory` pytest collection 提示。
+
 补充运行：
 
 ```powershell

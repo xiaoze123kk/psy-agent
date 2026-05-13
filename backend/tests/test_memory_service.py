@@ -338,6 +338,39 @@ class MemoryServiceTests(unittest.TestCase):
         for memory_type in ("goal", "profile", "correction", "preference"):
             self.assertLess(result_types.index(memory_type), summary_index)
 
+    def test_retrieve_uses_correction_over_conflicting_preference(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮我梳理边界。",
+            importance=3,
+        )
+        old_preference = self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户曾经喜欢直接给模板和建议。",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="继续这个",
+            memory_mode="long_term",
+            goal_state={
+                "current_goal": "用户澄清当前想谈：主管那件事",
+                "clarification_answer": "别直接给模板，先帮我梳理边界",
+            },
+            limit=2,
+        )
+
+        self.assertEqual(results[0]["memory_id"], target.id)
+        self.assertLess(
+            [item["memory_id"] for item in results].index(target.id),
+            [item["memory_id"] for item in results].index(old_preference.id),
+        )
+
     def test_memory_modes_and_high_risk_internal_safety_filtering(self) -> None:
         user = self.create_user(memory_mode="summary_only")
         summary = self.add_memory(user, memory_type="session_summary", content="last session about exam stress")
@@ -741,6 +774,42 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(written[0].memory_type, "correction")
         self.assertEqual(written[0].visibility, "user_visible")
         self.assertIn("纠错", written[0].tags)
+
+    def test_upsert_correction_marks_conflicting_preference_for_review(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        old_preference = self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户曾经喜欢直接给模板和建议。",
+            importance=5,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000022",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "correction",
+                        "content": "用户纠正：不要直接给模板，先帮我梳理边界。",
+                        "importance": 5,
+                        "tags": ["纠错"],
+                    }
+                ],
+            },
+        )
+        self.db.commit()
+        self.db.refresh(old_preference)
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertEqual(written[0].memory_type, "correction")
+        self.assertEqual(old_preference.review_state, "needs_review")
+        self.assertEqual(old_preference.structured_value["memory_conflict"]["superseded_by"], written[0].id)
 
     def test_upsert_blocks_sensitive_visible_and_allows_high_risk_safety_summary(self) -> None:
         user = self.create_user(memory_mode="long_term")

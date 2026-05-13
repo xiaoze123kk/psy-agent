@@ -580,15 +580,16 @@ async def _prepare_turn_context(
     profile_user_mode = getattr(user.profile, "user_mode", "adult") if user.profile else "adult"
     effective_user_mode = payload.user_mode.value if payload.user_mode is not None else profile_user_mode
     recent_messages = list_messages_for_thread(db, thread.id)[-RECENT_MESSAGE_CANDIDATE_LIMIT:]
+    serialized_recent_messages = _serialize_recent_messages(recent_messages)
     user_profile_digest = build_user_profile_digest(db, user_id=user.id) or {}
     goal_state = build_goal_state(
         db,
         user_id=user.id,
         current_text=payload.content,
         session_digest=thread.session_digest or {},
+        recent_messages=serialized_recent_messages,
     ) or {}
     memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
-    serialized_recent_messages = _serialize_recent_messages(recent_messages)
     pre_risk_level = sync_risk_classify(payload.content)
     memory_index = build_memory_index(
         db,
@@ -666,6 +667,11 @@ async def _persist_turn_result(
         "risk_source": assistant_result.get("risk_source", ""),
         "risk_reason_codes": assistant_result.get("risk_reason_codes", []),
         "requires_safety_check": bool(assistant_result.get("requires_safety_check", False)),
+        "control_category": assistant_result.get("control_category", "normal_support"),
+        "control_reasons": assistant_result.get("control_reasons", []),
+        "control_confidence": assistant_result.get("control_confidence", 0.0),
+        "clarification_needed": bool(assistant_result.get("clarification_needed", False)),
+        "clarification_reason": assistant_result.get("clarification_reason", ""),
         "suggested_actions": assistant_result.get("suggested_actions", []),
         "session_summary": assistant_result.get("session_summary", ""),
         "session_digest": assistant_result.get("session_digest", {}),

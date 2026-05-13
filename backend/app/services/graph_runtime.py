@@ -244,6 +244,8 @@ class GraphRuntime:
             "control_category": result.get("control_category", "normal_support"),
             "control_reasons": result.get("control_reasons", []),
             "control_confidence": result.get("control_confidence", 0.0),
+            "clarification_needed": bool(result.get("clarification_needed", False)),
+            "clarification_reason": str(result.get("clarification_reason", "")),
             "risk_formulation": result.get("risk_formulation", {}),
             "response_contract": result.get("response_contract", {}),
             "memory_policy": result.get("memory_policy", "write_safe_summary"),

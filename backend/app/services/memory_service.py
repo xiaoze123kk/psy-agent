@@ -104,6 +104,35 @@ TAG_KEYWORDS = {
     "纠错": ("不要", "别", "纠正", "先听", "听我说", "不喜欢", "不是这个意思"),
 }
 
+CORRECTION_SIGNAL_TERMS = (
+    "不要",
+    "别",
+    "纠正",
+    "先听",
+    "听我说",
+    "不是",
+    "不喜欢",
+    "先帮我",
+    "别直接",
+    "不要直接",
+)
+CONFLICT_MEMORY_TYPES = {"preference", "support_strategy"}
+CONFLICT_TOPIC_TERMS = (
+    "直接",
+    "模板",
+    "建议",
+    "分析",
+    "提问",
+    "追问",
+    "安抚",
+    "倾听",
+    "先听",
+    "梳理",
+    "边界",
+    "步骤",
+    "节奏",
+)
+
 
 def _clean_text(value: object, *, limit: int | None = None) -> str:
     text = " ".join(str(value or "").replace("\r", "\n").split())
@@ -381,7 +410,7 @@ def _query_for_retrieval(
     digest_text = " ".join(digest_parts)
     goal_parts: list[str] = []
     if isinstance(goal_state, dict):
-        for key in ("current_goal", "usage_goals", "goal_hints", "open_threads"):
+        for key in ("current_goal", "usage_goals", "goal_hints", "open_threads", "clarification_answer"):
             value = goal_state.get(key)
             if isinstance(value, list):
                 goal_parts.extend(str(item) for item in value if str(item).strip())
@@ -397,13 +426,33 @@ def _query_for_retrieval(
 def _goal_state_has_context(goal_state: dict[str, Any] | None) -> bool:
     if not isinstance(goal_state, dict):
         return False
-    for key in ("current_goal", "usage_goals", "goal_hints", "open_threads"):
+    for key in ("current_goal", "usage_goals", "goal_hints", "open_threads", "clarification_answer"):
         value = goal_state.get(key)
         if isinstance(value, str) and value.strip():
             return True
         if isinstance(value, list) and any(str(item).strip() for item in value):
             return True
     return False
+
+
+def _has_correction_signal(text: str) -> bool:
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in CORRECTION_SIGNAL_TERMS)
+
+
+def _conflict_topic_terms(text: str) -> set[str]:
+    lowered = text.lower()
+    return {term for term in CONFLICT_TOPIC_TERMS if term.lower() in lowered}
+
+
+def _conflict_arbitration_boost(memory_type: str, query_text: str) -> float:
+    if not _has_correction_signal(query_text):
+        return 0.0
+    if memory_type == "correction":
+        return 0.22
+    if memory_type in CONFLICT_MEMORY_TYPES and _conflict_topic_terms(query_text):
+        return -0.12
+    return 0.0
 
 
 def _type_boost(
@@ -441,6 +490,7 @@ def _type_boost(
             boost += 0.12
         elif memory_type == "session_summary":
             boost -= 0.04
+    boost += _conflict_arbitration_boost(memory_type, query_text)
     return boost
 
 
@@ -464,6 +514,8 @@ def _score_memory(
         + 0.06 * access_score
         + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
+    if memory.review_state == "needs_review":
+        score -= 0.08
     if similarity >= 0.18:
         reason = "与当前输入或近期上下文相似"
     elif memory.importance >= 4:
@@ -503,6 +555,8 @@ def _vector_score_memory(
         + 0.04 * access_score
         + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
+    if memory.review_state == "needs_review":
+        score -= 0.08
     return round(score, 4), "vector_semantic_match"
 
 
@@ -818,6 +872,74 @@ def _candidate_from_summary(default_summary: str, risk_level: str) -> dict[str, 
     }
 
 
+def _memory_conflicts_with_correction(memory: UserMemory, correction: UserMemory) -> bool:
+    if correction.memory_type != "correction" or memory.memory_type not in CONFLICT_MEMORY_TYPES:
+        return False
+    correction_text = _clean_text(correction.content)
+    if not _has_correction_signal(correction_text):
+        return False
+    correction_terms = _conflict_topic_terms(correction_text)
+    if not correction_terms:
+        return False
+    memory_terms = _conflict_topic_terms(_memory_document(memory))
+    return bool(correction_terms & memory_terms)
+
+
+def _mark_conflicting_memories_for_review(db: Session, *, user_id: str, correction: UserMemory) -> list[UserMemory]:
+    if correction.visibility != "user_visible" or correction.memory_type != "correction":
+        return []
+    now = utcnow()
+    rows = list(
+        db.scalars(
+            select(UserMemory)
+            .where(
+                UserMemory.user_id == user_id,
+                UserMemory.id != correction.id,
+                UserMemory.status == "active",
+                UserMemory.visibility == "user_visible",
+                UserMemory.memory_type.in_(tuple(CONFLICT_MEMORY_TYPES)),
+                UserMemory.review_state != "do_not_use",
+                or_(UserMemory.expires_at.is_(None), UserMemory.expires_at > now),
+            )
+            .order_by(desc(UserMemory.updated_at))
+            .limit(50)
+        )
+    )
+    marked: list[UserMemory] = []
+    correction_terms = sorted(_conflict_topic_terms(correction.content))
+    for memory in rows:
+        if not _memory_conflicts_with_correction(memory, correction):
+            continue
+        structured = dict(memory.structured_value or {})
+        conflict = structured.get("memory_conflict")
+        if isinstance(conflict, dict) and conflict.get("superseded_by") == correction.id:
+            continue
+        before = _snapshot(memory)
+        structured["memory_conflict"] = {
+            "superseded_by": correction.id,
+            "superseding_type": correction.memory_type,
+            "reason": "correction_conflict",
+            "terms": correction_terms[:6],
+            "detected_at": now.isoformat(),
+        }
+        memory.structured_value = structured
+        memory.review_state = "needs_review"
+        memory.updated_at = now
+        memory.version = int(memory.version or 1) + 1
+        db.flush()
+        log_memory_operation(
+            db,
+            user_id=user_id,
+            memory_id=memory.id,
+            action="feedback",
+            before_value=before,
+            after_value=_snapshot(memory),
+            reason=f"correction_conflict:{correction.id}",
+        )
+        marked.append(memory)
+    return marked
+
+
 def upsert_memory_candidates(
     db: Session,
     *,
@@ -915,6 +1037,7 @@ def upsert_memory_candidates(
             )
             written.append(existing)
             decisions.append({"status": "updated", "memory_id": existing.id, "memory_type": memory_type})
+            _mark_conflicting_memories_for_review(db, user_id=user.id, correction=existing)
             continue
 
         memory = UserMemory(
@@ -946,6 +1069,7 @@ def upsert_memory_candidates(
         )
         written.append(memory)
         decisions.append({"status": "created", "memory_id": memory.id, "memory_type": memory_type})
+        _mark_conflicting_memories_for_review(db, user_id=user.id, correction=memory)
     return written, decisions
 
 
