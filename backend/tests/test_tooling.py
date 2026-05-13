@@ -14,6 +14,9 @@ def make_state(
     crisis_resource_region: str = "CN",
     memory_index: list[dict] | None = None,
     retrieved_memories: list[dict] | None = None,
+    recent_messages: list[dict] | None = None,
+    last_summary: str = "",
+    session_summary: str = "",
 ) -> dict[str, object]:
     return {
         "risk_level": risk_level,
@@ -24,8 +27,9 @@ def make_state(
         "crisis_resource_region": crisis_resource_region,
         "memory_index": memory_index or [],
         "retrieved_memories": retrieved_memories or [],
-        "recent_messages": [],
-        "last_summary": "",
+        "recent_messages": recent_messages or [],
+        "last_summary": last_summary,
+        "session_summary": session_summary,
         "control_category": "normal_support",
         "route_priority": "P2_support",
     }
@@ -44,7 +48,7 @@ class ToolGateTests(unittest.TestCase):
         plan = build_dialogue_tool_plan(make_state())
         tool_names = [tool["function"]["name"] for tool in plan.tools]
 
-        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time", "get_weather"])
+        self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time", "get_weather", "summarize_session"])
         self.assertEqual(plan.allowed_tool_names, tool_names)
         self.assertNotIn("ask_knowledge", tool_names)
         self.assertFalse(plan.blocked_tool_names)
@@ -52,15 +56,15 @@ class ToolGateTests(unittest.TestCase):
     def test_high_risk_plan_limits_to_safety_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
 
-        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time"])
-        self.assertEqual(plan.allowed_tool_names, ["get_safety_resources", "get_current_time"])
+        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time", "summarize_session"])
+        self.assertEqual(plan.allowed_tool_names, ["get_safety_resources", "get_current_time", "summarize_session"])
         self.assertIn("search_memories", plan.blocked_tool_names)
         self.assertIn("save_memory_summary", plan.blocked_tool_names)
 
     def test_memory_mode_off_limits_to_safety_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(memory_mode="off"))
 
-        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time"])
+        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time", "summarize_session"])
 
 
 class MemoryToolHandlerTests(unittest.TestCase):
@@ -461,6 +465,193 @@ class GetWeatherToolTests(unittest.TestCase):
             result = plan.tool_handlers["get_weather"]({})
 
         self.assertEqual(result["city"], "Beijing")
+
+
+class SummarizeSessionToolTests(unittest.TestCase):
+    def test_summarize_session_spec_is_registered(self) -> None:
+        from app.services.tooling import TOOL_SPEC_BY_NAME
+
+        spec = TOOL_SPEC_BY_NAME.get("summarize_session")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.name, "summarize_session")
+        self.assertEqual(spec.enabled_by_default, True)
+        from app.services.tooling import ALL_RISK_LEVELS
+
+        self.assertEqual(spec.allowed_risk_levels, ALL_RISK_LEVELS)
+        tool_def = spec.to_deepseek_tool()
+        self.assertEqual(tool_def["function"]["name"], "summarize_session")
+        self.assertIn("format", tool_def["function"]["parameters"]["properties"])
+        self.assertIn("brief", tool_def["function"]["parameters"]["properties"]["format"]["enum"])
+        self.assertIn("detailed", tool_def["function"]["parameters"]["properties"]["format"]["enum"])
+        self.assertIn("themes_only", tool_def["function"]["parameters"]["properties"]["format"]["enum"])
+        self.assertIn("progress", tool_def["function"]["parameters"]["properties"]["format"]["enum"])
+
+    def test_summarize_session_appears_in_low_risk_plan(self) -> None:
+        plan = build_dialogue_tool_plan(make_state())
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+
+        self.assertIn("summarize_session", tool_names)
+        self.assertIn("summarize_session", plan.allowed_tool_names)
+        self.assertNotIn("summarize_session", plan.blocked_tool_names)
+
+    def test_summarize_session_available_at_high_risk(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertIn("summarize_session", tool_names)
+
+    def test_summarize_session_available_with_memory_off(self) -> None:
+        plan = build_dialogue_tool_plan(make_state(memory_mode="off"))
+
+        tool_names = [tool["function"]["name"] for tool in plan.tools]
+        self.assertIn("summarize_session", tool_names)
+
+    def test_summarize_session_brief_format_returns_overview(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "我最近工作压力很大", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "听起来你正在经历一段困难时期，愿意多说一些吗？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+                {"id": "m3", "role": "user", "content": "领导总是给我加活，我感觉喘不过气", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:01:00"},
+                {"id": "m4", "role": "assistant", "content": "这种感觉很正常，被过度要求会让人窒息。你觉得最让你难受的是什么？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:01:10"},
+            ],
+            last_summary="用户表达了职场压力",
+            session_summary="用户讨论了职场压力和与领导的沟通困难",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "brief"})
+
+        self.assertEqual(result["format"], "brief")
+        self.assertIn("turn_count", result)
+        self.assertGreater(result["turn_count"], 0)
+        self.assertIn("current_turn_topic", result)
+        self.assertIn("source", result)
+        self.assertEqual(result["source"], "conversation_state")
+
+    def test_summarize_session_detailed_format_includes_themes_and_mood(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "我今天感觉非常焦虑，睡不好", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "焦虑和失眠确实会相互影响。你愿意描述一下是什么让你感到焦虑吗？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+                {"id": "m3", "role": "user", "content": "主要是工作上的事情", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:01:00"},
+                {"id": "m4", "role": "assistant", "content": "我建议你可以试试每天睡前写下当天最困扰你的三件事，把焦虑从脑子里搬出来。", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:01:10"},
+            ],
+            last_summary="用户表达了焦虑和失眠",
+            session_summary="用户讨论焦虑和失眠问题，与工作压力相关",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "detailed"})
+
+        self.assertEqual(result["format"], "detailed")
+        self.assertIn("overview", result)
+        self.assertIn("topics", result)
+        self.assertIsInstance(result["topics"], list)
+        self.assertGreater(len(result["topics"]), 0)
+        self.assertIn("mood_indicators", result)
+        self.assertIsInstance(result["mood_indicators"], list)
+        self.assertIn("suggestions_given", result)
+        self.assertIsInstance(result["suggestions_given"], list)
+
+    def test_summarize_session_themes_only_returns_only_themes(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "我和家人的关系最近很紧张", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "家人关系是很多人都会面临的挑战，你愿意具体说说吗？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+            ],
+            last_summary="用户表达了家庭关系紧张",
+            session_summary="用户讨论家庭关系困难",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "themes_only"})
+
+        self.assertEqual(result["format"], "themes_only")
+        self.assertIn("themes", result)
+        self.assertIsInstance(result["themes"], list)
+        self.assertGreater(len(result["themes"]), 0)
+        self.assertNotIn("overview", result)
+        self.assertNotIn("suggestions_given", result)
+        self.assertNotIn("mood_indicators", result)
+
+    def test_summarize_session_progress_format_includes_topic_changes(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "上周我开始了散步，感觉有点效果", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "很高兴听到散步对你有帮助！具体感觉哪些方面改善了？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+                {"id": "m3", "role": "user", "content": "睡眠好像好了一点，但还是会半夜醒来", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:01:00"},
+            ],
+            last_summary="用户分享了散步的积极效果和睡眠改善",
+            session_summary="用户讨论了散步对焦虑的缓解效果和睡眠质量变化",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "progress"})
+
+        self.assertEqual(result["format"], "progress")
+        self.assertIn("topics", result)
+        self.assertIn("topic_changes", result)
+        self.assertIn("ongoing_themes", result)
+        self.assertIn("turn_count", result)
+
+    def test_summarize_session_defaults_to_brief_format(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "你好", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "你好！今天想聊些什么呢？", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+            ],
+            last_summary="用户发起了对话",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({})
+
+        self.assertEqual(result["format"], "brief")
+        self.assertIn("turn_count", result)
+
+    def test_summarize_session_empty_recent_messages_returns_minimal_output(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "detailed"})
+
+        self.assertEqual(result["format"], "detailed")
+        self.assertEqual(result["turn_count"], 0)
+        self.assertEqual(result["topics"], [])
+        self.assertIn("source", result)
+        self.assertEqual(result["source"], "conversation_state")
+
+    def test_summarize_session_extracts_suggestions_from_assistant_messages(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "我太累了", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+                {"id": "m2", "role": "assistant", "content": "我建议你给自己一些休息的时间，不妨试试每天安排半小时的安静时间。你可以试试正念冥想来帮助放松。", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:05"},
+            ],
+            last_summary="用户表达了疲惫",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["summarize_session"]({"format": "detailed"})
+
+        self.assertIn("suggestions_given", result)
+        self.assertIsInstance(result["suggestions_given"], list)
+        self.assertGreater(len(result["suggestions_given"]), 0)
+
+    def test_summarize_session_records_preview(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"id": "m1", "role": "user", "content": "帮我总结一下", "input_type": "text", "risk_level": "L0", "metadata": {}, "created_at": "2026-05-12T10:00:00"},
+            ],
+            last_summary="用户请求总结",
+        )
+        plan = build_dialogue_tool_plan(state)
+
+        plan.tool_handlers["summarize_session"]({"format": "detailed"})
+
+        previews = plan.audit_capture.previews
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0]["name"], "summarize_session")
+        self.assertEqual(previews[0]["status"], "completed")
 
 
 if __name__ == "__main__":

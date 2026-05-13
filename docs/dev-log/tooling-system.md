@@ -2,7 +2,7 @@
 
 ## 工具总览
 
-当前系统共有 **5 个 Tool**，全部基于 DeepSeek/OpenAI function-calling 协议，定义在 `backend/app/services/tooling.py`，由 LLM 在对话中自主调用。
+当前系统共有 **7 个 Tool**（6 个正式 + 1 个设计中），全部基于 DeepSeek/OpenAI function-calling 协议，定义在 `backend/app/services/tooling.py`，由 LLM 在对话中自主调用。
 
 | # | 工具名 | 用途 | 风险等级 | 需要知识库开关 | 状态 |
 |---|--------|------|----------|---------------|------|
@@ -12,6 +12,7 @@
 | 4 | `web_search` | 搜索互联网获取实时心理支持资源、热线和专业信息 | L0-L1 | 否 | 正式 |
 | 5 | `get_current_time` | 获取当前 UTC/本地时间、星期、时区、会话已持续时间 | L0-L3 | 否 | 正式 |
 | 6 | `get_weather` | 获取城市当前天气（wttr.in 免费 API），辅助理解用户情绪与天气的关联 | L0-L1 | 否 | 正式 |
+| 7 | `summarize_session` | 面向用户端的会话总结，返回主题/情绪/建议的结构化数据 | L0-L3 | 否 | 正式 |
 | - | `ask_knowledge` | 知识库查询（占位，v1 禁用） | L0-L1 | 是 | 禁用 |
 
 ### 工具门控规则
@@ -90,6 +91,27 @@
 
 ---
 
+## summarize_session 工具
+
+### 设计 (2026-05-12)
+
+- **定位**：面向用户端的会话总结工具，与 `save_memory_summary`（写后台记忆）互补
+- **设计文档**：`docs/superpowers/specs/2026-05-12-summarize-session-design.md`
+- **数据来源**：AgentState 内已有字段（`recent_messages`, `last_summary`, `session_summary`, `intent`），不做新 LLM 调用
+- **参数**：`format` — `brief`（1-2句概述）、`detailed`（主题/情绪/建议完整总结）、`themes_only`（仅核心主题）、`progress`（与之前轮次对比进展）
+- **副作用**：无（纯读操作，不写数据库）
+- **可用范围**：L0-L3（全部风险等级），无需 memory_mode 或 knowledge_enabled
+- **状态**：已实现
+- **实现细节**：
+  - **话题提取**：用户消息 2-4 字滑动窗口 + 摘要字段加权（2 倍），去停用词，按频率取前 6
+  - **建议提取**：正则匹配 `建议`/`可以试试`/`不妨` 引导的短句（3-60 字）
+  - **情绪标注**：关键词匹配 23 个常见情绪词
+  - **默认格式**：无参调用时默认 `brief`
+  - **preview**：记录 format / theme_count / turn_count / mood_count
+- **改动文件**：`tooling.py`（ToolSpec + handler + ToolGate + prompt_hint），`tests/test_tooling.py`（12 test cases）
+
+---
+
 ## 小目标管理 (goal memory type)
 
 ### 实现 (2026-05-12)
@@ -110,12 +132,12 @@
 
 ```
 tooling.py
-├── TOOL_SPECS          → 6 个 ToolSpec 定义（tool 元数据 + 参数 schema）
+├── TOOL_SPECS          → 7 个 ToolSpec 定义（tool 元数据 + 参数 schema）
 ├── ToolGate            → 按 risk_level / memory_mode / knowledge_enabled 控制可用性
 
 ```
 tooling.py
-├── TOOL_SPECS          → 5 个 ToolSpec 定义（tool 元数据 + 参数 schema）
+├── TOOL_SPECS          → 7 个 ToolSpec 定义（tool 元数据 + 参数 schema）
 ├── ToolGate            → 按 risk_level / memory_mode / knowledge_enabled 控制可用性
 ├── DialogueToolPlan    → 一次性组装 tools + handlers + prompt_hint + audit
 ├── _build_*_handler    → 每个 tool 的 handler factory（闭包捕获 state / capture）
@@ -138,8 +160,8 @@ search_service.py
 
 | 测试文件 | 测试数 | 覆盖内容 |
 |----------|--------|----------|
-| `tests/test_tooling.py` | 31 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递、goal memory candidate |
+| `tests/test_tooling.py` | 43 | ToolGate 规则、所有 handler 行为、audit capture、错误状态传递、goal memory candidate、summarize_session（12 tests） |
 | `tests/test_search_service.py` | 29 | 清洗、去重、截断、评分、低信息过滤、错误处理、超时、error tuple |
 | `tests/test_tooling_integration.py` | 1 | 端到端 tool audit + memory patch 流转 |
 
-**全量**：309 passed, 2 skipped, 0 failures
+**全量**：330 passed, 2 skipped, 0 failures

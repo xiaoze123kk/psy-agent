@@ -147,6 +147,7 @@ class ToolGate:
         names.append("web_search")
         names.append("get_current_time")
         names.append("get_weather")
+        names.append("summarize_session")
         if self.knowledge_enabled and not high_risk:
             names.append("ask_knowledge")
         return [name for name in names if self.allows(name)]
@@ -169,6 +170,8 @@ class ToolGate:
             return False
         if self.risk_level not in spec.allowed_risk_levels:
             return False
+        if name == "summarize_session":
+            return True
         if self.risk_level in HIGH_RISK_LEVELS:
             return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
         if self.memory_mode == "off":
@@ -352,6 +355,25 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                 "city": {
                     "type": "string",
                     "description": "City name, e.g. 'Beijing', 'Shanghai', 'Chengdu'.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
+        name="summarize_session",
+        description="Summarize the current conversation session for the user. "
+                    "Returns an overview, key topics, mood indicators, and suggestions "
+                    "that have already been discussed. Read-only, no side effects.",
+        allowed_risk_levels=ALL_RISK_LEVELS,
+        parameters={
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["brief", "detailed", "themes_only", "progress"],
+                    "description": "brief: short overview; detailed: full summary with themes/mood/suggestions; "
+                                   "themes_only: core themes only; progress: changes compared to earlier turns.",
                 },
             },
             "additionalProperties": False,
@@ -667,6 +689,185 @@ def _build_get_weather_handler(capture: ToolAuditCapture) -> ToolHandler:
     return get_weather_tool
 
 
+_SUGGESTION_PATTERNS = [
+    re.compile(r"建议\S{0,2}(.+?)(?:[。；！？\n]|$)"),
+    re.compile(r"可以试试(.+?)(?:[。；！？\n]|$)"),
+    re.compile(r"不妨(.+?)(?:[。；！？\n]|$)"),
+]
+_STOP_WORDS = frozenset({"的", "了", "是", "在", "我", "你", "他", "她", "它", "们", "这", "那",
+                          "和", "与", "或", "就", "也", "都", "要", "会", "能", "不", "很", "吗",
+                          "呢", "吧", "啊", "哦", "嗯", "还", "有", "没", "但", "只", "个", "对",
+                          "上", "下", "中", "了", "着", "过"})
+
+
+def _extract_suggestions(assistant_messages: list[dict[str, Any]]) -> list[str]:
+    suggestions: list[str] = []
+    for msg in assistant_messages:
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            continue
+        for pattern in _SUGGESTION_PATTERNS:
+            for match in pattern.finditer(content):
+                text = match.group(1).strip()
+                if len(text) >= 3 and len(text) <= 60:
+                    suggestions.append(text)
+    return list(dict.fromkeys(suggestions))
+
+
+def _extract_topics(
+    recent_messages: list[dict[str, Any]],
+    last_summary: str,
+    session_summary: str,
+) -> list[str]:
+    user_texts: list[str] = []
+    for msg in recent_messages:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            user_texts.append(content)
+    combined = " ".join(user_texts)
+    chars: list[str] = []
+    for ch in combined:
+        if "\u4e00" <= ch <= "\u9fff":
+            chars.append(ch)
+        elif chars and chars[-1] != " ":
+            chars.append(" ")
+    text = "".join(chars)
+    words: list[str] = []
+    i = 0
+    while i + 1 < len(text):
+        if text[i] == " ":
+            i += 1
+            continue
+        for wl in (4, 3, 2):
+            end = i + wl
+            if end <= len(text):
+                w = text[i:end].strip()
+                if len(w) >= 2 and " " not in w:
+                    words.append(w)
+                    break
+        i += 1
+    freq: dict[str, int] = {}
+    for w in words:
+        if w not in _STOP_WORDS:
+            freq[w] = freq.get(w, 0) + 1
+    for summary_words in [last_summary, session_summary]:
+        for ch in summary_words:
+            if "\u4e00" <= ch <= "\u9fff":
+                for wl in (4, 3, 2):
+                    idx = summary_words.find(ch)
+                    if idx + wl <= len(summary_words):
+                        w = summary_words[idx:idx + wl]
+                        if w not in _STOP_WORDS and len(w) >= 2:
+                            freq[w] = freq.get(w, 0) + 2
+    sorted_topics = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+    return [topic for topic, _ in sorted_topics[:6]]
+
+
+def _extract_mood_indicators(recent_messages: list[dict[str, Any]]) -> list[str]:
+    mood_keywords = ["焦虑", "紧张", "担心", "害怕", "恐惧", "难过", "悲伤", "沮丧",
+                     "生气", "愤怒", "烦躁", "疲惫", "累", "无力", "无助", "绝望",
+                     "平静", "放松", "开心", "高兴", "期待", "感激", "希望"]
+    all_text = " ".join(
+        msg.get("content", "") or ""
+        for msg in recent_messages
+        if msg.get("role") == "user"
+    )
+    found: list[str] = []
+    for kw in mood_keywords:
+        if kw in all_text:
+            found.append(kw)
+    return list(dict.fromkeys(found))
+
+
+def _build_summarize_session_handler(state: Mapping[str, Any], capture: ToolAuditCapture) -> ToolHandler:
+    def summarize_session(arguments: dict[str, Any]) -> dict[str, Any]:
+        fmt = _clean_text(arguments.get("format"), limit=16) or "brief"
+        if fmt not in ("brief", "detailed", "themes_only", "progress"):
+            fmt = "brief"
+
+        recent_messages = state.get("recent_messages")
+        if not isinstance(recent_messages, list):
+            recent_messages = []
+        turn_count = sum(1 for msg in recent_messages if isinstance(msg, dict) and msg.get("role") == "user")
+        last_summary = str(state.get("last_summary") or "")
+        session_summary = str(state.get("session_summary") or "")
+
+        topics = _extract_topics(recent_messages, last_summary, session_summary)
+
+        if fmt == "themes_only":
+            result: dict[str, Any] = {
+                "format": "themes_only",
+                "themes": topics,
+                "source": "conversation_state",
+            }
+            capture.record_preview("summarize_session", status="completed", preview={"format": fmt, "theme_count": len(topics)})
+            return result
+
+        user_messages = [msg for msg in recent_messages if isinstance(msg, dict) and msg.get("role") == "user"]
+        assistant_messages = [msg for msg in recent_messages if isinstance(msg, dict) and msg.get("role") == "assistant"]
+        current_turn_topic = user_messages[-1].get("content", "")[:80] if user_messages else ""
+
+        if fmt == "brief":
+            overview_parts: list[str] = []
+            if session_summary:
+                overview_parts.append(session_summary)
+            elif last_summary:
+                overview_parts.append(last_summary)
+            overview = ". ".join(overview_parts) if overview_parts else ""
+            result = {
+                "format": "brief",
+                "overview": overview,
+                "topics": topics,
+                "theme_count": len(topics),
+                "turn_count": turn_count,
+                "current_turn_topic": current_turn_topic,
+                "source": "conversation_state",
+            }
+            capture.record_preview("summarize_session", status="completed", preview={"format": fmt, "theme_count": len(topics), "turn_count": turn_count})
+            return result
+
+        if fmt == "detailed":
+            suggestions = _extract_suggestions(assistant_messages)
+            mood = _extract_mood_indicators(recent_messages)
+            overview_parts = []
+            if session_summary:
+                overview_parts.append(session_summary)
+            elif last_summary:
+                overview_parts.append(last_summary)
+            overview = ". ".join(overview_parts) if overview_parts else ""
+            result = {
+                "format": "detailed",
+                "overview": overview,
+                "topics": topics,
+                "theme_count": len(topics),
+                "turn_count": turn_count,
+                "current_turn_topic": current_turn_topic,
+                "suggestions_given": suggestions,
+                "mood_indicators": mood,
+                "source": "conversation_state",
+            }
+            capture.record_preview("summarize_session", status="completed", preview={"format": fmt, "theme_count": len(topics), "turn_count": turn_count, "mood_count": len(mood)})
+            return result
+
+        # progress
+        suggestions = _extract_suggestions(assistant_messages)
+        mood = _extract_mood_indicators(recent_messages)
+        result = {
+            "format": "progress",
+            "topics": topics,
+            "topic_changes": [],
+            "ongoing_themes": topics,
+            "turn_count": turn_count,
+            "source": "conversation_state",
+        }
+        capture.record_preview("summarize_session", status="completed", preview={"format": fmt, "theme_count": len(topics), "turn_count": turn_count})
+        return result
+
+    return summarize_session
+
+
 def _tool_prompt_hint(tool_names: list[str]) -> str:
     if not tool_names:
         return ""
@@ -677,6 +878,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
         "get_current_time": "get_current_time: return current UTC/local time, weekday, timezone, and session elapsed seconds.",
         "get_weather": "get_weather: get current weather for a city via wttr.in; use sparingly, only when weather context helps understand user's mood or situation.",
+        "summarize_session": "summarize_session: summarize the current conversation for the user on request; read-only.",
     }
     lines = [
         "",
@@ -724,6 +926,8 @@ def build_dialogue_tool_plan(
         handlers["get_current_time"] = _build_get_current_time_handler(capture)
     if "get_weather" in allowed_names:
         handlers["get_weather"] = _build_get_weather_handler(capture)
+    if "summarize_session" in allowed_names:
+        handlers["summarize_session"] = _build_summarize_session_handler(state, capture)
 
     specs = [TOOL_SPEC_BY_NAME[name] for name in allowed_names if name in TOOL_SPEC_BY_NAME]
     return DialogueToolPlan(
@@ -804,11 +1008,16 @@ async def run_dialogue_reply_with_tools(
     system_content = system_prompt
     if plan.prompt_hint:
         system_content = f"{system_content}\n{plan.prompt_hint}"
+    reply_messages = messages or [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_prompt},
+    ]
+    if reply_messages:
+        first_message = dict(reply_messages[0])
+        first_message["content"] = system_content
+        reply_messages = [first_message, *[dict(message) for message in reply_messages[1:]]]
     tool_result: ToolChatResult = await deepseek_client.chat_with_tools(
-        [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_prompt},
-        ],
+        reply_messages,
         tools=plan.tools,
         tool_handlers=plan.tool_handlers,
         tool_choice="auto",
