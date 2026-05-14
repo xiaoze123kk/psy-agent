@@ -66,19 +66,22 @@ MILVUS_COLLECTION_PREFIX=psych_agent
 EMBEDDING_PROVIDER=local
 EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIM=1024
+EMBEDDING_INDEX_VERSION=rag-layered-v1
 LOCAL_EMBEDDING_DEVICE=auto
 LOCAL_EMBEDDING_BATCH_SIZE=8
 LOCAL_EMBEDDING_MAX_LENGTH=1024
+LOCAL_EMBEDDING_QUERY_MAX_LENGTH=512
+LOCAL_EMBEDDING_DOCUMENT_MAX_LENGTH=2048
 LOCAL_EMBEDDING_USE_FP16=auto
 ```
 
-Local embedding dependencies are kept separate from the base backend install because they download larger ML packages:
+本地 embedding 依赖会下载较大的机器学习包，因此和基础后端依赖分开安装：
 
 ```bash
 pip install -r requirements-local-embedding.txt
 ```
 
-`BAAI/bge-m3` is downloaded lazily on the first embedding request. CPU works but is slower; with CUDA available, `LOCAL_EMBEDDING_DEVICE=auto` uses GPU and enables fp16 automatically. To use DashScope instead, set `EMBEDDING_PROVIDER=dashscope`, `EMBEDDING_MODEL=text-embedding-v4`, and `DASHSCOPE_API_KEY`, then recreate the Milvus index so vectors are not mixed across embedding models.
+当前默认继续使用 `BAAI/bge-m3`。首次 embedding 请求会按需下载模型；CPU 可以运行但较慢，CUDA 可用时 `LOCAL_EMBEDDING_DEVICE=auto` 会优先使用 GPU 并自动启用 fp16。运行时 query embedding 使用 `LOCAL_EMBEDDING_QUERY_MAX_LENGTH`，语料重建/入库使用 `LOCAL_EMBEDDING_DOCUMENT_MAX_LENGTH`。修改 `EMBEDDING_PROVIDER`、`EMBEDDING_MODEL`、`EMBEDDING_DIM` 或 `EMBEDDING_INDEX_VERSION` 后，需要重建 Milvus 索引，避免不同向量空间混用。
 
 To smoke test the configured embedding provider:
 
@@ -154,9 +157,9 @@ python scripts/import_knowledge_sources.py --source nimh_public_domain --input-j
 
 Supported source keys are `nimh_public_domain`, `medlineplus_public_domain`, `childmind_mhdb`, and `internal_curated`.
 
-## Milvus Indexing
+## Milvus 索引
 
-Milvus is a rebuildable index. PostgreSQL remains the source of truth for content, source, license, and review state.
+Milvus 是可重建索引。PostgreSQL 仍然是内容、来源、许可证和审核状态的真实来源。
 
 To create collections and index published knowledge chunks:
 
@@ -164,28 +167,38 @@ To create collections and index published knowledge chunks:
 python scripts/index_milvus.py --target knowledge
 ```
 
-After changing `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, or `EMBEDDING_DIM`, rebuild the affected Milvus collections:
+修改 `EMBEDDING_PROVIDER`、`EMBEDDING_MODEL`、`EMBEDDING_DIM`、`EMBEDDING_INDEX_VERSION`、chunking metadata 或 Milvus scalar fields 后，重建受影响的 Milvus collection：
 
 ```bash
 python scripts/index_milvus.py --target all --recreate
+python scripts/index_milvus.py --target counseling --recreate
 ```
 
-On CPU, full BGE-M3 indexing can be slow. If a long run is interrupted, resume only missing vectors:
+CPU 上完整 BGE-M3 索引会比较慢。如果长任务中断，可以只补当前 `embedding_key` 下缺失的向量：
 
 ```bash
 python scripts/index_milvus.py --target knowledge --missing-only
 ```
 
-To import reviewed Chinese counseling dialogue corpora and index them as style examples:
+导入已审核的中文咨询对话语料时，系统会生成三层 RAG chunk：
+
+- `turn_pair`：单个 user-assistant 轮次，主要用于语气、节奏和局部回应风格参考。
+- `process_segment`：3-5 个轮次组成的咨询过程片段，默认 1 个 pair overlap，用于理解情绪变化和咨询师引导路径。
+- `session_sketch`：脱敏后的整段咨询地图，只保留主题、情绪线索和干预路径，不保存逐字原文。
+
+运行时默认检索 `1` 个 `process_segment` 和 `2` 个 `turn_pair`；续聊类 query 会允许 `1` 个 `session_sketch`、`1` 个 `process_segment` 和 `1` 个 `turn_pair`。prompt 中会优先展示 `display_text`，不会把较长的 `retrieval_text/content` 原样放进模型上下文。
+
+导入并索引已审核的中文咨询对话语料：
 
 ```bash
 python scripts/import_counseling_corpus.py --source smilechat --input-json data/smilechat.json --limit 20 --dry-run
 python scripts/import_counseling_corpus.py --source smilechat --input-json data/smilechat.json --publish-reviewed
+python scripts/import_counseling_corpus.py --source smilechat --input-dir data/counseling_corpus/smilechat/data --publish-reviewed
 ```
 
 Supported counseling source keys are `soulchat_corpus`, `smilechat`, `cpsycound`, and `psydt_corpus`. PsyQA official full data and `efaqa-corpus-zh` are intentionally not default imports because they require separate authorization or usage checks.
 
-If PostgreSQL is unavailable and you only need the local counseling corpora in Milvus for retrieval-augmented counselor style examples, index directly from `backend/data/counseling_corpus`:
+如果 PostgreSQL 不可用，只需要把本地咨询语料写入 Milvus，可从 `backend/data/counseling_corpus` 直接索引：
 
 ```bash
 python scripts/index_counseling_corpus_direct.py --source smilechat --limit 20

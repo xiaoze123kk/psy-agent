@@ -171,15 +171,17 @@ class EmbeddingClient:
 
         try:
             max_length = self._local_max_length_for_kind(kind)
-            output = model.encode(
-                texts,
-                batch_size=self.local_batch_size,
-                max_length=max_length,
-                kind=kind,
-                return_dense=True,
-                return_sparse=False,
-                return_colbert_vecs=False,
-            )
+            encode_kwargs = {
+                "batch_size": self.local_batch_size,
+                "max_length": max_length,
+                "return_dense": True,
+                "return_sparse": False,
+                "return_colbert_vecs": False,
+            }
+            if kind == "query" and hasattr(model, "encode_queries"):
+                output = model.encode_queries(texts, **encode_kwargs)
+            else:
+                output = model.encode(texts, **encode_kwargs)
         except Exception as exc:  # pragma: no cover - depends on optional model runtime
             logger.warning("Local embedding request failed: %s", exc)
             return None

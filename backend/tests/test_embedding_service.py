@@ -32,7 +32,20 @@ class FakeBGEM3FlagModel:
         type(self).init_kwargs = kwargs
 
     def encode(self, texts: list[str], **kwargs: object) -> dict[str, list[list[float]]]:
-        type(self).encode_calls.append({"texts": texts, **kwargs})
+        if "kind" in kwargs:
+            raise TypeError("encode() got an unexpected keyword argument 'kind'")
+        type(self).encode_calls.append({"method": "encode", "texts": texts, **kwargs})
+        return {
+            "dense_vecs": [
+                [float(index + 1)] * type(self).vector_dim
+                for index, _ in enumerate(texts)
+            ]
+        }
+
+    def encode_queries(self, texts: list[str], **kwargs: object) -> dict[str, list[list[float]]]:
+        if "kind" in kwargs:
+            raise TypeError("encode_queries() got an unexpected keyword argument 'kind'")
+        type(self).encode_calls.append({"method": "encode_queries", "texts": texts, **kwargs})
         return {
             "dense_vecs": [
                 [float(index + 1)] * type(self).vector_dim
@@ -86,8 +99,8 @@ class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FakeBGEM3FlagModel.init_kwargs["use_fp16"], False)
         self.assertNotIn("batch_size", FakeBGEM3FlagModel.init_kwargs)
         self.assertNotIn("return_dense", FakeBGEM3FlagModel.init_kwargs)
+        self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["method"], "encode")
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["batch_size"], 2)
-        self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["kind"], "document")
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["max_length"], 64)
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["return_dense"], True)
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["return_sparse"], False)
@@ -136,9 +149,9 @@ class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
             else:
                 sys.modules["FlagEmbedding"] = original_module
 
-        self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["kind"], "query")
+        self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["method"], "encode_queries")
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["max_length"], 16)
-        self.assertEqual(FakeBGEM3FlagModel.encode_calls[1]["kind"], "document")
+        self.assertEqual(FakeBGEM3FlagModel.encode_calls[1]["method"], "encode")
         self.assertEqual(FakeBGEM3FlagModel.encode_calls[1]["max_length"], 64)
 
     async def test_embedding_key_includes_index_version_when_configured(self) -> None:
