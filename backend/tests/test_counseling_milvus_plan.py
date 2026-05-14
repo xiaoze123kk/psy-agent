@@ -202,6 +202,31 @@ class CounselingCorpusImportTests(unittest.TestCase):
         self.assertIn("[手机号]", parsed[0].user_text)
         self.assertIn("SMILECHAT", counseling_vector_service.COUNSELING_CORPUS_SOURCES["smilechat"]["name"])
 
+    def test_parser_builds_layered_chunks_for_multi_turn_dialogue(self) -> None:
+        item = {
+            "id": "case-layered",
+            "normalizedTag": "工作压力",
+            "messages": [
+                {"role": "user", "content": "我最近压力很大，晚上睡不好"},
+                {"role": "assistant", "content": "听起来你已经撑了很久，我们先慢一点。"},
+                {"role": "user", "content": "主要是领导一直临时加活"},
+                {"role": "assistant", "content": "你像是被不断打断，也很难有掌控感。"},
+                {"role": "user", "content": "我不知道怎么拒绝"},
+                {"role": "assistant", "content": "我们可以先把你最想守住的边界说清楚。"},
+            ],
+        }
+
+        parsed = import_counseling_corpus._parse_item(item, 0, source_key="smilechat")
+        chunk_types = [example.metadata["chunk_type"] for example in parsed]
+
+        self.assertEqual(chunk_types.count("turn_pair"), 3)
+        self.assertEqual(chunk_types.count("process_segment"), 1)
+        self.assertEqual(chunk_types.count("session_sketch"), 1)
+        self.assertEqual(parsed[0].external_id, "smilechat_case-layered::turn")
+        self.assertEqual(parsed[0].metadata["original_external_id"], "smilechat_case-layered")
+        self.assertIn("display_text", parsed[-1].metadata)
+        self.assertNotIn("领导一直临时加活", parsed[-1].metadata["display_text"])
+
     def test_parser_filters_high_risk_examples(self) -> None:
         item = {
             "id": "case-2",

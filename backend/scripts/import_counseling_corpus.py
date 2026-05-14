@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from app.db.models import CounselingCorpusSource, CounselingExampleChunk, utcnow
 from app.db.session import SessionLocal, init_db
+from app.services.counseling_chunking import DialoguePair, LayeredChunk, build_layered_chunks
 from app.services.counseling_vector_service import COUNSELING_CORPUS_SOURCES
 from app.services.vector_index_service import index_counseling_chunks
 
@@ -130,6 +131,21 @@ def _content(context_text: str | None, user_text: str, assistant_text: str) -> s
     return "\n".join(parts)
 
 
+def _parsed_from_layered_chunk(chunk: LayeredChunk) -> ParsedExample:
+    return ParsedExample(
+        external_id=chunk.external_id,
+        chunk_index=chunk.chunk_index,
+        mode=chunk.mode,
+        topic=chunk.topic,
+        user_text=chunk.user_text,
+        assistant_text=chunk.assistant_text,
+        context_text=chunk.context_text,
+        content=chunk.content,
+        tags=chunk.tags,
+        metadata=chunk.metadata,
+    )
+
+
 def _topic_from_item(item: dict[str, Any]) -> str | None:
     for key in ("topic", "tag", "normalizedTag", "category", "label"):
         value = str(item.get(key) or "").strip()
@@ -183,9 +199,8 @@ def _parse_text_transcript(text: str) -> list[dict[str, str]]:
 
 
 def _pairs_from_messages(messages: list[dict[str, str]], external_id: str, topic: str | None) -> list[ParsedExample]:
-    parsed: list[ParsedExample] = []
+    pairs: list[DialoguePair] = []
     prior: list[str] = []
-    pair_index = 0
     waiting_user: str | None = None
     for message in messages:
         role = message["role"]
@@ -199,25 +214,17 @@ def _pairs_from_messages(messages: list[dict[str, str]], external_id: str, topic
             context_lines = prior[:-1][-4:]
             context_text = "\n".join(context_lines) if context_lines else None
             if _is_safe_example(waiting_user, assistant_text):
-                mode = _classify_mode(waiting_user, assistant_text)
-                parsed.append(
-                    ParsedExample(
-                        external_id=external_id,
-                        chunk_index=pair_index,
-                        mode=mode,
-                        topic=topic,
+                pairs.append(
+                    DialoguePair(
                         user_text=waiting_user,
                         assistant_text=assistant_text,
-                        context_text=context_text,
-                        content=_content(context_text, waiting_user, assistant_text),
-                        tags=[tag for tag in [mode, topic] if tag],
-                        metadata={"parser": "messages"},
+                        context_text=context_text or "",
                     )
                 )
-                pair_index += 1
             prior.append(f"咨询师：{assistant_text}")
             waiting_user = None
-    return parsed
+    chunks = build_layered_chunks(pairs, external_id=external_id, topic=topic, parser="messages")
+    return [_parsed_from_layered_chunk(chunk) for chunk in chunks]
 
 
 def _parse_smilechat_flat_array(items: list[dict[str, Any]], external_id: str, topic: str | None) -> list[ParsedExample]:
@@ -284,21 +291,13 @@ def _parse_item(item: dict[str, Any], index: int, source_key: str = "") -> list[
     question = _clean_text(item.get("question") or item.get("input") or item.get("instruction") or item.get("prompt"))
     answer = _clean_text(item.get("answer") or item.get("output") or item.get("response"))
     if question and answer and _is_safe_example(question, answer):
-        mode = _classify_mode(question, answer)
-        return [
-            ParsedExample(
-                external_id=external_id,
-                chunk_index=0,
-                mode=mode,
-                topic=topic,
-                user_text=question,
-                assistant_text=answer,
-                context_text=None,
-                content=_content(None, question, answer),
-                tags=[tag for tag in [mode, topic] if tag],
-                metadata={"parser": "qa"},
-            )
-        ]
+        chunks = build_layered_chunks(
+            [DialoguePair(user_text=question, assistant_text=answer)],
+            external_id=external_id,
+            topic=topic,
+            parser="qa",
+        )
+        return [_parsed_from_layered_chunk(chunk) for chunk in chunks]
     return []
 
 
