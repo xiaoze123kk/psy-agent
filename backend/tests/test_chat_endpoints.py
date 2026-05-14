@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,6 +16,7 @@ from app.api.v1.endpoints import chat
 from app.core.security import create_access_token
 from app.db.models import Base, ConversationThread, Message, User
 from app.db.session import get_db_session
+from app.schemas.chat import SendMessageRequest
 
 
 class ChatEndpointTests(unittest.TestCase):
@@ -180,6 +183,27 @@ class ChatEndpointTests(unittest.TestCase):
         self.assertLess(token_pos, final_pos)
         self.assertIn('"node": "risk_classifier"', body)
         self.assertIn('"assistant_text": "我在。"', body)
+
+    def test_stream_message_returns_response_before_turn_finishes(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+
+        async def slow_stream(db: Session, **kwargs):
+            yield "accepted", {"thread_id": kwargs["thread"].id, "status": "accepted"}
+            await asyncio.sleep(10)
+
+        async def call_endpoint():
+            return await chat.stream_message(
+                thread.id,
+                SendMessageRequest(content="我今天有点累"),
+                user,
+                self.db,
+            )
+
+        with patch("app.api.v1.endpoints.chat.process_message_turn_stream", new=slow_stream):
+            response = asyncio.run(asyncio.wait_for(call_endpoint(), timeout=0.2))
+
+        self.assertIsInstance(response, StreamingResponse)
 
     def test_stream_failed_no_reply_emits_null_assistant_message_id(self) -> None:
         user = self.create_user()

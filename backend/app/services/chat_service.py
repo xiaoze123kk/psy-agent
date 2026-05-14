@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextlib import suppress
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
@@ -957,9 +958,12 @@ async def process_message_turn_stream(
         finally:
             if not next_event.done():
                 next_event.cancel()
+                with suppress(asyncio.CancelledError):
+                    await next_event
             aclose = getattr(graph_events, "aclose", None)
             if callable(aclose):
-                await aclose()
+                with suppress(RuntimeError):
+                    await aclose()
 
         if assistant_result is None:
             assistant_result = _fallback_assistant_result(

@@ -54,6 +54,7 @@ SAFE_DIRECT_KEYS = {
     "memory_write_decisions",
     "node_name",
     "rag_skipped_reason",
+    "rag_trace_summary",
     "rag_used",
     "requires_safety_check",
     "retryable",
@@ -207,6 +208,13 @@ def _first_present(*values: object) -> object | None:
         if value not in (None, "", [], {}):
             return value
     return None
+
+
+def _optional_text(value: object) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    text = str(value)
+    return "" if text.lower() == "none" else text
 
 
 def _latest_trace_value(graph_trace: list[dict[str, object]], key: str) -> object | None:
@@ -381,6 +389,13 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
     rag_used = _as_bool(result.get("rag_used"))
     if rag_used is None:
         rag_used = _latest_trace_bool(graph_trace, "rag_used") or False
+    rag_trace_summary = _sanitize_summary(
+        _first_present(
+            result.get("rag_trace_summary"),
+            _latest_trace_value(graph_trace, "rag_trace_summary"),
+            {},
+        )
+    )
     validator_blocked = _as_bool(result.get("validator_blocked"))
     if validator_blocked is None:
         validator_blocked = _latest_trace_bool(graph_trace, "validator_blocked") or False
@@ -425,7 +440,10 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
         },
         "rag": {
             "used": rag_used,
-            "skipped_reason": str(_first_present(result.get("rag_skipped_reason"), _latest_trace_value(graph_trace, "rag_skipped_reason"), "")),
+            "skipped_reason": _optional_text(
+                _first_present(result.get("rag_skipped_reason"), _latest_trace_value(graph_trace, "rag_skipped_reason"), "")
+            ),
+            "trace": rag_trace_summary,
             "retrieved_example_count": _max_present_int(
                 result.get("retrieved_example_count"),
                 _latest_trace_int(graph_trace, "retrieved_example_count"),

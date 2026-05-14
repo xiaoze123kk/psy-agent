@@ -60,6 +60,7 @@ class Settings:
     risk_semantic_llm_enabled: bool
     risk_semantic_llm_timeout_seconds: float
     chat_turn_timeout_seconds: float
+    rag_retrieval_timeout_seconds: float
     memory_background_worker_enabled: bool
     memory_job_batch_size: int
     memory_job_max_attempts: int
@@ -81,9 +82,11 @@ class Settings:
     local_embedding_max_length: int
     local_embedding_use_fp16: str
     local_embedding_cache_dir: str | None
+    local_embedding_warm_on_startup: bool
     dashscope_api_key: str | None
     dashscope_base_url: str
     embedding_timeout_seconds: float
+    embedding_query_cache_size: int
 
 
 def _default_database_url() -> str:
@@ -115,7 +118,8 @@ def load_settings() -> Settings:
         risk_semantic_llm_enabled=os.getenv("RISK_SEMANTIC_LLM_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
         risk_semantic_llm_timeout_seconds=float(os.getenv("RISK_SEMANTIC_LLM_TIMEOUT_SECONDS", "1.5")),
-        chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "25")),
+        chat_turn_timeout_seconds=float(os.getenv("CHAT_TURN_TIMEOUT_SECONDS", "120")),
+        rag_retrieval_timeout_seconds=float(os.getenv("RAG_RETRIEVAL_TIMEOUT_SECONDS", "60")),
         memory_background_worker_enabled=os.getenv("MEMORY_BACKGROUND_WORKER_ENABLED", "1").lower()
         in {"1", "true", "yes", "on"},
         memory_job_batch_size=int(os.getenv("MEMORY_JOB_BATCH_SIZE", "5")),
@@ -140,9 +144,12 @@ def load_settings() -> Settings:
         local_embedding_max_length=int(os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "1024")),
         local_embedding_use_fp16=os.getenv("LOCAL_EMBEDDING_USE_FP16", "auto"),
         local_embedding_cache_dir=os.getenv("LOCAL_EMBEDDING_CACHE_DIR") or None,
+        local_embedding_warm_on_startup=os.getenv("LOCAL_EMBEDDING_WARM_ON_STARTUP", "0").lower()
+        in {"1", "true", "yes", "on"},
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY") or None,
         dashscope_base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         embedding_timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30")),
+        embedding_query_cache_size=int(os.getenv("EMBEDDING_QUERY_CACHE_SIZE", "128")),
     )
 
 

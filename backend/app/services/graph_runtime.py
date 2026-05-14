@@ -86,6 +86,7 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
         "memory_policy_reason",
         "rag_used",
         "rag_skipped_reason",
+        "rag_trace_summary",
         "validator_blocked",
         "validator_reasons",
         "delivery_status",
@@ -142,6 +143,13 @@ def _assistant_token_payload(payload: object) -> dict[str, object] | None:
     if not isinstance(text, str) or not text:
         return None
     return {"text": text}
+
+
+def _optional_text(value: object) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    text = str(value)
+    return "" if text.lower() == "none" else text
 
 
 class GraphRuntime:
@@ -253,7 +261,8 @@ class GraphRuntime:
             "memory_policy": result.get("memory_policy", "write_safe_summary"),
             "memory_policy_reason": result.get("memory_policy_reason", result.get("memory_policy", "")),
             "rag_used": bool(result.get("rag_used", False)),
-            "rag_skipped_reason": str(result.get("rag_skipped_reason", "")),
+            "rag_skipped_reason": _optional_text(result.get("rag_skipped_reason")),
+            "rag_trace_summary": result.get("rag_trace_summary", {}),
             "example_ids": [
                 str(example.get("chunk_id") or "")
                 for example in retrieved_examples

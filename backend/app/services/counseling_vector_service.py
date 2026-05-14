@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import logging
 import re
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
@@ -11,6 +14,9 @@ from app.services.milvus_service import milvus_store
 
 if TYPE_CHECKING:
     from app.db.models import CounselingExampleChunk, CounselingCorpusSource
+
+
+logger = logging.getLogger(__name__)
 
 
 COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
@@ -75,6 +81,31 @@ class CounselingExampleHit:
     risk_allowed: str | None = None
 
 
+@dataclass(frozen=True)
+class CounselingRetrievalResult:
+    examples: list[CounselingExampleHit]
+    trace: dict[str, object]
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((perf_counter() - started_at) * 1000))
+
+
+def _timeout_ms(timeout_seconds: float) -> int:
+    return max(1, int(max(timeout_seconds, 0.001) * 1000))
+
+
+def _retrieval_result(
+    *,
+    examples: list[CounselingExampleHit] | None = None,
+    trace: dict[str, object],
+    started_at: float,
+) -> CounselingRetrievalResult:
+    trace.setdefault("hit_count", len(examples or []))
+    trace["total_duration_ms"] = _elapsed_ms(started_at)
+    return CounselingRetrievalResult(examples=examples or [], trace=trace)
+
+
 def counseling_chunk_to_vector_row(
     chunk: CounselingExampleChunk,
     source: CounselingCorpusSource,
@@ -116,33 +147,96 @@ async def retrieve_counseling_examples(
     mode: str,
     limit: int = 3,
 ) -> list[CounselingExampleHit]:
+    result = await retrieve_counseling_examples_with_trace(state, mode=mode, limit=limit)
+    return result.examples
+
+
+async def retrieve_counseling_examples_with_trace(
+    state: AgentState,
+    *,
+    mode: str,
+    limit: int = 3,
+    timeout_seconds: float | None = None,
+) -> CounselingRetrievalResult:
+    started_at = perf_counter()
+    timeout_budget = max(float(timeout_seconds or settings.rag_retrieval_timeout_seconds), 0.001)
+    deadline = started_at + timeout_budget
+    trace: dict[str, object] = {
+        "status": "skipped",
+        "mode": mode,
+        "timeout_ms": _timeout_ms(timeout_budget),
+        "embedding_duration_ms": 0,
+        "milvus_duration_ms": 0,
+    }
+
+    def remaining_seconds() -> float:
+        return max(deadline - perf_counter(), 0.001)
+
     if not settings.counseling_rag_enabled:
-        return []
+        trace["skipped_reason"] = "rag_disabled"
+        return _retrieval_result(trace=trace, started_at=started_at)
     allowed, _reason = counseling_rag_allowed(state)
     if not allowed:
-        return []
+        trace["skipped_reason"] = _reason or "rag_policy_disabled"
+        return _retrieval_result(trace=trace, started_at=started_at)
     if state.get("risk_level") in {"L2", "L3"}:
-        return []
+        trace["skipped_reason"] = "risk_level_blocks_rag"
+        return _retrieval_result(trace=trace, started_at=started_at)
     if not milvus_store.is_available:
-        return []
+        trace["skipped_reason"] = "milvus_unavailable"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
     query = str(state.get("normalized_text") or "").strip()
     if not query:
-        return []
+        trace["skipped_reason"] = "empty_query"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
-    vector = await embedding_client.embed_query(query)
+    embedding_started_at = perf_counter()
+    try:
+        vector = await asyncio.wait_for(embedding_client.embed_query(query), timeout=remaining_seconds())
+    except asyncio.TimeoutError:
+        trace["status"] = "timeout"
+        trace["phase"] = "embedding"
+        trace["skipped_reason"] = "rag_timeout"
+        trace["embedding_duration_ms"] = _elapsed_ms(embedding_started_at)
+        logger.warning("Counseling RAG embedding timed out after %.1fs.", timeout_budget)
+        return _retrieval_result(trace=trace, started_at=started_at)
+    trace["embedding_duration_ms"] = _elapsed_ms(embedding_started_at)
     if vector is None:
-        return []
+        trace["skipped_reason"] = "embedding_unavailable"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
     hits: list[Any] = []
     seen_ids: set[str] = set()
     search_modes = _search_modes_for(mode)
+    trace["search_modes"] = [search_mode or "any" for search_mode in search_modes]
     safe_limit = min(max(limit, 0), 3)
     if safe_limit <= 0:
-        return []
+        trace["skipped_reason"] = "invalid_limit"
+        return _retrieval_result(trace=trace, started_at=started_at)
     per_query_limit = max(safe_limit * 3, 9)
     for search_mode in search_modes:
-        for hit in milvus_store.search_counseling_examples(vector, mode=search_mode, limit=per_query_limit):
+        search_started_at = perf_counter()
+        try:
+            search_hits = await asyncio.wait_for(
+                asyncio.to_thread(
+                    milvus_store.search_counseling_examples,
+                    vector,
+                    mode=search_mode,
+                    limit=per_query_limit,
+                ),
+                timeout=remaining_seconds(),
+            )
+        except asyncio.TimeoutError:
+            trace["status"] = "timeout"
+            trace["phase"] = "milvus_search"
+            trace["skipped_reason"] = "rag_timeout"
+            trace["milvus_duration_ms"] = int(trace.get("milvus_duration_ms", 0)) + _elapsed_ms(search_started_at)
+            logger.warning("Counseling RAG Milvus search timed out after %.1fs.", timeout_budget)
+            return _retrieval_result(trace=trace, started_at=started_at)
+        trace["milvus_duration_ms"] = int(trace.get("milvus_duration_ms", 0)) + _elapsed_ms(search_started_at)
+
+        for hit in search_hits:
             if hit.id in seen_ids:
                 continue
             seen_ids.add(hit.id)
@@ -182,13 +276,17 @@ async def retrieve_counseling_examples(
                 risk_allowed=str(hit.entity.get("risk_allowed") or "non_crisis"),
             )
         )
-    return examples
+    trace["status"] = "hit" if examples else "empty"
+    trace["hit_count"] = len(examples)
+    if not examples:
+        trace["skipped_reason"] = "no_safe_examples"
+    return _retrieval_result(examples=examples, trace=trace, started_at=started_at)
 
 
 def _search_modes_for(mode: str) -> list[str | None]:
     normalized = (mode or "").strip().lower()
     if normalized == "companion":
-        return ["vent", "soothe", "counseling", None]
+        return [None, "vent", "soothe", "counseling"]
     if normalized == "vent":
         return ["vent", "soothe", None]
     if normalized == "soothe":

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from app.graphs.nodes import rag_nodes
 from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.rag_nodes import example_retriever
 from app.graphs.nodes.response_nodes import _model_reply_with_actions, clarification_response
@@ -54,7 +56,10 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(state["risk_level"], "L3")
         self.assertFalse(state["rag_policy"]["enabled"])
 
-        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
+        with patch(
+            "app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace",
+            new=AsyncMock(side_effect=AssertionError("RAG must not run")),
+        ):
             result = _run(example_retriever(state))
 
         self.assertFalse(result["rag_used"])
@@ -75,12 +80,49 @@ class ConversationControlRagTests(unittest.TestCase):
             intervention_tags=["躯体稳定"],
         )
 
-        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[hit])):
+        with patch(
+            "app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    examples=[hit],
+                    trace={"status": "hit", "hit_count": 1, "total_duration_ms": 4},
+                )
+            ),
+        ):
             result = _run(example_retriever(state))
 
         self.assertTrue(result["rag_used"])
         self.assertEqual(result["retrieved_counseling_examples"][0]["chunk_id"], "chunk-1")
         self.assertEqual(result["rag_skipped_reason"], "")
+
+    def test_rag_timeout_is_visible_and_does_not_block_generation_path(self) -> None:
+        state = self.make_state("最近压力很大，晚上睡不着", intent="soothe")
+        state.update(_run(control_plane(state)))
+
+        async def slow_retrieval(*args, **kwargs):
+            await asyncio.sleep(0.05)
+            return []
+
+        with (
+            patch.object(
+                rag_nodes,
+                "retrieve_counseling_examples_with_trace",
+                new=AsyncMock(side_effect=slow_retrieval),
+                create=True,
+            ),
+            patch.object(rag_nodes, "settings", SimpleNamespace(rag_retrieval_timeout_seconds=0.01), create=True),
+        ):
+            result = _run(example_retriever(state))
+
+        self.assertFalse(result["rag_used"])
+        self.assertEqual(result["retrieved_counseling_examples"], [])
+        self.assertEqual(result["rag_skipped_reason"], "rag_timeout")
+        self.assertEqual(result["rag_trace_summary"]["status"], "timeout")
+        self.assertEqual(result["rag_trace_summary"]["timeout_ms"], 10)
+        self.assertIn("rag_timeout", result["audit_tags"])
+
+    def test_agent_state_declares_rag_trace_summary(self) -> None:
+        self.assertIn("rag_trace_summary", AgentState.__annotations__)
 
     def test_vague_low_confidence_turn_routes_to_clarification(self) -> None:
         state = self.make_state("继续", last_summary="", session_digest={}, goal_state={})
@@ -110,7 +152,10 @@ class ConversationControlRagTests(unittest.TestCase):
         state.update(_run(control_plane(state)))
 
         self.assertEqual(state["control_category"], "abusive_to_assistant")
-        with patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("RAG must not run"))):
+        with patch(
+            "app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace",
+            new=AsyncMock(side_effect=AssertionError("RAG must not run")),
+        ):
             result = _run(example_retriever(state))
 
         self.assertFalse(result["rag_used"])
@@ -184,13 +229,16 @@ class ConversationControlRagTests(unittest.TestCase):
         )
         captured: dict[str, str] = {}
 
-        async def fake_chat(messages):
+        async def fake_chat(messages, **kwargs):
             captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             return "我在，听起来你已经撑了很久。\n---\n我还想说\n我想理清一点\n先停一下"
 
         with (
-            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(side_effect=AssertionError("unexpected retrieval"))),
+            patch(
+                "app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace",
+                new=AsyncMock(side_effect=AssertionError("unexpected retrieval")),
+            ),
             patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)),
         ):
             body, actions = _run(
@@ -243,7 +291,7 @@ class ConversationControlRagTests(unittest.TestCase):
         )
         captured: dict[str, str] = {}
 
-        async def fake_chat(messages):
+        async def fake_chat(messages, **kwargs):
             captured["system"] = messages[0]["content"]
             captured["prompt"] = messages[1]["content"]
             return "我听到你现在有点乱，我们先抓住最卡的一小块。\n---\n继续说\n帮我理一理\n先停一下"
@@ -265,6 +313,27 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("用户自定义补充", captured["prompt"])
         self.assertIn("默认自然表达规则", captured["prompt"])
         self.assertIn("先短短安抚我，再给一个小步骤", captured["prompt"])
+
+    def test_generator_uses_enough_tokens_for_variable_length_replies(self) -> None:
+        state = self.make_state("我想让你多说一点，帮我把这件事展开看看")
+        captured: dict[str, object] = {}
+
+        async def fake_chat(messages, **kwargs):
+            captured["max_tokens"] = kwargs.get("max_tokens")
+            return "可以，我们慢一点展开。\n---\n继续说\n帮我理一理\n先停一下"
+
+        with patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)):
+            _run(
+                _model_reply_with_actions(
+                    state,
+                    mode="companion",
+                    fallback="",
+                    default_actions=[],
+                )
+            )
+
+        self.assertIsInstance(captured.get("max_tokens"), int)
+        self.assertGreaterEqual(captured["max_tokens"], 800)
 
     def test_internal_style_selector_routes_common_support_styles(self) -> None:
         self.assertEqual(select_dialogue_style(self.make_state("我总是喜欢冷淡的人"), "vent"), "psychodynamic_informed")

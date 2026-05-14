@@ -66,6 +66,7 @@ class AgentState(TypedDict, total=False):
     rag_policy: dict
     rag_used: bool
     rag_skipped_reason: str
+    rag_trace_summary: dict
     retrieved_counseling_examples: list[dict]
     validator_blocked: bool
     validator_reasons: list[str]

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+
+from app.core.config import settings
 from app.graphs.nodes.common import AgentState
-from app.services.counseling_vector_service import retrieve_counseling_examples
+from app.services.counseling_vector_service import retrieve_counseling_examples_with_trace
 
 
 def response_mode_for_state(state: AgentState) -> str:
@@ -46,11 +49,55 @@ async def example_retriever(state: AgentState) -> AgentState:
         }
 
     mode = response_mode_for_state(state)
-    examples = await retrieve_counseling_examples(state, mode=mode, limit=3)
+    timeout_seconds = max(float(settings.rag_retrieval_timeout_seconds), 0.001)
+    try:
+        retrieval = await asyncio.wait_for(
+            retrieve_counseling_examples_with_trace(
+                state,
+                mode=mode,
+                limit=3,
+                timeout_seconds=timeout_seconds,
+            ),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        timeout_ms = max(1, int(timeout_seconds * 1000))
+        return {
+            "retrieved_counseling_examples": [],
+            "rag_used": False,
+            "rag_skipped_reason": "rag_timeout",
+            "rag_trace_summary": {
+                "status": "timeout",
+                "phase": "retrieval",
+                "hit_count": 0,
+                "timeout_ms": timeout_ms,
+                "total_duration_ms": timeout_ms,
+            },
+            "audit_tags": (state.get("audit_tags", []) or []) + ["rag_timeout"],
+        }
+    except Exception as exc:
+        return {
+            "retrieved_counseling_examples": [],
+            "rag_used": False,
+            "rag_skipped_reason": "rag_error",
+            "rag_trace_summary": {
+                "status": "error",
+                "phase": "retrieval",
+                "hit_count": 0,
+                "error": type(exc).__name__,
+            },
+            "audit_tags": (state.get("audit_tags", []) or []) + ["rag_error"],
+        }
+
+    examples = retrieval.examples
+    rag_trace_summary = retrieval.trace
     serialized = [example_hit_to_dict(example) for example in examples]
+    skipped_reason = "" if serialized else str(rag_trace_summary.get("skipped_reason") or "no_safe_examples")
+    audit_tag = "rag_used" if serialized else ("rag_timeout" if skipped_reason == "rag_timeout" else "rag_empty")
     return {
         "retrieved_counseling_examples": serialized,
         "rag_used": bool(serialized),
-        "rag_skipped_reason": "" if serialized else "no_safe_examples",
-        "audit_tags": (state.get("audit_tags", []) or []) + (["rag_used"] if serialized else ["rag_empty"]),
+        "rag_skipped_reason": skipped_reason,
+        "rag_trace_summary": rag_trace_summary,
+        "audit_tags": (state.get("audit_tags", []) or []) + [audit_tag],
     }

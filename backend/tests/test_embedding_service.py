@@ -46,6 +46,7 @@ def _make_local_client() -> EmbeddingClient:
     client.local_cache_dir = None
     client._local_model = None
     client._local_model_error = None
+    client.is_safe_for_realtime = lambda: True  # type: ignore[method-assign]
     return client
 
 
@@ -94,6 +95,51 @@ class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
                 sys.modules["FlagEmbedding"] = original_module
 
         self.assertIsNone(vectors)
+
+    async def test_embed_query_reuses_cached_vector_for_same_text(self) -> None:
+        original_module = sys.modules.get("FlagEmbedding")
+        sys.modules["FlagEmbedding"] = SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel)
+        try:
+            client = _make_local_client()
+            first = await client.embed_query("same query")
+            second = await client.embed_query(" same query ")
+        finally:
+            if original_module is None:
+                sys.modules.pop("FlagEmbedding", None)
+            else:
+                sys.modules["FlagEmbedding"] = original_module
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(FakeBGEM3FlagModel.encode_calls), 1)
+
+    async def test_warmup_loads_local_embedding_model(self) -> None:
+        original_module = sys.modules.get("FlagEmbedding")
+        sys.modules["FlagEmbedding"] = SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel)
+        try:
+            client = _make_local_client()
+            warmed = await client.warmup()
+        finally:
+            if original_module is None:
+                sys.modules.pop("FlagEmbedding", None)
+            else:
+                sys.modules["FlagEmbedding"] = original_module
+
+        self.assertTrue(warmed)
+        self.assertEqual(len(FakeBGEM3FlagModel.encode_calls), 1)
+        self.assertEqual(FakeBGEM3FlagModel.encode_calls[0]["texts"], ["RAG warmup"])
+
+    async def test_unsafe_local_provider_uses_worker_process(self) -> None:
+        client = _make_local_client()
+        client.is_safe_for_realtime = lambda: False  # type: ignore[method-assign]
+
+        async def fake_worker(texts: list[str]):
+            return [[0.5] * client.dim for _ in texts]
+
+        client._embed_local_texts_with_worker = fake_worker  # type: ignore[attr-defined, method-assign]
+        with patch.object(client, "_embed_local_texts_sync", side_effect=AssertionError("must not embed in API process")):
+            vectors = await client.embed_texts(["worker query"])
+
+        self.assertEqual(vectors, [[0.5] * client.dim])
 
     async def test_missing_local_dependency_degrades_to_no_vectors(self) -> None:
         original_module = sys.modules.pop("FlagEmbedding", None)

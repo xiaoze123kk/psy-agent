@@ -752,6 +752,7 @@ async def retrieve_memories_for_turn_async(
         and _vector_retrieval_enabled()
         and milvus_store.is_available
         and embedding_client.is_configured
+        and embedding_client.is_safe_for_realtime()
     ):
         query_text = _query_for_retrieval(
             query=query,
@@ -1078,6 +1079,9 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
         return
     active_memories = [memory for memory in memories if memory.status == "active" and memory.content]
     if not active_memories or not embedding_client.is_configured:
+        return
+    if not embedding_client.is_safe_for_realtime():
+        logger.warning("Skipping memory vector indexing because local realtime embedding is disabled for process safety.")
         return
     texts = [memory.content for memory in active_memories]
     vectors = await embedding_client.embed_texts(texts)

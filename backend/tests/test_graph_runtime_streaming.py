@@ -18,7 +18,14 @@ class FakeStreamingGraph:
         yield {
             "example_retriever": {
                 "rag_used": True,
-                "rag_skipped_reason": "enabled",
+                "rag_skipped_reason": None,
+                "rag_trace_summary": {
+                    "status": "hit",
+                    "hit_count": 1,
+                    "embedding_duration_ms": 12,
+                    "milvus_duration_ms": 8,
+                    "total_duration_ms": 20,
+                },
                 "retrieved_counseling_examples": [{"content": "private rag passage"}],
             }
         }
@@ -73,8 +80,11 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("risk_classifier", progress_payload)
         self.assertTrue(all("duration_ms" in event for event in progress_events))
         self.assertTrue(any(event.get("retrieved_example_count") == 1 for event in progress_events))
+        self.assertTrue(any((event.get("rag_trace_summary") or {}).get("status") == "hit" for event in progress_events))
         self.assertEqual(token_events, ["I am "])
         self.assertLess(event_order.index("token"), event_order.index("graph_result"))
         self.assertIsNotNone(final_result)
         self.assertEqual(final_result["assistant_text"], "I am here.")
+        self.assertEqual(final_result["rag_skipped_reason"], "")
+        self.assertEqual(final_result["rag_trace_summary"]["status"], "hit")
         self.assertGreaterEqual(len(final_result["graph_trace"]), 3)

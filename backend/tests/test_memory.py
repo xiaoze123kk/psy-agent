@@ -439,6 +439,24 @@ class SlowGraphRuntime:
         return {}
 
 
+class SlowGraphStreamRuntime:
+    async def stream_turn(self, **kwargs):
+        await asyncio.sleep(1)
+        yield "graph_result", {
+            "assistant_text": "我在。",
+            "risk_level": "L0",
+            "intent": "other",
+            "suggested_actions": ["我还想说"],
+            "session_summary": "本轮可见摘要",
+            "should_write_memory": False,
+            "referenced_memories": [],
+            "delivery_status": "generated",
+            "failure_reason": None,
+            "retryable": False,
+            "trace_summary": {"total_graph_duration_ms": 1, "node_count": 1},
+        }
+
+
 class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_vector_retrieval = os.environ.get("MEMORY_VECTOR_RETRIEVAL_ENABLED")
@@ -636,6 +654,29 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["retryable"])
         self.assertFalse(result["should_write_memory"])
         self.assertEqual(memories, [])
+
+    async def test_stream_chat_turn_timeout_cleans_up_without_runtime_error(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphStreamRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        events: list[tuple[str, dict[str, object]]] = []
+        async for event_name, data in chat_service.process_message_turn_stream(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="请验证流式超时清理"),
+        ):
+            events.append((event_name, data))
+
+        event_names = [event_name for event_name, _ in events]
+        self.assertIn("accepted", event_names)
+        self.assertIn("graph_update", event_names)
+        self.assertIn("final", event_names)
+        final_event = next(data for event_name, data in events if event_name == "final")
+        self.assertEqual(final_event["delivery_status"], "failed_no_reply")
+        self.assertEqual(final_event["assistant_message_id"], None)
+        self.assertEqual(final_event["retryable"], True)
 
     async def test_summary_only_mode_retrieves_and_writes_only_session_summaries(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")

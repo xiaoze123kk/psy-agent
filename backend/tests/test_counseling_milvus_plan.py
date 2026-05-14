@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from app.graphs.state import AgentState
 from app.services import counseling_vector_service
 from app.services.counseling_vector_service import counseling_chunk_to_vector_row
-from app.services.milvus_service import MilvusVectorStore
+from app.services.milvus_service import MilvusVectorStore, VectorHit
 from scripts import import_counseling_corpus
 
 
@@ -62,6 +63,61 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(hits, [])
 
+    async def test_retrieval_trace_includes_embedding_and_milvus_timings(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+
+        async def fake_embed_query(text: str):
+            await asyncio.sleep(0)
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        hit = VectorHit(
+            id="chunk-trace",
+            score=0.9,
+            entity={
+                "content": "用户：我最近压力很大\n咨询回应：先把压力放慢一点看。",
+                "source_key": "smilechat",
+                "source_name": "SMILECHAT",
+                "mode": "soothe",
+                "status": "published",
+                "review_status": "approved",
+                "risk_allowed": "non_crisis",
+                "language": "zh-CN",
+                "chunk_id": "chunk-trace",
+            },
+        )
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: [hit]
+        try:
+            state = AgentState(
+                normalized_text="我最近压力很大，晚上睡不着",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(
+                state,
+                mode="soothe",
+                limit=3,
+            )
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+
+        self.assertEqual(len(result.examples), 1)
+        self.assertEqual(result.trace["status"], "hit")
+        self.assertEqual(result.trace["hit_count"], 1)
+        self.assertIn("embedding_duration_ms", result.trace)
+        self.assertIn("milvus_duration_ms", result.trace)
+        self.assertIn("total_duration_ms", result.trace)
+
     def test_milvus_disabled_returns_no_hits(self) -> None:
         store = MilvusVectorStore()
         store.enabled = False
@@ -69,6 +125,9 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(store.ensure_collections())
         self.assertEqual(store.search_knowledge([0.1] * store.dim), [])
         self.assertEqual(store.search_counseling_examples([0.1] * store.dim), [])
+
+    def test_companion_retrieval_tries_broad_search_first(self) -> None:
+        self.assertIsNone(counseling_vector_service._search_modes_for("companion")[0])
 
     def test_counseling_vector_row_keeps_source_metadata(self) -> None:
         row = counseling_chunk_to_vector_row(FakeChunk(), FakeSource(), [0.1, 0.2])
