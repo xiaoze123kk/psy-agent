@@ -496,7 +496,7 @@ async def _flush_batch(examples: list[ParsedExample]) -> tuple[int, int]:
     if not unique_examples:
         return 0, duplicate_count
 
-    vectors = await embedding_client.embed_texts([example.content for example in unique_examples])
+    vectors = await embedding_client.embed_documents([example.content for example in unique_examples])
     if vectors is None:
         return 0, len(unique_examples) + duplicate_count
     rows = [_vector_row(example, vector) for example, vector in zip(unique_examples, vectors)]

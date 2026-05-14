@@ -37,6 +37,14 @@ def _resolve_use_fp16(device: str) -> bool:
     return device.startswith("cuda")
 
 
+def _max_length_for_kind(kind: str) -> int:
+    if kind == "query":
+        return max(settings.local_embedding_query_max_length, 1)
+    if kind == "document":
+        return max(settings.local_embedding_document_max_length, 1)
+    return max(settings.local_embedding_max_length, 1)
+
+
 def _coerce_vectors(raw_vectors: Any, *, expected_count: int) -> list[list[float]] | None:
     if hasattr(raw_vectors, "tolist"):
         raw_vectors = raw_vectors.tolist()
@@ -85,16 +93,19 @@ def main() -> int:
         texts: list[str] = []
         try:
             request = json.loads(raw_line)
+            kind = str(request.get("kind") or "document").strip().lower()
+            if kind not in {"query", "document"}:
+                kind = "document"
             texts = [str(text).strip() for text in request.get("texts", []) if str(text).strip()]
             encode_input: str | list[str] = texts[0] if len(texts) == 1 else texts
             encode_kwargs = {
                 "batch_size": max(settings.local_embedding_batch_size, 1),
-                "max_length": max(settings.local_embedding_max_length, 1),
+                "max_length": _max_length_for_kind(kind),
                 "return_dense": True,
                 "return_sparse": False,
                 "return_colbert_vecs": False,
             }
-            if len(texts) == 1 and hasattr(model, "encode_queries"):
+            if kind == "query" and hasattr(model, "encode_queries"):
                 output = model.encode_queries(encode_input, **encode_kwargs)
             else:
                 output = model.encode(encode_input, **encode_kwargs)

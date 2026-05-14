@@ -22,9 +22,12 @@ class EmbeddingClient:
         self.provider = settings.embedding_provider.lower()
         self.model = settings.embedding_model
         self.dim = settings.embedding_dim
+        self.index_version = settings.embedding_index_version
         self.local_device = settings.local_embedding_device
         self.local_batch_size = max(settings.local_embedding_batch_size, 1)
         self.local_max_length = max(settings.local_embedding_max_length, 1)
+        self.local_query_max_length = max(settings.local_embedding_query_max_length, 1)
+        self.local_document_max_length = max(settings.local_embedding_document_max_length, 1)
         self.local_use_fp16 = settings.local_embedding_use_fp16.lower()
         self.local_cache_dir = settings.local_embedding_cache_dir
         self.dashscope_api_key = settings.dashscope_api_key
@@ -41,7 +44,8 @@ class EmbeddingClient:
 
     @property
     def embedding_key(self) -> str:
-        return f"{self.provider}:{self.model}:{self.dim}"
+        base = f"{self.provider}:{self.model}:{self.dim}"
+        return f"{base}:{self.index_version}" if self.index_version else base
 
     @property
     def resolved_local_device(self) -> str:
@@ -69,12 +73,18 @@ class EmbeddingClient:
         return True
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]] | None:
+        return await self.embed_documents(texts)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]] | None:
+        return await self._embed_texts(texts, kind="document")
+
+    async def _embed_texts(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
         cleaned = [text.strip() for text in texts if text and text.strip()]
         if not cleaned or not self.is_configured:
             return None
 
         if self.provider == "local":
-            return await self._embed_local_texts(cleaned)
+            return await self._embed_local_texts(cleaned, kind=kind)
         if self.provider != "dashscope":
             logger.warning("Unsupported embedding provider: %s", self.provider)
             return None
@@ -98,7 +108,7 @@ class EmbeddingClient:
         if cached is not None:
             return cached
 
-        vectors = await self.embed_texts([cleaned])
+        vectors = await self._embed_texts([cleaned], kind="query")
         if not vectors:
             return None
         vector = vectors[0]
@@ -109,19 +119,19 @@ class EmbeddingClient:
         vector = await self.embed_query("RAG warmup")
         return vector is not None
 
-    async def _embed_local_texts(self, texts: list[str]) -> list[list[float]] | None:
+    async def _embed_local_texts(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
         if self._use_local_worker():
-            return await self._embed_local_texts_with_worker(texts)
-        return await asyncio.to_thread(self._embed_local_texts_sync, texts)
+            return await self._embed_local_texts_with_worker(texts, kind=kind)
+        return await asyncio.to_thread(self._embed_local_texts_sync, texts, kind=kind)
 
-    async def _embed_local_texts_with_worker(self, texts: list[str]) -> list[list[float]] | None:
+    async def _embed_local_texts_with_worker(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
         lock = self._get_local_worker_lock()
         async with lock:
             process = await self._ensure_local_worker()
             if process is None or process.stdin is None or process.stdout is None:
                 return None
 
-            payload = json.dumps({"texts": texts}, ensure_ascii=True).encode("ascii") + b"\n"
+            payload = json.dumps({"texts": texts, "kind": kind}, ensure_ascii=True).encode("ascii") + b"\n"
             try:
                 process.stdin.write(payload)
                 await process.stdin.drain()
@@ -154,16 +164,18 @@ class EmbeddingClient:
     async def aclose(self) -> None:
         await self._stop_local_worker()
 
-    def _embed_local_texts_sync(self, texts: list[str]) -> list[list[float]] | None:
+    def _embed_local_texts_sync(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
         model = self._get_local_model()
         if model is None:
             return None
 
         try:
+            max_length = self._local_max_length_for_kind(kind)
             output = model.encode(
                 texts,
                 batch_size=self.local_batch_size,
-                max_length=self.local_max_length,
+                max_length=max_length,
+                kind=kind,
                 return_dense=True,
                 return_sparse=False,
                 return_colbert_vecs=False,
@@ -174,6 +186,13 @@ class EmbeddingClient:
 
         dense_vectors = output.get("dense_vecs") if isinstance(output, dict) else output
         return self._coerce_vectors(dense_vectors, expected_count=len(texts))
+
+    def _local_max_length_for_kind(self, kind: str) -> int:
+        if kind == "query":
+            return self.local_query_max_length
+        if kind == "document":
+            return self.local_document_max_length
+        return self.local_max_length
 
     def _get_local_model(self) -> Any | None:
         if self._local_model is not None:

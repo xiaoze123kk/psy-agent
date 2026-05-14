@@ -77,9 +77,12 @@ class Settings:
     embedding_provider: str
     embedding_model: str
     embedding_dim: int
+    embedding_index_version: str
     local_embedding_device: str
     local_embedding_batch_size: int
     local_embedding_max_length: int
+    local_embedding_query_max_length: int
+    local_embedding_document_max_length: int
     local_embedding_use_fp16: str
     local_embedding_cache_dir: str | None
     local_embedding_warm_on_startup: bool
@@ -139,9 +142,16 @@ def load_settings() -> Settings:
         embedding_provider=os.getenv("EMBEDDING_PROVIDER", "local"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
+        embedding_index_version=os.getenv("EMBEDDING_INDEX_VERSION", "").strip(),
         local_embedding_device=os.getenv("LOCAL_EMBEDDING_DEVICE", "auto"),
         local_embedding_batch_size=int(os.getenv("LOCAL_EMBEDDING_BATCH_SIZE", "8")),
         local_embedding_max_length=int(os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "1024")),
+        local_embedding_query_max_length=int(
+            os.getenv("LOCAL_EMBEDDING_QUERY_MAX_LENGTH", os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "512"))
+        ),
+        local_embedding_document_max_length=int(
+            os.getenv("LOCAL_EMBEDDING_DOCUMENT_MAX_LENGTH", os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "2048"))
+        ),
         local_embedding_use_fp16=os.getenv("LOCAL_EMBEDDING_USE_FP16", "auto"),
         local_embedding_cache_dir=os.getenv("LOCAL_EMBEDDING_CACHE_DIR") or None,
         local_embedding_warm_on_startup=os.getenv("LOCAL_EMBEDDING_WARM_ON_STARTUP", "0").lower()
