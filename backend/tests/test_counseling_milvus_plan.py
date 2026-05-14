@@ -5,6 +5,7 @@ import unittest
 
 from app.graphs.state import AgentState
 from app.services import counseling_vector_service
+from app.services.counseling_chunking import DialoguePair, build_layered_chunks
 from app.services.counseling_vector_service import counseling_chunk_to_vector_row
 from app.services.milvus_service import MilvusVectorStore, VectorHit
 from scripts import import_counseling_corpus
@@ -141,6 +142,49 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CounselingCorpusImportTests(unittest.TestCase):
+    def test_layered_chunking_builds_turn_segments_and_session_sketch(self) -> None:
+        pairs = [
+            DialoguePair(user_text="我最近压力很大，晚上睡不好", assistant_text="听起来你已经撑了很久，我们先慢一点。"),
+            DialoguePair(user_text="主要是领导一直临时加活", assistant_text="你像是被不断打断，也很难有掌控感。"),
+            DialoguePair(user_text="我不知道怎么拒绝", assistant_text="我们可以先把你最想守住的边界说清楚。"),
+            DialoguePair(user_text="我怕他觉得我不配合", assistant_text="这个担心很真实，也可以先准备一句温和但清晰的话。"),
+            DialoguePair(user_text="这样好像没那么乱了", assistant_text="能稍微清楚一点就很好，我们先保留这个小步骤。"),
+        ]
+
+        chunks = build_layered_chunks(
+            pairs,
+            external_id="case-1",
+            topic="工作压力",
+            parser="messages",
+        )
+
+        turn_chunks = [chunk for chunk in chunks if chunk.metadata["chunk_type"] == "turn_pair"]
+        process_chunks = [chunk for chunk in chunks if chunk.metadata["chunk_type"] == "process_segment"]
+        sketch_chunks = [chunk for chunk in chunks if chunk.metadata["chunk_type"] == "session_sketch"]
+
+        self.assertEqual(len(turn_chunks), 5)
+        self.assertGreaterEqual(len(process_chunks), 2)
+        self.assertEqual(len(sketch_chunks), 1)
+        self.assertEqual(process_chunks[0].metadata["pair_end"], process_chunks[1].metadata["pair_start"])
+        self.assertEqual(process_chunks[0].metadata["overlap_pairs"], 1)
+        self.assertIn("片段类型：整段咨询地图", sketch_chunks[0].content)
+        self.assertNotIn("领导一直临时加活", sketch_chunks[0].metadata["display_text"])
+
+    def test_layered_chunking_skips_all_chunks_for_unsafe_pair(self) -> None:
+        pairs = [
+            DialoguePair(user_text="我今晚想自杀", assistant_text="我听到了你的痛苦。"),
+            DialoguePair(user_text="我不知道怎么办", assistant_text="我们先联系身边可信任的人。"),
+        ]
+
+        chunks = build_layered_chunks(
+            pairs,
+            external_id="case-risk",
+            topic="危机",
+            parser="messages",
+        )
+
+        self.assertEqual(chunks, [])
+
     def test_parser_desensitizes_and_classifies_chinese_dialogue(self) -> None:
         item = {
             "id": "case-1",
