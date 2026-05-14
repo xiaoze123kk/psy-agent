@@ -2,9 +2,9 @@
 
 > **给 agentic workers：** 必须使用子技能 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 按任务逐步执行。步骤使用 checkbox (`- [ ]`) 跟踪。
 
-**目标：** 将 counseling RAG 从单轮问答 chunk 升级为 `turn_pair`、`process_segment`、`session_sketch` 三层 chunk，并在运行时按场景做配额检索和 prompt 分区展示。
+**目标：** 将 counseling RAG 从单轮问答 chunk 升级为 `turn_pair`、`process_segment`、`session_sketch` 三层 chunk，并在运行时按场景做配额检索和 prompt 分区展示；同时继续使用 `BAAI/bge-m3`，补齐 query/document embedding 分离、索引版本和重建吞吐可观测性。
 
-**架构：** 新增一个纯函数模块 `backend/app/services/counseling_chunking.py` 承担分层 chunk 生成、规则标签、display/retrieval 文本构造。导入脚本和直写 Milvus 脚本都调用同一套 chunking 逻辑，`counseling_vector_service.py` 负责把 chunk metadata 写入 Milvus row、运行时重排和安全过滤，`response_nodes.py` 负责按用途分区展示 RAG references。
+**架构：** 新增一个纯函数模块 `backend/app/services/counseling_chunking.py` 承担分层 chunk 生成、规则标签、display/retrieval 文本构造。导入脚本和直写 Milvus 脚本都调用同一套 chunking 逻辑，`embedding_service.py` 负责显式区分 query/document embedding 与 index version，`counseling_vector_service.py` 负责把 chunk metadata 写入 Milvus row、运行时重排和安全过滤，`response_nodes.py` 负责按用途分区展示 RAG references。
 
 **技术栈：** Python 3.13, dataclasses, SQLAlchemy 2.x, Milvus REST/pymilvus, unittest/pytest, existing FastAPI/LangGraph backend.
 
@@ -18,6 +18,14 @@
   - 将原有 `_pairs_from_messages()` 改为生成标准 pairs，再调用 `build_layered_chunks()` 写入 DB。
 - 修改: `backend/scripts/index_counseling_corpus_direct.py`
   - 复用同一套分层 chunking，直写 Milvus 时也生成三层 chunk。
+- 修改: `backend/app/core/config.py`
+  - 增加 `EMBEDDING_INDEX_VERSION`、query/document max length 配置。
+- 修改: `backend/app/services/embedding_service.py`
+  - 显式提供 `embed_query()` 与 `embed_documents()`，并让 `embedding_key` 支持索引版本。
+- 修改: `backend/app/services/local_embedding_worker.py`
+  - worker 协议支持 `kind=query/document` 和对应 max length。
+- 修改: `backend/scripts/check_embedding.py`
+  - 输出 embedding index version、device、batch size、query/document max length。
 - 修改: `backend/app/services/counseling_vector_service.py`
   - 向 Milvus row 注入 `chunk_type`、`original_external_id`、`phase`、`display_text`、`process_quality_score` 等字段；运行时按配额重排。
 - 修改: `backend/app/services/milvus_service.py`
@@ -30,6 +38,8 @@
   - 覆盖 chunk 生成、Milvus row metadata、运行时配额。
 - 修改: `backend/tests/test_conversation_control_rag.py`
   - 覆盖 prompt 分区和旧行为回归。
+- 修改: `backend/tests/test_embedding_service.py`
+  - 覆盖 embedding key 版本化、query/document max length 和 worker payload。
 
 ---
 
@@ -943,7 +953,290 @@ git commit -m "feat: include layered chunk metadata in counseling vectors"
 
 ---
 
-### 任务 5: 运行时按 chunk 类型配额重排
+### 任务 5: 优化 BGE-M3 embedding 使用和索引版本
+
+**Files:**
+- 修改: `backend/app/core/config.py`
+- 修改: `backend/app/services/embedding_service.py`
+- 修改: `backend/app/services/local_embedding_worker.py`
+- 修改: `backend/scripts/check_embedding.py`
+- 修改: `backend/app/services/vector_index_service.py`
+- 修改: `backend/tests/test_embedding_service.py`
+
+- [ ] **Step 1: Write failing embedding config tests**
+
+在 `backend/tests/test_embedding_service.py` 中新增测试：
+
+```python
+import os
+from unittest import TestCase
+from unittest.mock import AsyncMock, patch
+
+from app.services.embedding_service import EmbeddingClient
+
+
+class EmbeddingStrategyTests(TestCase):
+    def test_embedding_key_includes_index_version_when_configured(self) -> None:
+        client = EmbeddingClient()
+        client.provider = "local"
+        client.model = "BAAI/bge-m3"
+        client.dim = 1024
+        client.index_version = "rag-layered-v1"
+
+        self.assertEqual(client.embedding_key, "local:BAAI/bge-m3:1024:rag-layered-v1")
+
+    def test_embedding_key_omits_empty_index_version_for_compatibility(self) -> None:
+        client = EmbeddingClient()
+        client.provider = "local"
+        client.model = "BAAI/bge-m3"
+        client.dim = 1024
+        client.index_version = ""
+
+        self.assertEqual(client.embedding_key, "local:BAAI/bge-m3:1024")
+```
+
+- [ ] **Step 2: Run tests and confirm they fail**
+
+Run:
+
+```bash
+cd backend && python -m pytest tests/test_embedding_service.py::EmbeddingStrategyTests::test_embedding_key_includes_index_version_when_configured tests/test_embedding_service.py::EmbeddingStrategyTests::test_embedding_key_omits_empty_index_version_for_compatibility -q
+```
+
+Expected: FAIL because `EmbeddingClient` has no `index_version` and `embedding_key` does not include it.
+
+- [ ] **Step 3: Add config fields**
+
+In `backend/app/core/config.py`, add fields to `Settings`:
+
+```python
+    embedding_index_version: str
+    local_embedding_query_max_length: int
+    local_embedding_document_max_length: int
+```
+
+In `load_settings()`, add:
+
+```python
+        embedding_index_version=os.getenv("EMBEDDING_INDEX_VERSION", "").strip(),
+        local_embedding_query_max_length=int(
+            os.getenv("LOCAL_EMBEDDING_QUERY_MAX_LENGTH", os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "512"))
+        ),
+        local_embedding_document_max_length=int(
+            os.getenv("LOCAL_EMBEDDING_DOCUMENT_MAX_LENGTH", os.getenv("LOCAL_EMBEDDING_MAX_LENGTH", "2048"))
+        ),
+```
+
+Keep existing `local_embedding_max_length` for backward compatibility.
+
+- [ ] **Step 4: Update `EmbeddingClient` key and max length fields**
+
+In `backend/app/services/embedding_service.py`, set in `__init__`:
+
+```python
+        self.index_version = settings.embedding_index_version
+        self.local_query_max_length = max(settings.local_embedding_query_max_length, 1)
+        self.local_document_max_length = max(settings.local_embedding_document_max_length, 1)
+```
+
+Update `embedding_key`:
+
+```python
+    @property
+    def embedding_key(self) -> str:
+        base = f"{self.provider}:{self.model}:{self.dim}"
+        return f"{base}:{self.index_version}" if self.index_version else base
+```
+
+- [ ] **Step 5: Run key tests**
+
+Run:
+
+```bash
+cd backend && python -m pytest tests/test_embedding_service.py::EmbeddingStrategyTests::test_embedding_key_includes_index_version_when_configured tests/test_embedding_service.py::EmbeddingStrategyTests::test_embedding_key_omits_empty_index_version_for_compatibility -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Write failing query/document routing tests**
+
+Add tests to `EmbeddingStrategyTests`:
+
+```python
+    async def test_embed_query_uses_query_kind_and_cache(self) -> None:
+        client = EmbeddingClient()
+        client.query_cache_size = 0
+        expected = [[0.1] * client.dim]
+
+        with patch.object(client, "_embed_texts_by_kind", new=AsyncMock(return_value=expected)) as embed_spy:
+            vector = await client.embed_query("我还是睡不好")
+
+        self.assertEqual(vector, expected[0])
+        embed_spy.assert_awaited_once_with(["我还是睡不好"], kind="query")
+
+    async def test_embed_documents_uses_document_kind(self) -> None:
+        client = EmbeddingClient()
+        expected = [[0.2] * client.dim, [0.3] * client.dim]
+
+        with patch.object(client, "_embed_texts_by_kind", new=AsyncMock(return_value=expected)) as embed_spy:
+            vectors = await client.embed_documents(["doc one", "doc two"])
+
+        self.assertEqual(vectors, expected)
+        embed_spy.assert_awaited_once_with(["doc one", "doc two"], kind="document")
+```
+
+If the test suite does not support async methods inside `unittest.TestCase`, use `unittest.IsolatedAsyncioTestCase` for this class.
+
+- [ ] **Step 7: Run tests and confirm they fail**
+
+Run:
+
+```bash
+cd backend && python -m pytest tests/test_embedding_service.py::EmbeddingStrategyTests::test_embed_query_uses_query_kind_and_cache tests/test_embedding_service.py::EmbeddingStrategyTests::test_embed_documents_uses_document_kind -q
+```
+
+Expected: FAIL because `_embed_texts_by_kind()` and `embed_documents()` do not exist.
+
+- [ ] **Step 8: Implement query/document methods**
+
+Refactor `EmbeddingClient`:
+
+```python
+    async def embed_texts(self, texts: list[str]) -> list[list[float]] | None:
+        return await self.embed_documents(texts)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]] | None:
+        return await self._embed_texts_by_kind(texts, kind="document")
+
+    async def _embed_texts_by_kind(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
+        cleaned = [text.strip() for text in texts if text and text.strip()]
+        if not cleaned or not self.is_configured:
+            return None
+
+        if self.provider == "local":
+            return await self._embed_local_texts(cleaned, kind=kind)
+        if self.provider != "dashscope":
+            logger.warning("Unsupported embedding provider: %s", self.provider)
+            return None
+
+        vectors: list[list[float]] = []
+        for index in range(0, len(cleaned), 10):
+            batch = cleaned[index : index + 10]
+            batch_vectors = await self._embed_dashscope_batch(batch)
+            if batch_vectors is None:
+                return None
+            vectors.extend(batch_vectors)
+        return vectors
+```
+
+Update `embed_query()`:
+
+```python
+        vectors = await self._embed_texts_by_kind([cleaned], kind="query")
+```
+
+Update local methods signatures:
+
+```python
+    async def _embed_local_texts(self, texts: list[str], *, kind: str) -> list[list[float]] | None:
+        if self._use_local_worker():
+            return await self._embed_local_texts_with_worker(texts, kind=kind)
+        return await asyncio.to_thread(self._embed_local_texts_sync, texts, kind)
+```
+
+```python
+    def _max_length_for_kind(self, kind: str) -> int:
+        return self.local_query_max_length if kind == "query" else self.local_document_max_length
+```
+
+Use `_max_length_for_kind(kind)` in local encode calls.
+
+- [ ] **Step 9: Update local worker protocol**
+
+In `_embed_local_texts_with_worker()`, include kind:
+
+```python
+            payload = json.dumps({"texts": texts, "kind": kind}, ensure_ascii=True).encode("ascii") + b"\n"
+```
+
+In `backend/app/services/local_embedding_worker.py`, read kind:
+
+```python
+            kind = str(request.get("kind") or "document").strip().lower()
+            max_length = (
+                max(settings.local_embedding_query_max_length, 1)
+                if kind == "query"
+                else max(settings.local_embedding_document_max_length, 1)
+            )
+```
+
+Use `max_length` in `encode_kwargs`. Keep `encode_queries()` only for `kind == "query"`:
+
+```python
+            if kind == "query" and len(texts) == 1 and hasattr(model, "encode_queries"):
+                output = model.encode_queries(encode_input, **encode_kwargs)
+            else:
+                output = model.encode(encode_input, **encode_kwargs)
+```
+
+- [ ] **Step 10: Update indexing to use document embedding explicitly**
+
+In `backend/app/services/vector_index_service.py`, replace both calls:
+
+```python
+        vectors = await embedding_client.embed_texts(texts)
+```
+
+with:
+
+```python
+        vectors = await embedding_client.embed_documents(texts)
+```
+
+- [ ] **Step 11: Update check script output**
+
+In `backend/scripts/check_embedding.py`, include:
+
+```python
+                "index_version": embedding_client.index_version,
+                "resolved_device": embedding_client.resolved_local_device,
+                "batch_size": embedding_client.local_batch_size,
+                "query_max_length": embedding_client.local_query_max_length,
+                "document_max_length": embedding_client.local_document_max_length,
+```
+
+Add these fields to both success and failure JSON output where possible.
+
+- [ ] **Step 12: Run embedding tests**
+
+Run:
+
+```bash
+cd backend && python -m pytest tests/test_embedding_service.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 13: Run embedding smoke check without requiring model download if unavailable**
+
+Run:
+
+```bash
+cd backend && python scripts/check_embedding.py --text "我最近压力很大，睡不好"
+```
+
+Expected: If local embedding dependencies/model are available, JSON contains `"ok": true`, provider/model/key/device/max length fields, and 1024 dims. If dependencies are unavailable, JSON contains `"ok": false` but still reports provider/model/key/index version fields; record this in final notes instead of treating it as a code failure.
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add backend/app/core/config.py backend/app/services/embedding_service.py backend/app/services/local_embedding_worker.py backend/app/services/vector_index_service.py backend/scripts/check_embedding.py backend/tests/test_embedding_service.py
+git commit -m "feat: version and split bge embedding paths"
+```
+
+---
+
+### 任务 6: 运行时按 chunk 类型配额重排
 
 **Files:**
 - 修改: `backend/app/services/counseling_vector_service.py`
@@ -1188,7 +1481,7 @@ git commit -m "feat: rank counseling rag by chunk quotas"
 
 ---
 
-### 任务 6: Prompt 分区展示 RAG references
+### 任务 7: Prompt 分区展示 RAG references
 
 **Files:**
 - 修改: `backend/app/graphs/nodes/response_nodes.py`
@@ -1349,7 +1642,7 @@ git commit -m "feat: group layered rag prompt references"
 
 ---
 
-### 任务 7: 端到端验证与文档
+### 任务 8: 端到端验证与文档
 
 **Files:**
 - 修改: `backend/README.md`
@@ -1378,7 +1671,7 @@ If `index_milvus.py --drop counseling` is not a supported command, document the 
 Run:
 
 ```bash
-cd backend && python -m pytest tests/test_counseling_milvus_plan.py tests/test_conversation_control_rag.py -q
+cd backend && python -m pytest tests/test_embedding_service.py tests/test_counseling_milvus_plan.py tests/test_conversation_control_rag.py -q
 ```
 
 Expected: PASS.
