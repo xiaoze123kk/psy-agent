@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from app.core.config import settings
 from app.schemas.common import SafetyAudience
 from app.services.deepseek_client import (
     DEFAULT_MAX_TOOL_ROUNDS,
@@ -24,6 +25,7 @@ ALL_RISK_LEVELS = LOW_RISK_LEVELS | HIGH_RISK_LEVELS
 MEMORY_TOOL_NAMES = frozenset({"search_memories", "save_memory_summary"})
 SAFETY_TOOL_NAMES = frozenset({"get_safety_resources"})
 MAX_TOOL_PREVIEWS = 5
+DEFAULT_DIALOGUE_REPLY_MAX_TOKENS = 900
 
 VISIBLE_MEMORY_TYPES = {
     "profile",
@@ -1022,6 +1024,7 @@ async def run_dialogue_reply_with_tools(
         tool_handlers=plan.tool_handlers,
         tool_choice="auto",
         thinking_enabled=False,
+        max_tokens=max(int(settings.deepseek_chat_max_tokens), DEFAULT_DIALOGUE_REPLY_MAX_TOKENS),
         max_tool_rounds=DEFAULT_MAX_TOOL_ROUNDS,
     )
     assistant_text, suggested_actions = _parse_actions_reply(tool_result.content)

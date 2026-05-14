@@ -45,7 +45,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
     def test_companion_empty_model_returns_no_reply(self) -> None:
         state = self.make_state()
         with (
-            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace", new=AsyncMock(return_value=[])),
             patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
         ):
             result = _run(companion_response(state))
@@ -62,7 +62,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
             recent_messages=[],
         )
         with (
-            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace", new=AsyncMock(return_value=[])),
             patch("app.graphs.nodes.response_nodes.deepseek_client.chat", new=AsyncMock(return_value="")),
         ):
             result = _run(companion_response(state))
@@ -287,7 +287,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
             ],
         )
 
-        async def fake_chat(messages):
+        async def fake_chat(messages, **kwargs):
             captured_messages.extend(messages)
             return "我听见这个“还是”，像是那股累并没有真的退下去。\n---\n继续说说"
 
@@ -320,7 +320,7 @@ class ResponseMemoryContinuityTests(unittest.TestCase):
             ],
         )
 
-        async def fake_chat(messages):
+        async def fake_chat(messages, **kwargs):
             captured_messages.extend(messages)
             return "这次卡住的点还是和任务边界有关。\n---\n继续说沟通"
 

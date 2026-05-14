@@ -19,6 +19,7 @@ _STREAM_TAIL_CHARS = 8
 _RECENT_CHAT_CANDIDATE_LIMIT = 24
 _RECENT_CHAT_BUDGET_CHARS = 1800
 _RECENT_CHAT_MESSAGE_MAX_CHARS = 480
+_DIALOGUE_REPLY_MAX_TOKENS = 900
 
 
 class _VisibleReplyBuffer:
@@ -78,7 +79,7 @@ def _write_final_visible_text(text: str, *, chunk_size: int = 8) -> None:
 
 
 async def _non_streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[str, list[str]]:
-    reply = await deepseek_client.chat(messages)
+    reply = await deepseek_client.chat(messages, max_tokens=_DIALOGUE_REPLY_MAX_TOKENS)
     if not reply:
         return "", []
     body, actions = parse_actions_reply(reply)
@@ -93,7 +94,7 @@ async def _streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[
     reply_parts: list[str] = []
     visible = _VisibleReplyBuffer()
     try:
-        async for chunk in deepseek_client.stream_chat(messages):
+        async for chunk in deepseek_client.stream_chat(messages, max_tokens=_DIALOGUE_REPLY_MAX_TOKENS):
             reply_parts.append(chunk)
             token = visible.feed(chunk)
             _write_assistant_token(writer, token)

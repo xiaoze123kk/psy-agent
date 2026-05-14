@@ -132,6 +132,32 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertNotIn("用户画像", parts.user_prompt)
         self.assertNotIn("旧的会话摘要不应重复注入", parts.user_prompt)
 
+    def test_prompt_uses_dynamic_length_guidance_instead_of_fixed_short_range(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(normalized_text="这件事有点复杂，我想让你多说一点，帮我详细展开看看。"),
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("不要固定短回复", parts.system_prompt)
+        self.assertNotIn("常规对话控制在 120–260 字左右", parts.system_prompt)
+        self.assertIn("本轮长度策略", parts.user_prompt)
+        self.assertIn("260–520 字", parts.user_prompt)
+
+    def test_prompt_allows_very_short_replies_for_light_chat(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(normalized_text="哈哈", user_text="哈哈"),
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("本轮长度策略", parts.user_prompt)
+        self.assertIn("20–80 字", parts.user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

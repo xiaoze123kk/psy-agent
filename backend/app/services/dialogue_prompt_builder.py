@@ -145,7 +145,9 @@ CORE_SYSTEM_PROMPT = (
     "3. 只问一个关键问题，或只给一个很小、能执行的下一步。\n"
     "4. 除非用户明确要求，不要一上来列清单、讲理论、做教育。\n\n"
     "语言规则：\n"
-    "- 回复不要太长。常规对话控制在 120–260 字左右。\n"
+    "- 不要固定短回复，也不要每轮都压成两三句话；长度要跟随用户信息密度、风险、上下文和用户是否要求展开自然变化。\n"
+    "- 可以很短，也可以较长：轻闲聊或确认 20–80 字；常规陪伴/澄清 80–260 字；复杂困扰、用户要求多说/详细/展开、连续多轮脉络或 RAG/记忆提供了有效线索时，允许 260–520 字。\n"
+    "- 长回复也要有呼吸感：用自然分段承接、整理、探问或给一个小步骤，不要堆清单、讲课或把话说满。\n"
     "- 除危机场景外，每轮最多一个问题；先回应具体内容和情绪，再整理，再给一个问题或微行动。\n"
     "- 不要把每句话都心理问题化。用户只发“呵呵”“哈哈”“嘿嘿”“笑死”“行吧”、表情、寒暄或随口吐槽时，优先当作闲聊、轻回应或气氛变化处理；除非上下文已有明确痛苦、风险或求助线索，不要解读成压抑、强颜欢笑、心理有火、被堵住或创伤防御。\n"
     "- 对短笑声和语气词，可以轻松接话、顺着聊天、问一个很轻的问题，或承认刚才可能想多了；不要强行追问“你为什么这样笑”。\n"
@@ -363,6 +365,55 @@ def mode_guidance_for(mode: str, selected_strategy: str, user_mode: str) -> str:
     return base
 
 
+def _reply_length_guidance_for(state: AgentState, mode: str, selected_strategy: str) -> str:
+    text = str(state.get("normalized_text") or state.get("user_text") or "").strip()
+    compact = text.replace(" ", "")
+    if (
+        selected_strategy == "crisis"
+        or state.get("route_priority") == "P0_immediate_safety"
+        or state.get("risk_level") in {"L2", "L3"}
+    ):
+        return "危机或高风险时短句直接，约 80–180 字，优先确认安全和现实支持。"
+
+    light_chat = {
+        "哈",
+        "哈哈",
+        "哈哈哈",
+        "嘿嘿",
+        "呵呵",
+        "嗯",
+        "嗯嗯",
+        "哦",
+        "好",
+        "行",
+        "可以",
+    }
+    if compact in light_chat or (len(compact) <= 4 and any(marker in compact for marker in ("哈", "嗯", "哦"))):
+        return "轻闲聊或气氛回应，20–80 字即可；可以顺着聊，不要强行心理分析。"
+
+    expand_terms = (
+        "多说",
+        "说多一点",
+        "长一点",
+        "详细",
+        "展开",
+        "深入",
+        "分析一下",
+        "帮我理",
+        "讲清楚",
+        "为什么",
+    )
+    has_context = bool(state.get("retrieved_counseling_examples")) or bool(state.get("user_context_pack")) or bool(state.get("session_digest"))
+    if _contains_any(text, expand_terms) or len(text) >= 80 or has_context:
+        return "用户需要展开或上下文较多时，允许 260–520 字；分 2–4 个自然段，先贴近细节，再整理脉络，最后只留一个关键问题或小步骤。"
+
+    if mode == "soothe":
+        return "安抚时保持慢和稳，80–220 字；可用短句分段，但不要每次都同样短。"
+    if mode == "counseling" or selected_strategy in {"cbt", "solution_focused", "psychodynamic_informed"}:
+        return "常规梳理 120–320 字；信息复杂时可以更展开，但每轮只推进一个小环节。"
+    return "常规陪伴 80–260 字；根据用户信息密度自然伸缩，不要每轮固定成两小段。"
+
+
 def build_dialogue_prompt_parts(
     state: AgentState,
     *,
@@ -387,6 +438,7 @@ def build_dialogue_prompt_parts(
     control_category = state.get("control_category", "normal_support")
     route_priority = state.get("route_priority", "P2_support")
     mode_guidance = mode_guidance_for(mode, selected_strategy, str(user_mode))
+    length_guidance = _reply_length_guidance_for(state, mode, selected_strategy)
     strategy_module = STRATEGY_MODULES[selected_strategy]
 
     system_prompt = (
@@ -407,6 +459,7 @@ def build_dialogue_prompt_parts(
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
         f"回复要求：{mode_guidance}\n"
+        f"本轮长度策略：{length_guidance}\n"
         f"{clarification_text}"
         f"{examples_text}"
         f"{user_context_pack_text}"
