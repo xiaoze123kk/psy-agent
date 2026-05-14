@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.services.counseling_chunking import DialoguePair, LayeredChunk, build_layered_chunks
 from app.services.counseling_vector_service import COUNSELING_CORPUS_SOURCES
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
@@ -88,6 +89,8 @@ class ParsedExample:
     content: str
     source_url: str
     license: str
+    tags: list[str]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -144,6 +147,32 @@ def _content(context_text: str, user_text: str, assistant_text: str) -> str:
     parts.append(f"用户：{user_text}")
     parts.append(f"咨询回应：{assistant_text}")
     return _clip_text("\n".join(parts), MAX_CONTENT_TEXT_CHARS)
+
+
+def _parsed_from_layered_chunk(
+    *,
+    source_key: str,
+    source_name: str,
+    source_url: str,
+    license: str,
+    chunk: LayeredChunk,
+) -> ParsedExample:
+    return ParsedExample(
+        source_key=source_key,
+        source_name=source_name,
+        external_id=chunk.external_id[:160],
+        chunk_index=chunk.chunk_index,
+        mode=chunk.mode,
+        topic=(chunk.topic or "")[:80],
+        user_text=_clip_text(chunk.user_text, MAX_USER_TEXT_CHARS),
+        assistant_text=_clip_text(chunk.assistant_text, MAX_ASSISTANT_TEXT_CHARS),
+        context_text=_clip_text(chunk.context_text or "", MAX_CONTEXT_TEXT_CHARS),
+        content=_clip_text(chunk.content, MAX_CONTENT_TEXT_CHARS),
+        source_url=source_url,
+        license=license,
+        tags=chunk.tags,
+        metadata=chunk.metadata,
+    )
 
 
 def _topic_from_item(item: dict[str, Any]) -> str:
@@ -235,8 +264,11 @@ def _pairs_from_messages(
     messages: list[dict[str, str]],
 ) -> Iterator[ParsedExample]:
     source = COUNSELING_CORPUS_SOURCES[source_key]
+    source_name = str(source["name"])
+    source_url = str(source["base_url"])
+    license = str(source["license"])
     prior: list[str] = []
-    pair_index = 0
+    pairs: list[DialoguePair] = []
     waiting_user: str | None = None
 
     for message in messages:
@@ -253,27 +285,25 @@ def _pairs_from_messages(
         raw_assistant_text = content
         raw_context_text = "\n".join(prior[:-1][-4:])
         if _is_safe_example(raw_user_text, raw_assistant_text, raw_context_text):
-            user_text = _clip_text(raw_user_text, MAX_USER_TEXT_CHARS)
-            assistant_text = _clip_text(raw_assistant_text, MAX_ASSISTANT_TEXT_CHARS)
-            context_text = _clip_text(raw_context_text, MAX_CONTEXT_TEXT_CHARS)
-            mode = _classify_mode(user_text, assistant_text)
-            yield ParsedExample(
-                source_key=source_key,
-                source_name=str(source["name"]),
-                external_id=external_id[:160],
-                chunk_index=pair_index,
-                mode=mode,
-                topic=topic[:80],
-                user_text=waiting_user,
-                assistant_text=assistant_text,
-                context_text=context_text,
-                content=_content(context_text, waiting_user, assistant_text),
-                source_url=str(source["base_url"]),
-                license=str(source["license"]),
+            pairs.append(
+                DialoguePair(
+                    user_text=_clip_text(raw_user_text, MAX_USER_TEXT_CHARS),
+                    assistant_text=_clip_text(raw_assistant_text, MAX_ASSISTANT_TEXT_CHARS),
+                    context_text=_clip_text(raw_context_text, MAX_CONTEXT_TEXT_CHARS),
+                )
             )
-            pair_index += 1
         prior.append(f"咨询师：{raw_assistant_text}")
         waiting_user = None
+
+    chunks = build_layered_chunks(pairs, external_id=external_id, topic=topic, parser="messages")
+    for chunk in chunks:
+        yield _parsed_from_layered_chunk(
+            source_key=source_key,
+            source_name=source_name,
+            source_url=source_url,
+            license=license,
+            chunk=chunk,
+        )
 
 
 def _parse_item(item: dict[str, Any], index: int, source_key: str) -> Iterator[ParsedExample]:
@@ -432,6 +462,21 @@ def _vector_row(example: ParsedExample, vector: list[float]) -> dict[str, object
         "status": "published",
         "embedding_key": embedding_client.embedding_key,
         "content": example.content,
+        "language": "zh-CN",
+        "age_group": "general",
+        "review_status": "approved",
+        "risk_allowed": "non_crisis",
+        "scenario_tags": ",".join(example.tags),
+        "intervention_tags": ",".join(str(tag) for tag in example.metadata.get("intervention_tags", []) if tag),
+        "style_tags": "supportive",
+        "contraindications": "",
+        "quality_score": str(example.metadata.get("process_quality_score", "")),
+        "safety_score": "",
+        "chunk_type": str(example.metadata.get("chunk_type") or "turn_pair"),
+        "original_external_id": str(example.metadata.get("original_external_id") or example.external_id),
+        "phase": str(example.metadata.get("phase") or ""),
+        "display_text": str(example.metadata.get("display_text") or ""),
+        "process_quality_score": str(example.metadata.get("process_quality_score", "")),
         "vector": vector,
     }
 

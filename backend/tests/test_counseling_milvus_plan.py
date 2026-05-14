@@ -9,6 +9,7 @@ from app.services.counseling_chunking import DialoguePair, build_layered_chunks
 from app.services.counseling_vector_service import counseling_chunk_to_vector_row
 from app.services.milvus_service import MilvusVectorStore, VectorHit
 from scripts import import_counseling_corpus
+from scripts import index_counseling_corpus_direct
 
 
 class FakeSource:
@@ -226,6 +227,30 @@ class CounselingCorpusImportTests(unittest.TestCase):
         self.assertEqual(parsed[0].metadata["original_external_id"], "smilechat_case-layered")
         self.assertIn("display_text", parsed[-1].metadata)
         self.assertNotIn("领导一直临时加活", parsed[-1].metadata["display_text"])
+
+    def test_direct_index_parser_uses_layered_chunks(self) -> None:
+        item = {
+            "id": "case-direct",
+            "normalizedTag": "工作压力",
+            "messages": [
+                {"role": "user", "content": "我最近压力很大，晚上睡不好"},
+                {"role": "assistant", "content": "听起来你已经撑了很久，我们先慢一点。"},
+                {"role": "user", "content": "主要是领导一直临时加活"},
+                {"role": "assistant", "content": "你像是被不断打断，也很难有掌控感。"},
+                {"role": "user", "content": "我不知道怎么拒绝"},
+                {"role": "assistant", "content": "我们可以先把你最想守住的边界说清楚。"},
+            ],
+        }
+
+        parsed = list(index_counseling_corpus_direct._parse_item(item, 0, "smilechat"))
+        chunk_types = [example.metadata["chunk_type"] for example in parsed]
+
+        self.assertEqual(chunk_types.count("turn_pair"), 3)
+        self.assertEqual(chunk_types.count("process_segment"), 1)
+        self.assertEqual(chunk_types.count("session_sketch"), 1)
+        self.assertEqual(parsed[0].external_id, "smilechat_case-direct::turn")
+        self.assertEqual(parsed[0].metadata["original_external_id"], "smilechat_case-direct")
+        self.assertIn("display_text", parsed[-1].metadata)
 
     def test_parser_filters_high_risk_examples(self) -> None:
         item = {
