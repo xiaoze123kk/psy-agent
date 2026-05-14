@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+CHUNK_TYPES = {"turn_pair", "process_segment", "session_sketch"}
+CONTINUATION_PATTERNS = ("继续", "还是", "刚才", "前面", "上次", "那个问题", "接着")
+
 
 COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
     "soulchat_corpus": {
@@ -224,7 +227,7 @@ async def retrieve_counseling_examples_with_trace(
     if safe_limit <= 0:
         trace["skipped_reason"] = "invalid_limit"
         return _retrieval_result(trace=trace, started_at=started_at)
-    per_query_limit = max(safe_limit * 3, 9)
+    per_query_limit = max(safe_limit * 6, 18)
     for search_mode in search_modes:
         search_started_at = perf_counter()
         try:
@@ -254,10 +257,12 @@ async def retrieve_counseling_examples_with_trace(
             if not content or not counseling_example_is_safe(hit.entity):
                 continue
             hits.append(hit)
-            if len(hits) >= safe_limit:
+            if len(hits) >= per_query_limit:
                 break
-        if len(hits) >= safe_limit:
+        if len(hits) >= per_query_limit:
             break
+
+    hits = _select_hits_by_quota(hits, state=state, mode=mode, limit=safe_limit)
 
     examples: list[CounselingExampleHit] = []
     for hit in hits[:safe_limit]:
@@ -293,6 +298,11 @@ async def retrieve_counseling_examples_with_trace(
         )
     trace["status"] = "hit" if examples else "empty"
     trace["hit_count"] = len(examples)
+    chunk_type_counts: dict[str, int] = {}
+    for example in examples:
+        key = example.chunk_type or "turn_pair"
+        chunk_type_counts[key] = chunk_type_counts.get(key, 0) + 1
+    trace["chunk_type_counts"] = chunk_type_counts
     if not examples:
         trace["skipped_reason"] = "no_safe_examples"
     return _retrieval_result(examples=examples, trace=trace, started_at=started_at)
@@ -309,6 +319,59 @@ def _search_modes_for(mode: str) -> list[str | None]:
     if normalized == "counseling":
         return ["counseling", "vent", None]
     return [normalized or None, None]
+
+
+def _chunk_type_for_hit(hit: Any) -> str:
+    chunk_type = str(hit.entity.get("chunk_type") or "").strip()
+    return chunk_type if chunk_type in CHUNK_TYPES else "turn_pair"
+
+
+def _original_external_id_for_hit(hit: Any) -> str:
+    return str(hit.entity.get("original_external_id") or hit.entity.get("external_id") or hit.id or "")
+
+
+def _quota_for_state(state: AgentState, mode: str, limit: int) -> dict[str, int]:
+    query = str(state.get("normalized_text") or state.get("user_text") or "")
+    if any(pattern in query for pattern in CONTINUATION_PATTERNS):
+        return {"session_sketch": 1, "process_segment": 1, "turn_pair": max(limit - 2, 0)}
+    return {"process_segment": 1, "turn_pair": max(limit - 1, 0)}
+
+
+def _select_hits_by_quota(hits: list[Any], *, state: AgentState, mode: str, limit: int) -> list[Any]:
+    quota = _quota_for_state(state, mode, limit)
+    selected: list[Any] = []
+    used_by_type = {chunk_type: 0 for chunk_type in quota}
+    used_sources: dict[str, int] = {}
+
+    for desired_type in quota:
+        for hit in hits:
+            if hit in selected:
+                continue
+            chunk_type = _chunk_type_for_hit(hit)
+            if chunk_type != desired_type:
+                continue
+            if used_by_type[desired_type] >= quota[desired_type]:
+                continue
+            original_external_id = _original_external_id_for_hit(hit)
+            if used_sources.get(original_external_id, 0) >= 2:
+                continue
+            selected.append(hit)
+            used_by_type[desired_type] += 1
+            used_sources[original_external_id] = used_sources.get(original_external_id, 0) + 1
+            if len(selected) >= limit:
+                return selected
+
+    for hit in hits:
+        if hit in selected:
+            continue
+        original_external_id = _original_external_id_for_hit(hit)
+        if used_sources.get(original_external_id, 0) >= 2:
+            continue
+        selected.append(hit)
+        used_sources[original_external_id] = used_sources.get(original_external_id, 0) + 1
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 RAG_ALLOWED_PRIORITIES = {"P2_support", "P3_bridge_boundary"}

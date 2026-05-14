@@ -40,6 +40,27 @@ class FakeChunk:
 
 
 class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _hit(item_id: str, *, chunk_type: str, original_external_id: str, score: float = 0.9) -> VectorHit:
+        return VectorHit(
+            id=item_id,
+            score=score,
+            entity={
+                "content": f"片段类型：{chunk_type}\n用户：我最近压力很大\n咨询回应：先慢一点。",
+                "display_text": f"{chunk_type} display",
+                "source_key": "smilechat",
+                "source_name": "SMILECHAT",
+                "mode": "soothe",
+                "status": "published",
+                "review_status": "approved",
+                "risk_allowed": "non_crisis",
+                "language": "zh-CN",
+                "chunk_id": item_id,
+                "chunk_type": chunk_type,
+                "original_external_id": original_external_id,
+            },
+        )
+
     async def test_high_risk_state_does_not_call_embedding(self) -> None:
         original_embed_query = counseling_vector_service.embedding_client.embed_query
 
@@ -151,6 +172,84 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
 
     def test_companion_retrieval_tries_broad_search_first(self) -> None:
         self.assertIsNone(counseling_vector_service._search_modes_for("companion")[0])
+
+    async def test_retrieval_uses_default_chunk_type_quotas(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+
+        async def fake_embed_query(text: str):
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        hits = [
+            self._hit("session-1", chunk_type="session_sketch", original_external_id="case-1", score=0.99),
+            self._hit("process-1", chunk_type="process_segment", original_external_id="case-2", score=0.95),
+            self._hit("turn-1", chunk_type="turn_pair", original_external_id="case-3", score=0.9),
+            self._hit("turn-2", chunk_type="turn_pair", original_external_id="case-4", score=0.89),
+        ]
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: hits
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
+        try:
+            state = AgentState(
+                normalized_text="我最近压力很大，睡不好",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(state, mode="soothe", limit=3)
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
+
+        self.assertEqual([example.chunk_type for example in result.examples], ["process_segment", "turn_pair", "turn_pair"])
+        self.assertEqual(result.trace["chunk_type_counts"], {"process_segment": 1, "turn_pair": 2})
+
+    async def test_retrieval_allows_session_sketch_for_continuation_turns(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+
+        async def fake_embed_query(text: str):
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        hits = [
+            self._hit("session-1", chunk_type="session_sketch", original_external_id="case-1", score=0.99),
+            self._hit("process-1", chunk_type="process_segment", original_external_id="case-2", score=0.95),
+            self._hit("turn-1", chunk_type="turn_pair", original_external_id="case-3", score=0.9),
+        ]
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: hits
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
+        try:
+            state = AgentState(
+                normalized_text="继续刚才那个工作压力的问题",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(state, mode="counseling", limit=3)
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
+
+        self.assertEqual([example.chunk_type for example in result.examples], ["session_sketch", "process_segment", "turn_pair"])
 
     def test_counseling_vector_row_keeps_source_metadata(self) -> None:
         row = counseling_chunk_to_vector_row(FakeChunk(), FakeSource(), [0.1, 0.2])
