@@ -33,6 +33,11 @@ def example_hit_to_dict(example: object) -> dict:
         "scenario_tags": list(getattr(example, "scenario_tags", None) or []),
         "intervention_tags": list(getattr(example, "intervention_tags", None) or []),
         "style_tags": list(getattr(example, "style_tags", None) or []),
+        "chunk_type": str(getattr(example, "chunk_type", "") or "turn_pair"),
+        "original_external_id": str(getattr(example, "original_external_id", "") or ""),
+        "phase": str(getattr(example, "phase", "") or ""),
+        "display_text": str(getattr(example, "display_text", "") or ""),
+        "process_quality_score": getattr(example, "process_quality_score", None),
     }
 
 

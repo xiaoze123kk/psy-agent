@@ -263,11 +263,57 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("RAG 不是事实依据", captured["system"])
         self.assertIn("表层陪伴风格", captured["prompt"])
         self.assertIn("内部对话策略", captured["prompt"])
-        self.assertIn("RAG few-shot references", captured["prompt"])
+        self.assertIn("RAG references", captured["prompt"])
+        self.assertIn("Turn style reference", captured["prompt"])
         self.assertIn("style_reference", captured["prompt"])
         self.assertIn("不是事实依据", captured["prompt"])
         self.assertIn("撑了很久", body)
         self.assertEqual(actions, ["我还想说", "我想理清一点", "先停一下"])
+
+    def test_examples_text_groups_layered_rag_references(self) -> None:
+        from app.graphs.nodes.response_nodes import examples_text_from_state
+
+        state = self.make_state(
+            "继续刚才那个工作压力的问题",
+            retrieved_counseling_examples=[
+                {
+                    "chunk_type": "session_sketch",
+                    "display_text": "主要困扰：工作压力\n咨询师引导路径：共情承接 -> 澄清压力源",
+                    "content": "片段类型：整段咨询地图\n这是更长的 retrieval text，不应该完整展示",
+                    "source_key": "smilechat",
+                    "source_name": "SMILECHAT",
+                    "mode": "counseling",
+                    "score": 0.99,
+                },
+                {
+                    "chunk_type": "process_segment",
+                    "display_text": "阶段：exploration\n咨询师动作线索：reflection",
+                    "content": "片段类型：咨询过程片段\n长对话原文不应该完整展示",
+                    "source_key": "smilechat",
+                    "source_name": "SMILECHAT",
+                    "mode": "counseling",
+                    "score": 0.95,
+                },
+                {
+                    "chunk_type": "turn_pair",
+                    "display_text": "用户：我很累\n咨询回应：先慢一点。",
+                    "content": "用户：我很累\n咨询回应：先慢一点。",
+                    "source_key": "smilechat",
+                    "source_name": "SMILECHAT",
+                    "mode": "vent",
+                    "score": 0.9,
+                },
+            ],
+        )
+
+        text = examples_text_from_state(state)
+
+        self.assertIn("--- Session map reference ---", text)
+        self.assertIn("--- Process reference ---", text)
+        self.assertIn("--- Turn style reference ---", text)
+        self.assertIn("主要困扰：工作压力", text)
+        self.assertNotIn("这是更长的 retrieval text，不应该完整展示", text)
+        self.assertNotIn("长对话原文不应该完整展示", text)
 
     def test_companion_style_prompt_merges_default_with_custom_text(self) -> None:
         self.assertEqual(build_companion_style_prompt(""), DEFAULT_COMPANION_STYLE_PROMPT)
