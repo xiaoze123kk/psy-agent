@@ -79,6 +79,11 @@ class CounselingExampleHit:
     language: str | None = None
     age_group: str | None = None
     risk_allowed: str | None = None
+    chunk_type: str = "turn_pair"
+    original_external_id: str | None = None
+    phase: str | None = None
+    display_text: str | None = None
+    process_quality_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +142,11 @@ def counseling_chunk_to_vector_row(
         "contraindications": ",".join(_as_text_list(meta.get("contraindications"))),
         "quality_score": str(meta.get("quality_score", "")),
         "safety_score": str(meta.get("safety_score", "")),
+        "chunk_type": str(meta.get("chunk_type") or "turn_pair"),
+        "original_external_id": str(meta.get("original_external_id") or chunk.external_id),
+        "phase": str(meta.get("phase") or ""),
+        "display_text": str(meta.get("display_text") or ""),
+        "process_quality_score": str(meta.get("process_quality_score", "")),
         "vector": vector,
     }
 
@@ -274,6 +284,11 @@ async def retrieve_counseling_examples_with_trace(
                 language=str(hit.entity.get("language") or "zh-CN"),
                 age_group=str(hit.entity.get("age_group") or "general"),
                 risk_allowed=str(hit.entity.get("risk_allowed") or "non_crisis"),
+                chunk_type=str(hit.entity.get("chunk_type") or "turn_pair"),
+                original_external_id=str(hit.entity.get("original_external_id") or hit.entity.get("external_id") or ""),
+                phase=str(hit.entity.get("phase") or "") or None,
+                display_text=str(hit.entity.get("display_text") or "") or None,
+                process_quality_score=_to_float(hit.entity.get("process_quality_score")),
             )
         )
     trace["status"] = "hit" if examples else "empty"

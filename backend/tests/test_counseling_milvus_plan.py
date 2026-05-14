@@ -29,6 +29,14 @@ class FakeChunk:
     license = None
     status = "published"
     content = "用户：我觉得没人理解我\n咨询回应：这听起来很孤单。"
+    meta = {
+        "chunk_type": "process_segment",
+        "original_external_id": "dialog-original",
+        "phase": "exploration",
+        "display_text": "阶段：exploration\n用户情绪线索：hurt",
+        "process_quality_score": 0.76,
+    }
+    tags = ["vent", "关系"]
 
 
 class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
@@ -70,6 +78,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         original_is_available = counseling_vector_service.milvus_store.__class__.is_available
         original_embed_query = counseling_vector_service.embedding_client.embed_query
         original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
 
         async def fake_embed_query(text: str):
             await asyncio.sleep(0)
@@ -88,6 +97,11 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
                 "risk_allowed": "non_crisis",
                 "language": "zh-CN",
                 "chunk_id": "chunk-trace",
+                "chunk_type": "process_segment",
+                "original_external_id": "case-trace",
+                "phase": "exploration",
+                "display_text": "阶段：exploration\n用户情绪线索：anxiety",
+                "process_quality_score": "0.82",
             },
         )
 
@@ -95,6 +109,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
         counseling_vector_service.embedding_client.embed_query = fake_embed_query
         counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: [hit]
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
         try:
             state = AgentState(
                 normalized_text="我最近压力很大，晚上睡不着",
@@ -112,6 +127,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
             counseling_vector_service.milvus_store.__class__.is_available = original_is_available
             counseling_vector_service.embedding_client.embed_query = original_embed_query
             counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
 
         self.assertEqual(len(result.examples), 1)
         self.assertEqual(result.trace["status"], "hit")
@@ -119,6 +135,11 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("embedding_duration_ms", result.trace)
         self.assertIn("milvus_duration_ms", result.trace)
         self.assertIn("total_duration_ms", result.trace)
+        self.assertEqual(result.examples[0].chunk_type, "process_segment")
+        self.assertEqual(result.examples[0].original_external_id, "case-trace")
+        self.assertEqual(result.examples[0].phase, "exploration")
+        self.assertEqual(result.examples[0].display_text, "阶段：exploration\n用户情绪线索：anxiety")
+        self.assertEqual(result.examples[0].process_quality_score, 0.82)
 
     def test_milvus_disabled_returns_no_hits(self) -> None:
         store = MilvusVectorStore()
@@ -140,6 +161,30 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["license"], "CC0-1.0")
         self.assertEqual(row["status"], "published")
         self.assertEqual(row["embedding_key"], counseling_vector_service.embedding_client.embedding_key)
+        self.assertEqual(row["chunk_type"], "process_segment")
+        self.assertEqual(row["original_external_id"], "dialog-original")
+        self.assertEqual(row["phase"], "exploration")
+        self.assertEqual(row["display_text"], "阶段：exploration\n用户情绪线索：hurt")
+        self.assertEqual(row["process_quality_score"], "0.76")
+
+    def test_counseling_search_requests_layered_metadata_fields(self) -> None:
+        store = MilvusVectorStore()
+        store.enabled = True
+        captured: dict[str, object] = {}
+
+        def fake_search_rest(*args: object, **kwargs: object) -> list[VectorHit]:
+            captured.update(kwargs)
+            return []
+
+        store._search_rest = fake_search_rest  # type: ignore[method-assign]
+        store.search_counseling_examples([0.1] * store.dim)
+
+        output_fields = captured["output_fields"]
+        self.assertIn("chunk_type", output_fields)
+        self.assertIn("original_external_id", output_fields)
+        self.assertIn("phase", output_fields)
+        self.assertIn("display_text", output_fields)
+        self.assertIn("process_quality_score", output_fields)
 
 
 class CounselingCorpusImportTests(unittest.TestCase):
