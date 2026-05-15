@@ -188,6 +188,30 @@ python scripts/index_milvus.py --target knowledge --missing-only
 
 运行时默认检索 `1` 个 `process_segment` 和 `2` 个 `turn_pair`；续聊类 query 会允许 `1` 个 `session_sketch`、`1` 个 `process_segment` 和 `1` 个 `turn_pair`。prompt 中会优先展示 `display_text`，不会把较长的 `retrieval_text/content` 原样放进模型上下文。
 
+咨询 RAG 的运行链路是：先对用户 query 做 embedding，再用 Milvus 按 `COUNSELING_RECALL_TOP_N` 做粗召回，然后在本地用 `COUNSELING_RERANK_MODEL` 对候选 chunk 重排，最后把筛选后的参考片段写入 prompt。默认重排模型是 `BAAI/bge-reranker-v2-m3`，但本地模型重排默认关闭；安装本地 embedding/model 依赖并准备好模型缓存后，才在 `.env.local` 中把 `COUNSELING_RERANK_ENABLED` 设为 `1`。
+
+`.env.local` 示例：
+
+```dotenv
+COUNSELING_RERANK_ENABLED=0
+COUNSELING_RERANK_MODEL=BAAI/bge-reranker-v2-m3
+COUNSELING_RECALL_TOP_N=40
+COUNSELING_RERANK_TOP_N=12
+COUNSELING_RERANK_BATCH_SIZE=8
+COUNSELING_RERANK_MAX_LENGTH=1024
+COUNSELING_RERANK_TIMEOUT_SECONDS=20
+```
+
+如果重排关闭、模型不可用、超时或返回异常分数，检索会回退到确定性的 chunk 配额选择，聊天流程应继续进行。调试时可查看 `rag_trace_summary` / RAG trace 中的 `recall_top_n`、`rerank_status`、`rerank_reason`、`rerank_scored_count`、`rerank_duration_ms` 等字段；正常模型命中通常是 `rerank_status=hit`，回退路径会是 `fallback` 并带上原因。
+
+不需要下载模型的快速 smoke：
+
+```bash
+python -m pytest tests/test_counseling_reranker.py tests/test_counseling_milvus_plan.py tests/test_conversation_control_rag.py -q
+```
+
+可选的本地 live smoke：启动 Milvus，导入并索引咨询语料，安装 `requirements-local-embedding.txt`，在 `.env.local` 设置 `MILVUS_ENABLED=1`、`COUNSELING_RAG_ENABLED=1`、`COUNSELING_RERANK_ENABLED=1`，再运行终端对话。预期 `rag_trace_summary.rerank_status` 在模型可用时为 `hit`；如果本地模型缺失、超时或输出不可用，应为 `fallback`，并在 `rerank_reason` 中说明原因。
+
 导入并索引已审核的中文咨询对话语料：
 
 ```bash
