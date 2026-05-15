@@ -122,6 +122,43 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["retrieved_counseling_examples"][0]["chunk_id"], "chunk-1")
         self.assertEqual(result["rag_skipped_reason"], "")
 
+    def test_example_hit_to_dict_serializes_rerank_metadata(self) -> None:
+        hit = CounselingExampleHit(
+            content="user: tired\nassistant: slow down",
+            source_key="smilechat",
+            source_name="SMILECHAT",
+            mode="soothe",
+            source_url=None,
+            license="CC0-1.0",
+            score=0.91,
+            chunk_id="chunk-rerank",
+            rerank_score=0.9123,
+            rerank_reasons=["model_rerank", "chunk_type:turn_pair"],
+        )
+
+        result = rag_nodes.example_hit_to_dict(hit)
+
+        self.assertEqual(result["rerank_score"], 0.9123)
+        self.assertEqual(result["rerank_reasons"], ["model_rerank", "chunk_type:turn_pair"])
+
+    def test_example_hit_to_dict_ignores_invalid_rerank_score(self) -> None:
+        hit = CounselingExampleHit(
+            content="user: tired\nassistant: slow down",
+            source_key="smilechat",
+            source_name="SMILECHAT",
+            mode="soothe",
+            source_url=None,
+            license="CC0-1.0",
+            score=0.91,
+            rerank_score="n/a",  # type: ignore[arg-type]
+            rerank_reasons="model_rerank",  # type: ignore[arg-type]
+        )
+
+        result = rag_nodes.example_hit_to_dict(hit)
+
+        self.assertIsNone(result["rerank_score"])
+        self.assertEqual(result["rerank_reasons"], ["model_rerank"])
+
     def test_rag_timeout_is_visible_and_does_not_block_generation_path(self) -> None:
         state = self.make_state("最近压力很大，晚上睡不着", intent="soothe")
         state.update(_run(control_plane(state)))
@@ -468,6 +505,8 @@ class ConversationControlRagTests(unittest.TestCase):
                     "source_name": "SMILECHAT",
                     "mode": "counseling",
                     "score": 0.99,
+                    "rerank_score": 0.9123,
+                    "rerank_reasons": ["model_rerank"],
                 },
                 {
                     "chunk_type": "process_segment",
@@ -477,6 +516,8 @@ class ConversationControlRagTests(unittest.TestCase):
                     "source_name": "SMILECHAT",
                     "mode": "counseling",
                     "score": 0.95,
+                    "rerank_score": None,
+                    "rerank_reasons": ["reranker_disabled"],
                 },
                 {
                     "chunk_type": "turn_pair",
@@ -495,9 +536,40 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("--- Session map reference ---", text)
         self.assertIn("--- Process reference ---", text)
         self.assertIn("--- Turn style reference ---", text)
+        self.assertIn("Rerank: 0.9123 (model_rerank)", text)
+        self.assertIn("Use hint: stronger relevance signal", text)
+        self.assertIn("Rerank: fallback (reranker_disabled)", text)
+        self.assertIn("Use hint: weak style reference", text)
         self.assertIn("主要困扰：工作压力", text)
         self.assertNotIn("这是更长的 retrieval text，不应该完整展示", text)
         self.assertNotIn("长对话原文不应该完整展示", text)
+
+    def test_examples_text_treats_invalid_rerank_metadata_as_weak_fallback(self) -> None:
+        from app.graphs.nodes.response_nodes import examples_text_from_state
+
+        state = self.make_state(
+            "继续聊压力",
+            retrieved_counseling_examples=[
+                {
+                    "chunk_type": "turn_pair",
+                    "display_text": "用户：我很累\n咨询回应：先慢一点。",
+                    "content": "用户：我很累\n咨询回应：先慢一点。",
+                    "source_key": "smilechat",
+                    "source_name": "SMILECHAT",
+                    "mode": "vent",
+                    "score": 0.9,
+                    "rerank_score": "n/a",
+                    "rerank_reasons": "model_rerank",
+                }
+            ],
+        )
+
+        text = examples_text_from_state(state)
+
+        self.assertIn("Rerank: fallback (model_rerank)", text)
+        self.assertIn("Use hint: weak style reference", text)
+        self.assertNotIn("Rerank: 0.", text)
+        self.assertNotIn("Use hint: stronger relevance signal", text)
 
     def test_companion_style_prompt_merges_default_with_custom_text(self) -> None:
         self.assertEqual(build_companion_style_prompt(""), DEFAULT_COMPANION_STYLE_PROMPT)

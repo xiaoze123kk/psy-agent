@@ -7,7 +7,7 @@ from langgraph.config import get_stream_writer
 
 from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply, safe_trim
 from app.graphs.nodes.control_nodes import base_contract
-from app.graphs.nodes.rag_nodes import example_hit_to_dict
+from app.graphs.nodes.rag_nodes import coerce_optional_float, coerce_string_list, example_hit_to_dict
 from app.services import tooling as dialogue_tooling
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
@@ -119,14 +119,32 @@ async def _streamed_reply_with_actions(messages: list[dict[str, str]]) -> tuple[
 def _rag_reference_line(index: int, example: dict) -> list[str]:
     tags = ", ".join(str(tag) for tag in example.get("intervention_tags", []) if tag)
     display_text = example.get("display_text") or example.get("content")
-    return [
+    lines = [
         f"[Reference {index}]",
         f"Source: {safe_trim(example.get('source_name') or example.get('source_key'), 40)}",
         f"Mode: {safe_trim(example.get('mode'), 20)}",
         f"Score: {float(example.get('score') or 0.0):.4f}",
-        f"Intervention tags: {safe_trim(tags, 80)}",
-        f"Content: {safe_trim(display_text, 300)}",
     ]
+    rerank_reasons = coerce_string_list(example.get("rerank_reasons"))
+    rerank_score = coerce_optional_float(example.get("rerank_score"))
+    if rerank_score is not None or rerank_reasons:
+        reason_text = ", ".join(rerank_reasons[:2])
+        reason_suffix = f" ({safe_trim(reason_text, 60)})" if reason_text else ""
+        if rerank_score is None:
+            lines.append(f"Rerank: fallback{reason_suffix}")
+        else:
+            lines.append(f"Rerank: {float(rerank_score):.4f}{reason_suffix}")
+        if rerank_score is not None and "model_rerank" in rerank_reasons:
+            lines.append("Use hint: stronger relevance signal")
+        else:
+            lines.append("Use hint: weak style reference")
+    lines.extend(
+        [
+            f"Intervention tags: {safe_trim(tags, 80)}",
+            f"Content: {safe_trim(display_text, 300)}",
+        ]
+    )
+    return lines
 
 
 def examples_text_from_state(state: AgentState) -> str:

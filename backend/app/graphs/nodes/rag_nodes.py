@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 
 from app.core.config import settings
 from app.graphs.nodes.common import AgentState
@@ -18,9 +19,33 @@ def response_mode_for_state(state: AgentState) -> str:
     return "companion"
 
 
+def coerce_optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def coerce_string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if item]
+    return []
+
+
 def example_hit_to_dict(example: object) -> dict:
     if isinstance(example, dict):
-        return dict(example)
+        serialized = dict(example)
+        if "rerank_score" in serialized or "rerank_reasons" in serialized:
+            serialized["rerank_score"] = coerce_optional_float(serialized.get("rerank_score"))
+            serialized["rerank_reasons"] = coerce_string_list(serialized.get("rerank_reasons"))
+        return serialized
     return {
         "content": str(getattr(example, "content", "") or ""),
         "source_key": str(getattr(example, "source_key", "") or ""),
@@ -38,6 +63,8 @@ def example_hit_to_dict(example: object) -> dict:
         "phase": str(getattr(example, "phase", "") or ""),
         "display_text": str(getattr(example, "display_text", "") or ""),
         "process_quality_score": getattr(example, "process_quality_score", None),
+        "rerank_score": coerce_optional_float(getattr(example, "rerank_score", None)),
+        "rerank_reasons": coerce_string_list(getattr(example, "rerank_reasons", None)),
     }
 
 
