@@ -92,7 +92,7 @@ def _safe_limit(limit: int) -> int:
 def _quota_for_query(query: str, limit: int) -> dict[str, int]:
     if any(pattern in query for pattern in CONTINUATION_PATTERNS):
         return {"session_sketch": 1, "process_segment": 1, "turn_pair": max(limit - 2, 0)}
-    return {"process_segment": 1, "session_sketch": 1, "turn_pair": max(limit - 2, 0)}
+    return {"process_segment": 1, "turn_pair": max(limit - 1, 0)}
 
 
 def _with_reason(candidate: RerankCandidate, *, score: float, reason: str) -> RerankCandidate:

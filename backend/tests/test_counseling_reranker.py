@@ -39,7 +39,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(candidate.distance, 0.18)
         self.assertEqual(candidate.metadata["display_text"], "display turn")
 
-    def test_fallback_selects_process_session_and_turn_pairs(self) -> None:
+    def test_fallback_selects_process_and_turn_pairs_for_ordinary_queries(self) -> None:
         candidates = [
             self.candidate("process", vector_score=0.80, chunk_type="process_segment"),
             self.candidate("session", vector_score=0.79, chunk_type="session_sketch"),
@@ -52,7 +52,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [item.chunk_type for item in selected],
-            ["process_segment", "session_sketch", "turn_pair", "turn_pair"],
+            ["process_segment", "turn_pair", "turn_pair", "turn_pair"],
         )
 
     def test_fallback_supports_legacy_keyword_call_shape(self) -> None:
@@ -164,6 +164,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
             self.candidate("process", vector_score=0.8, chunk_type="process_segment"),
             self.candidate("session", vector_score=0.7, chunk_type="session_sketch"),
             self.candidate("turn", vector_score=0.6, chunk_type="turn_pair"),
+            self.candidate("turn-2", vector_score=0.5, chunk_type="turn_pair"),
         ]
         model_reranker._score_pairs = fail_score_pairs
         object.__setattr__(settings, "counseling_rerank_enabled", False)
@@ -180,7 +181,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "fallback")
         self.assertEqual(result.reason, "reranker_disabled")
-        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "session", "turn"])
+        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "turn", "turn-2"])
 
     async def test_rerank_falls_back_when_worker_raises(self) -> None:
         original_score_pairs = model_reranker._score_pairs
@@ -194,6 +195,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
             self.candidate("process", vector_score=0.8, chunk_type="process_segment"),
             self.candidate("session", vector_score=0.7, chunk_type="session_sketch"),
             self.candidate("turn", vector_score=0.6, chunk_type="turn_pair"),
+            self.candidate("turn-2", vector_score=0.5, chunk_type="turn_pair"),
         ]
         model_reranker._score_pairs = fake_score_pairs
         object.__setattr__(settings, "counseling_rerank_enabled", True)
@@ -212,7 +214,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "fallback")
         self.assertEqual(result.reason, "reranker_unavailable")
-        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "session", "turn"])
+        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "turn", "turn-2"])
 
     async def test_rerank_falls_back_when_worker_returns_non_finite_score(self) -> None:
         original_score_pairs = model_reranker._score_pairs
@@ -220,12 +222,13 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
         original_model = model_reranker.model
 
         async def fake_score_pairs(query: str, documents: list[str], *, timeout_seconds: float) -> list[float] | None:
-            return [float("nan"), 0.9, float("inf")]
+            return [float("nan"), 0.9, float("inf"), 0.2]
 
         candidates = [
             self.candidate("process", vector_score=0.8, chunk_type="process_segment"),
             self.candidate("session", vector_score=0.7, chunk_type="session_sketch"),
             self.candidate("turn", vector_score=0.6, chunk_type="turn_pair"),
+            self.candidate("turn-2", vector_score=0.5, chunk_type="turn_pair"),
         ]
         model_reranker._score_pairs = fake_score_pairs
         object.__setattr__(settings, "counseling_rerank_enabled", True)
@@ -244,7 +247,7 @@ class CounselingModelRerankerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "fallback")
         self.assertEqual(result.reason, "reranker_unavailable")
-        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "session", "turn"])
+        self.assertEqual([item.chunk_id for item in result.candidates], ["process", "turn", "turn-2"])
 
 
 if __name__ == "__main__":

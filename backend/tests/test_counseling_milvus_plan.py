@@ -232,9 +232,9 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [example.chunk_type for example in result.examples],
-            ["process_segment", "session_sketch", "turn_pair"],
+            ["process_segment", "turn_pair", "turn_pair"],
         )
-        self.assertEqual(result.trace["chunk_type_counts"], {"process_segment": 1, "session_sketch": 1, "turn_pair": 1})
+        self.assertEqual(result.trace["chunk_type_counts"], {"process_segment": 1, "turn_pair": 2})
 
     async def test_retrieval_uses_model_reranker_when_enabled(self) -> None:
         original_enabled = counseling_vector_service.milvus_store.enabled
