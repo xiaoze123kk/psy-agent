@@ -90,6 +90,13 @@ class Settings:
     dashscope_base_url: str
     embedding_timeout_seconds: float
     embedding_query_cache_size: int
+    counseling_rerank_enabled: bool
+    counseling_rerank_model: str
+    counseling_recall_top_n: int
+    counseling_rerank_top_n: int
+    counseling_rerank_batch_size: int
+    counseling_rerank_max_length: int
+    counseling_rerank_timeout_seconds: float
 
 
 def _default_database_url() -> str:
@@ -160,6 +167,14 @@ def load_settings() -> Settings:
         dashscope_base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         embedding_timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30")),
         embedding_query_cache_size=int(os.getenv("EMBEDDING_QUERY_CACHE_SIZE", "128")),
+        counseling_rerank_enabled=os.getenv("COUNSELING_RERANK_ENABLED", "0").lower()
+        in {"1", "true", "yes", "on"},
+        counseling_rerank_model=os.getenv("COUNSELING_RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
+        counseling_recall_top_n=int(os.getenv("COUNSELING_RECALL_TOP_N", "40")),
+        counseling_rerank_top_n=int(os.getenv("COUNSELING_RERANK_TOP_N", "12")),
+        counseling_rerank_batch_size=int(os.getenv("COUNSELING_RERANK_BATCH_SIZE", "8")),
+        counseling_rerank_max_length=int(os.getenv("COUNSELING_RERANK_MAX_LENGTH", "1024")),
+        counseling_rerank_timeout_seconds=float(os.getenv("COUNSELING_RERANK_TIMEOUT_SECONDS", "20")),
     )
 
 

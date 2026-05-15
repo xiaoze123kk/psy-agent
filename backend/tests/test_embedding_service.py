@@ -21,6 +21,33 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
+def test_counseling_reranker_settings_have_defaults() -> None:
+    from app.core.config import load_settings
+
+    reranker_env_keys = [
+        "COUNSELING_RERANK_ENABLED",
+        "COUNSELING_RERANK_MODEL",
+        "COUNSELING_RECALL_TOP_N",
+        "COUNSELING_RERANK_TOP_N",
+        "COUNSELING_RERANK_BATCH_SIZE",
+        "COUNSELING_RERANK_MAX_LENGTH",
+        "COUNSELING_RERANK_TIMEOUT_SECONDS",
+    ]
+
+    with patch.dict(os.environ, {}, clear=False):
+        for key in reranker_env_keys:
+            os.environ.pop(key, None)
+        settings = load_settings()
+
+    assert settings.counseling_rerank_enabled is False
+    assert settings.counseling_rerank_model == "BAAI/bge-reranker-v2-m3"
+    assert settings.counseling_recall_top_n == 40
+    assert settings.counseling_rerank_top_n == 12
+    assert settings.counseling_rerank_batch_size == 8
+    assert settings.counseling_rerank_max_length == 1024
+    assert settings.counseling_rerank_timeout_seconds == 20.0
+
+
 class FakeBGEM3FlagModel:
     init_args: tuple[object, ...] = ()
     init_kwargs: dict[str, object] = {}
