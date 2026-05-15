@@ -17,6 +17,9 @@ VALIDATOR_FORBIDDEN_PATTERNS = [
 ]
 UNSAFE_ACTION_TERMS = ("自杀", "自残", "报复", "弄死", "杀", "停药", "催吐", "联系他", "去找他", "搜索方法")
 ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "12356", "988", "911"}
+EXPERIENCE_BANNED_TERMS = ("接住",)
+MORALIZING_TERMS = ("珍惜生命", "世界还有很多美好", "想想你的家人")
+FIRST_TURN_REFERRAL_TERMS = ("心理咨询师", "精神科", "医院心理门诊", "尽快就医")
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -44,11 +47,34 @@ def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> li
     return sorted(set(reasons))
 
 
+def experience_validator_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
+    reasons: list[str] = []
+    for term in EXPERIENCE_BANNED_TERMS:
+        if term in text or any(term in action for action in actions):
+            reasons.append(f"banned_phrase:{term}")
+    if any(term in text for term in MORALIZING_TERMS):
+        reasons.append("moralizing_reassurance")
+    policy = state.get("risk_response_policy") if isinstance(state.get("risk_response_policy"), dict) else {}
+    risk_level = state.get("risk_level", "L0")
+    if risk_level in {"L2", "L3"} and str(policy.get("risk_phase") or "first_contact") == "first_contact":
+        if any(term in text for term in FIRST_TURN_REFERRAL_TERMS) or any(
+            any(term in action for term in FIRST_TURN_REFERRAL_TERMS) for action in actions
+        ):
+            reasons.append("professional_referral_first_turn")
+    budget = policy.get("char_budget") if isinstance(policy, dict) else {}
+    max_chars = budget.get("max") if isinstance(budget, dict) else None
+    if isinstance(max_chars, int) and len(text) > max_chars:
+        reasons.append("length_budget_exceeded")
+    if text.count("？") + text.count("?") > int(policy.get("max_questions", 1) if isinstance(policy, dict) else 1):
+        reasons.append("too_many_questions")
+    return sorted(set(reasons))
+
+
 def _validator_l2_safety_text() -> tuple[str, list[str]]:
     return (
         "我听见你现在已经难受到有点撑不住了。我们先不急着分析原因，先确认一件小事：你现在是安全的吗？"
-        "如果可以，先别一个人硬扛，联系一个可信任的人陪你一会儿；这类念头反复出现时，也建议尽快找心理咨询师、精神科或医院心理门诊一起看。"
-        "如果念头突然变得很急，或你担心自己会伤害自己，就要马上联系现实支持或急救资源。",
+        "如果可以，先别一个人硬扛，靠近一个可信任的人，或者只让自己坐下来停十秒。"
+        "不用把话说完整，回我一个字也可以。",
         ["我现在是安全的", "我能联系一个人", "我想先说一会儿"],
     )
 
@@ -75,7 +101,7 @@ def validator_safe_text(state: AgentState) -> tuple[str, list[str]]:
         )
     if route_priority == "P4_system_protection" or category in {"sexual_boundary", "abusive_to_assistant"}:
         return (
-            "我会守住安全边界，也会尽量接住你的情绪。我们先不往越界或危险的方向走，回到此刻最让你堵住的那一小块。",
+            "我会守住安全边界，也会认真听你说。我们先不往越界或危险的方向走，回到此刻最让你堵住的那一小块。",
             ["我现在很堵", "我想理一理", "先停一下"],
         )
     return (
@@ -107,7 +133,14 @@ def is_safety_delivery_path(state: AgentState) -> bool:
     )
 
 
-def failed_no_reply_validation_result(state: AgentState, *, reason: str, blocked: bool, reasons: list[str]) -> AgentState:
+def failed_no_reply_validation_result(
+    state: AgentState,
+    *,
+    reason: str,
+    blocked: bool,
+    reasons: list[str],
+    experience_reasons: list[str] | None = None,
+) -> AgentState:
     return {
         "assistant_text": "",
         "suggested_actions": [],
@@ -118,6 +151,7 @@ def failed_no_reply_validation_result(state: AgentState, *, reason: str, blocked
         "memory_policy_reason": reason,
         "validator_blocked": blocked,
         "validator_reasons": reasons,
+        "experience_validator_reasons": experience_reasons or [],
         "delivery_status": "failed_no_reply",
         "failure_reason": reason,
         "retryable": True,
@@ -130,6 +164,8 @@ async def response_validator(state: AgentState) -> AgentState:
     actions = [str(action) for action in state.get("suggested_actions", []) if str(action).strip()]
     examples = [dict(example) for example in state.get("retrieved_counseling_examples", []) if isinstance(example, dict)]
     reasons = validator_reasons(assistant_text, actions, examples)
+    experience_reasons = experience_validator_reasons(assistant_text, actions, state)
+    reasons = sorted(set(reasons + experience_reasons))
 
     if not assistant_text.strip():
         reason = "empty_model_reply"
@@ -140,12 +176,13 @@ async def response_validator(state: AgentState) -> AgentState:
                 "suggested_actions": safe_actions,
                 "validator_blocked": False,
                 "validator_reasons": [],
+                "experience_validator_reasons": [],
                 "delivery_status": "safety_fallback",
                 "failure_reason": reason,
                 "retryable": False,
                 "audit_tags": (state.get("audit_tags", []) or []) + ["empty_safety_fallback"],
             }
-        return failed_no_reply_validation_result(state, reason=reason, blocked=False, reasons=[])
+        return failed_no_reply_validation_result(state, reason=reason, blocked=False, reasons=[], experience_reasons=[])
 
     compact_text = "".join(assistant_text.split())
     if len(compact_text) < 8 and not is_safety_delivery_path(state):
@@ -154,12 +191,14 @@ async def response_validator(state: AgentState) -> AgentState:
             reason="too_short_model_reply",
             blocked=False,
             reasons=[],
+            experience_reasons=experience_reasons,
         )
 
     if not reasons:
         return {
             "validator_blocked": False,
             "validator_reasons": [],
+            "experience_validator_reasons": [],
             "suggested_actions": actions[:3],
             "delivery_status": "generated",
             "failure_reason": None,
@@ -169,7 +208,13 @@ async def response_validator(state: AgentState) -> AgentState:
 
     reason = "validator_blocked:" + ",".join(reasons)
     if not is_safety_delivery_path(state):
-        return failed_no_reply_validation_result(state, reason=reason, blocked=True, reasons=reasons)
+        return failed_no_reply_validation_result(
+            state,
+            reason=reason,
+            blocked=True,
+            reasons=reasons,
+            experience_reasons=experience_reasons,
+        )
 
     safe_text, safe_actions = validator_safe_text(state)
     return {
@@ -177,6 +222,7 @@ async def response_validator(state: AgentState) -> AgentState:
         "suggested_actions": safe_actions,
         "validator_blocked": True,
         "validator_reasons": reasons,
+        "experience_validator_reasons": experience_reasons,
         "delivery_status": "safety_fallback",
         "failure_reason": reason,
         "retryable": False,

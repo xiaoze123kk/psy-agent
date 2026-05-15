@@ -5,6 +5,33 @@ import unittest
 from app.services.graph_runtime import GraphRuntime
 
 
+def test_map_result_includes_risk_policy_metadata() -> None:
+    runtime = object.__new__(GraphRuntime)
+    result = runtime._map_result(
+        {
+            "assistant_text": "我在。",
+            "risk_level": "L3",
+            "risk_domain": "self_harm",
+            "immediacy": "near_term",
+            "risk_confidence": "high",
+            "protective_signals": ["still_talking"],
+            "risk_phase": "first_contact",
+            "risk_response_policy": {"length_profile": "brief_first_contact"},
+            "tool_gate_mode": "safety_context",
+            "safety_context_pack": {"schema_version": 1},
+            "experience_validator_reasons": [],
+            "delivery_status": "generated",
+        },
+        retrieved_memories=[],
+    )
+
+    assert result["risk_domain"] == "self_harm"
+    assert result["immediacy"] == "near_term"
+    assert result["risk_phase"] == "first_contact"
+    assert result["tool_gate_mode"] == "safety_context"
+    assert result["risk_response_policy"]["length_profile"] == "brief_first_contact"
+
+
 class FakeStreamingGraph:
     async def astream(self, input_state, config=None, stream_mode=None):
         yield {

@@ -77,6 +77,12 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
     }
     safe_keys = (
         "risk_level",
+        "risk_domain",
+        "immediacy",
+        "risk_confidence",
+        "protective_signals",
+        "risk_phase",
+        "tool_gate_mode",
         "risk_source",
         "requires_safety_check",
         "intent",
@@ -89,6 +95,7 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
         "rag_trace_summary",
         "validator_blocked",
         "validator_reasons",
+        "experience_validator_reasons",
         "delivery_status",
         "failure_reason",
         "retryable",
@@ -180,6 +187,7 @@ class GraphRuntime:
         crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ) -> dict[str, object]:
         return {
             "thread_id": thread_id,
@@ -206,6 +214,7 @@ class GraphRuntime:
             },
             "memory_index": memory_index or [],
             "retrieved_memories": retrieved_memories or [],
+            "safety_context_pack": safety_context_pack or {},
         }
 
     def _graph_config(self, *, thread_id: str, user_id: str) -> dict[str, object]:
@@ -244,6 +253,14 @@ class GraphRuntime:
         mapped = {
             "assistant_text": assistant_text,
             "risk_level": risk_level,
+            "risk_domain": result.get("risk_domain", ""),
+            "immediacy": result.get("immediacy", ""),
+            "risk_confidence": result.get("risk_confidence", ""),
+            "protective_signals": result.get("protective_signals", []),
+            "risk_phase": result.get("risk_phase", ""),
+            "risk_response_policy": result.get("risk_response_policy", {}),
+            "tool_gate_mode": result.get("tool_gate_mode", ""),
+            "safety_context_pack": result.get("safety_context_pack", {}),
             "intent": result.get("intent", "other"),
             "risk_reasons": result.get("risk_reasons", []),
             "semantic_risk": result.get("semantic_risk", {}),
@@ -275,6 +292,7 @@ class GraphRuntime:
             ],
             "validator_blocked": bool(result.get("validator_blocked", False)),
             "validator_reasons": result.get("validator_reasons", []),
+            "experience_validator_reasons": result.get("experience_validator_reasons", []),
             "suggested_actions": [] if delivery_status == "failed_no_reply" else result.get("suggested_actions", []),
             "session_summary": "" if delivery_status == "failed_no_reply" else result.get("session_summary", ""),
             "session_digest": {} if delivery_status == "failed_no_reply" else result.get("session_digest", {}),
@@ -332,6 +350,7 @@ class GraphRuntime:
         crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ) -> dict[str, object]:
         input_state = self._build_input_state(
             thread_id=thread_id,
@@ -351,6 +370,7 @@ class GraphRuntime:
             crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
+            safety_context_pack=safety_context_pack,
         )
         result, graph_trace = await self._invoke_graph_with_trace(
             input_state,
@@ -377,6 +397,7 @@ class GraphRuntime:
         crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ):
         input_state = self._build_input_state(
             thread_id=thread_id,
@@ -396,6 +417,7 @@ class GraphRuntime:
             crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
+            safety_context_pack=safety_context_pack,
         )
         config = self._graph_config(thread_id=thread_id, user_id=user_id)
         state = dict(input_state)

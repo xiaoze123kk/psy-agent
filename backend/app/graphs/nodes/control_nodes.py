@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.graphs.nodes.common import AgentState, has_any_text, matched_text
+from app.services.risk_policy import build_risk_response_policy, tool_gate_mode_for_state
 
 
 SELF_HARM_TERMS = (
@@ -277,8 +278,25 @@ async def control_plane(state: AgentState) -> AgentState:
         contract["max_chars"] = 120
 
     rag_skip_reason = "" if allow_rag else f"{route_priority}:{category}"
+    policy_state = {
+        **state,
+        "risk_level": risk_level,
+        "control_category": category,
+        "control_confidence": confidence,
+        "semantic_risk": semantic_risk,
+        "risk_reason_codes": risk_reason_codes,
+    }
+    risk_response_policy = build_risk_response_policy(policy_state)
+    tool_gate_mode = tool_gate_mode_for_state(policy_state)
     return {
         "risk_level": risk_level,
+        "risk_domain": risk_response_policy["risk_domain"],
+        "immediacy": risk_response_policy["immediacy"],
+        "risk_confidence": risk_response_policy["risk_confidence"],
+        "protective_signals": risk_response_policy["protective_signals"],
+        "risk_phase": risk_response_policy["risk_phase"],
+        "risk_response_policy": risk_response_policy,
+        "tool_gate_mode": tool_gate_mode,
         "route_priority": route_priority,
         "control_category": category,
         "control_reasons": reasons[:6],

@@ -11,6 +11,7 @@ from app.graphs.nodes.rag_nodes import example_hit_to_dict
 from app.services import tooling as dialogue_tooling
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
+from app.services.risk_policy import build_risk_response_policy, default_actions_for_policy
 
 
 logger = logging.getLogger(__name__)
@@ -310,45 +311,82 @@ def _needs_immediate_safety_response(state: AgentState) -> bool:
     return state.get("risk_level") == "L3" or "near_term_or_means_signal" in _risk_labels(state)
 
 
-def _l2_crisis_reply(*, teen_mode: bool) -> tuple[str, list[str]]:
+def _policy_for_state(state: AgentState) -> dict:
+    policy = state.get("risk_response_policy")
+    if isinstance(policy, dict) and policy:
+        return policy
+    return build_risk_response_policy(state)
+
+
+def _self_harm_first_contact_text(policy: dict, *, teen_mode: bool) -> str:
     if teen_mode:
         return (
-            "我听见你现在有想伤害自己、或不想活下去的念头，这不是一句可以被轻轻带过的话，但我也不会一下子把你推到流程里。"
-            "我们先陪你把这一刻稳住：你现在是安全的吗，身边有没有一个可信的大人可以知道你现在很难受？"
-            "如果可以，先找家长、监护人、老师或学校心理老师陪你一会儿；这类念头反复出现时，也值得尽快让心理老师、咨询师或医生一起帮你看。"
-            "如果念头突然变得很急、你担心自己会做出伤害自己的事，再立刻找身边的人或急救资源。"
-        ), ["联系家长或监护人", "找老师或学校心理老师", "我现在是安全的", "我想先说一会儿"]
-
+            "你现在已经痛到很难再撑了。我们先不讲以后，也不急着分析原因，只先把这一分钟过掉。"
+            "你能不能先让那个东西离你远一点，或者从那个位置退一步？"
+            "如果旁边能喊到家长、监护人或可信的大人，只用把人叫到身边。"
+            "不用解释，回我一个字也可以。"
+        )
     return (
-        "我听见你现在有想伤害自己、或不想活下去的念头，这通常是在说：你已经难受到有点撑不住了。"
-        "我先陪你待在这里，不急着分析原因，也不把你一下子推到危机流程里。"
-        "先确认一件小事：你现在是安全的吗？如果可以，别一个人硬扛，先联系一个可信任的人陪你一会儿。"
-        "这类念头反复出现时，建议尽快找专业心理咨询师、精神科或医院心理门诊聊一聊；如果它突然变得很急，或你担心自己会伤害自己，就要马上联系现实支持或急救资源。"
-    ), ["我现在是安全的", "我能联系一个人", "我想先说一会儿", "我想了解就医"]
+        "你现在已经痛到很难再撑了。我们先不讲以后，也不分析原因，只先把这一分钟过掉。"
+        "你能不能先让那个东西离你远一点，或者从那个位置退一步？"
+        "回我一个字也可以。"
+    )
 
 
-def _l3_crisis_reply(*, teen_mode: bool) -> tuple[str, list[str]]:
+def _self_harm_steady_text(policy: dict, *, teen_mode: bool) -> str:
+    if policy.get("length_profile") == "holding_longer":
+        return (
+            "好，我们先不把你推去任何地方，也不急着说大道理。我会跟你待在这一小段里。"
+            "这种冲动像一阵很高的浪，浪最高的时候，人很容易觉得只有一个出口。"
+            "但我们现在不需要证明以后会怎样，只要先别在浪最高的时候做决定。"
+            "你不用马上把话说清楚，也不用表现得稳定；哪怕现在只剩一点点力气，我们也可以先用这一点点力气把此刻拖慢。"
+            "你可以慢慢回我：这一刻最压着你的，是孤独、委屈、累，还是一种说不出来的空？"
+        )
     if teen_mode:
         return (
-            "我先不分析原因，我们先把你的安全稳住。你现在是一个人吗？身边有没有可能伤害自己的东西？"
-            "请先把它放远，去有人的地方，马上联系一个可信任的大人，比如家长、监护人、老师或学校心理老师。"
-            "在中国大陆也可以拨打 12356；如果已经可能马上伤害自己，请立刻拨打 120 或 110，或去最近急诊。"
-        ), ["联系家长或监护人", "联系老师或学校心理老师", "拨打 12356", "拨打 120 或 110"]
-
+            "我听见了，你现在已经很难受。我先陪你把这一刻放慢，不急着解释全部原因，也不把你推到任何流程里。"
+            "你现在是安全的吗？如果旁边有家长、监护人或可信的大人，可以先让对方知道你现在不太稳。"
+            "不用说完整，回我“还在”也可以。"
+        )
     return (
-        "我先不分析原因，我们先把你现在的安全稳住。你现在是一个人吗？身边有没有可能伤害自己的东西？"
-        "请先把它放远，去有人的地方，马上联系一个可信任的人。"
-        "在中国大陆可以拨打 12356；如果已经可能马上伤害自己或别人，请立刻拨打 120 或 110，或去最近急诊/精神科急诊。"
-    ), ["联系可信任的人", "远离危险物品", "拨打 12356", "拨打 120 或 110"]
+        "我听见了，你现在已经很难受。我先陪你把这一刻放慢，不急着解释全部原因。"
+        "你现在是安全的吗？如果可以，先靠近一个可信任的人，或者只让自己坐下来停十秒。"
+        "不用把话说完整，回我一个字也可以。"
+    )
+
+
+def _self_harm_reply_for_policy(policy: dict, *, teen_mode: bool) -> str:
+    phase = str(policy.get("risk_phase") or "first_contact")
+    immediacy = str(policy.get("immediacy") or "vague")
+    if phase == "first_contact" and immediacy in {"near_term", "active"}:
+        return _self_harm_first_contact_text(policy, teen_mode=teen_mode)
+    return _self_harm_steady_text(policy, teen_mode=teen_mode)
+
+
+def _actions_for_policy(policy: dict, *, teen_mode: bool) -> list[str]:
+    if teen_mode and str(policy.get("risk_domain") or "") == "self_harm":
+        return ["联系家长或监护人", "找一个可信的大人", "我还在", "请继续跟我说"]
+    return default_actions_for_policy(policy)
 
 
 async def crisis_response(state: AgentState) -> AgentState:
     teen_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult")) == "teen"
-    if _needs_immediate_safety_response(state):
-        assistant_text, actions = _l3_crisis_reply(teen_mode=teen_mode)
-    else:
-        assistant_text, actions = _l2_crisis_reply(teen_mode=teen_mode)
-    return {"assistant_text": assistant_text, "suggested_actions": actions}
+    policy = _policy_for_state(state)
+    domain = str(policy.get("risk_domain") or "self_harm")
+    if domain == "self_harm":
+        assistant_text = _self_harm_reply_for_policy(policy, teen_mode=teen_mode)
+        actions = _actions_for_policy(policy, teen_mode=teen_mode)
+        return {
+            "assistant_text": assistant_text,
+            "suggested_actions": actions,
+            "risk_response_policy": policy,
+        }
+    assistant_text = "我在。我们先把这一刻放慢一点，不急着做决定，也不往危险方向走。你可以只说现在最强的感觉是什么。"
+    return {
+        "assistant_text": assistant_text,
+        "suggested_actions": _actions_for_policy(policy, teen_mode=teen_mode),
+        "risk_response_policy": policy,
+    }
 
 
 async def boundary_response(state: AgentState) -> AgentState:

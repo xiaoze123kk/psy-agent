@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from app.graphs.nodes import response_nodes
 
 
-async def fake_action_stream(messages):
+async def fake_action_stream(messages, **_kwargs):
     del messages
     yield "Hel"
     yield "lo\n-"

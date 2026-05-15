@@ -415,8 +415,14 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual([item["memory_id"] for item in summary_only], [summary.id])
         self.assertNotIn(preference.id, [item["memory_id"] for item in summary_only])
         self.assertEqual(off_results, [])
-        self.assertEqual([item["memory_id"] for item in high_risk_results], [safety.id])
-        self.assertEqual([item["memory_id"] for item in high_risk_index], [safety.id])
+        self.assertEqual(
+            {item["memory_id"] for item in high_risk_results},
+            {safety.id, preference.id},
+        )
+        self.assertEqual(
+            {item["memory_id"] for item in high_risk_index},
+            {safety.id, preference.id},
+        )
 
     def test_summary_only_build_memory_index_respects_memory_types_before_limit(self) -> None:
         user = self.create_user(memory_mode="summary_only")

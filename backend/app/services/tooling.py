@@ -24,11 +24,15 @@ HIGH_RISK_LEVELS = frozenset({"L2", "L3"})
 ALL_RISK_LEVELS = LOW_RISK_LEVELS | HIGH_RISK_LEVELS
 MEMORY_TOOL_NAMES = frozenset({"search_memories", "save_memory_summary"})
 SAFETY_TOOL_NAMES = frozenset({"get_safety_resources"})
+SAFETY_CONTEXT_MEMORY_TYPES = frozenset({"safety_summary", "support_strategy", "preference", "correction", "relationship"})
+SAFETY_CONTEXT_TOOL_NAMES = frozenset({"search_memories", "get_safety_resources", "safe_web_search", "get_current_time", "summarize_session"})
+BLOCKED_CONTEXT_TOOL_NAMES = frozenset({"get_current_time", "summarize_session"})
 MAX_TOOL_PREVIEWS = 5
 DEFAULT_DIALOGUE_REPLY_MAX_TOKENS = 900
 
 VISIBLE_MEMORY_TYPES = {
     "profile",
+    "correction",
     "preference",
     "session_summary",
     "recurring_trigger",
@@ -139,18 +143,26 @@ class ToolGate:
     risk_level: str = "L0"
     memory_mode: str = "summary_only"
     knowledge_enabled: bool = False
+    tool_gate_mode: str = "normal_context"
 
     def allowed_tool_names(self) -> list[str]:
+        if self.tool_gate_mode == "blocked_context":
+            return [name for name in ["get_current_time", "summarize_session"] if self.allows(name)]
+        if self.tool_gate_mode == "safety_context" or self.risk_level in HIGH_RISK_LEVELS:
+            return [
+                name
+                for name in ["search_memories", "get_safety_resources", "safe_web_search", "get_current_time", "summarize_session"]
+                if self.allows(name)
+            ]
         names = []
-        high_risk = self.risk_level in HIGH_RISK_LEVELS
-        if not high_risk and self.memory_mode != "off":
+        if self.memory_mode != "off":
             names.extend(["search_memories", "save_memory_summary"])
         names.append("get_safety_resources")
         names.append("web_search")
         names.append("get_current_time")
         names.append("get_weather")
         names.append("summarize_session")
-        if self.knowledge_enabled and not high_risk:
+        if self.knowledge_enabled:
             names.append("ask_knowledge")
         return [name for name in names if self.allows(name)]
 
@@ -172,10 +184,12 @@ class ToolGate:
             return False
         if self.risk_level not in spec.allowed_risk_levels:
             return False
+        if self.tool_gate_mode == "blocked_context":
+            return name in BLOCKED_CONTEXT_TOOL_NAMES
+        if self.tool_gate_mode == "safety_context" or self.risk_level in HIGH_RISK_LEVELS:
+            return name in SAFETY_CONTEXT_TOOL_NAMES
         if name == "summarize_session":
             return True
-        if self.risk_level in HIGH_RISK_LEVELS:
-            return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
         if self.memory_mode == "off":
             return name in (SAFETY_TOOL_NAMES | {"get_current_time"})
         return name in (MEMORY_TOOL_NAMES | SAFETY_TOOL_NAMES | {"web_search", "get_current_time", "get_weather"} | ({"ask_knowledge"} if self.knowledge_enabled else set()))
@@ -212,7 +226,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="search_memories",
         description="Search the available user-visible memory index and return concise memory references.",
-        allowed_risk_levels=LOW_RISK_LEVELS,
+        allowed_risk_levels=ALL_RISK_LEVELS,
         parameters={
             "type": "object",
             "properties": {
@@ -338,6 +352,26 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         },
     ),
     ToolSpec(
+        name="safe_web_search",
+        description="Search only trusted public support resources without including user personal details or unsafe method terms.",
+        allowed_risk_levels=ALL_RISK_LEVELS,
+        parameters={
+            "type": "object",
+            "properties": {
+                "region": {
+                    "type": "string",
+                    "description": "Short region code or location hint, for example CN or US.",
+                },
+                "audience": {
+                    "type": "string",
+                    "enum": ["all", "teen", "adult"],
+                    "description": "Use teen for minors, adult for adults, all if unknown.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    ),
+    ToolSpec(
         name="get_current_time",
         description="Get the current date, time, timezone, weekday, and how long the session has been running.",
         allowed_risk_levels=ALL_RISK_LEVELS,
@@ -412,7 +446,7 @@ def _memory_entries_from_state(state: Mapping[str, Any]) -> list[dict[str, Any]]
         if not isinstance(raw, dict):
             continue
         visibility = str(raw.get("visibility") or "user_visible")
-        if visibility != "user_visible":
+        if visibility not in {"user_visible", "internal_safety"}:
             continue
         memory_id = _clean_text(raw.get("memory_id") or raw.get("id"), limit=80)
         if not memory_id:
@@ -434,6 +468,7 @@ def _memory_entries_from_state(state: Mapping[str, Any]) -> list[dict[str, Any]]
             "updated_at": raw.get("updated_at", entry.get("updated_at", "")),
             "freshness_warning": _clean_text(raw.get("freshness_warning"), limit=120),
             "why_selected": _clean_text(raw.get("why_selected"), limit=120),
+            "visibility": visibility,
             "source": "memory_index",
             "search_text": _clean_text(raw.get("content") or description, limit=320),
         }
@@ -449,9 +484,17 @@ def _search_memory_entries(
     query: str,
     limit: int,
     memory_types: set[str] | None = None,
+    safety_context: bool = False,
 ) -> list[dict[str, Any]]:
     scored: list[tuple[float, str, dict[str, Any]]] = []
     for entry in _memory_entries_from_state(state):
+        visibility = str(entry.get("visibility") or "user_visible")
+        if safety_context and str(entry.get("memory_type") or "") not in SAFETY_CONTEXT_MEMORY_TYPES:
+            continue
+        if safety_context and visibility not in {"user_visible", "internal_safety"}:
+            continue
+        if not safety_context and visibility != "user_visible":
+            continue
         if memory_types is not None and entry["memory_type"] not in memory_types:
             continue
         score = _memory_entry_score(entry, query)
@@ -509,15 +552,22 @@ def _build_search_memories_handler(state: Mapping[str, Any], capture: ToolAuditC
     def search_memories(arguments: dict[str, Any]) -> dict[str, Any]:
         query = _clean_text(arguments.get("query"), limit=240)
         limit = _clamp_int(arguments.get("limit"), default=3, minimum=1, maximum=5)
+        safety_context = str(state.get("tool_gate_mode") or "") == "safety_context" or str(state.get("risk_level") or "L0") in HIGH_RISK_LEVELS
         raw_types = arguments.get("memory_types")
         memory_types = None
         if isinstance(raw_types, list | tuple):
             memory_types = {
                 _normalize_memory_type(item)
                 for item in raw_types
-                if _normalize_memory_type(item) in VISIBLE_MEMORY_TYPES
+                if _normalize_memory_type(item) in (SAFETY_CONTEXT_MEMORY_TYPES if safety_context else VISIBLE_MEMORY_TYPES)
             } or None
-        items = _search_memory_entries(state, query=query, limit=limit, memory_types=memory_types)
+        items = _search_memory_entries(
+            state,
+            query=query,
+            limit=limit,
+            memory_types=memory_types,
+            safety_context=safety_context,
+        )
         capture.record_preview(
             "search_memories",
             status="completed",
@@ -642,6 +692,45 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
         return output
 
     return web_search_tool
+
+
+def _build_safe_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCapture) -> ToolHandler:
+    def safe_web_search(arguments: dict[str, Any]) -> dict[str, Any]:
+        from app.services.search_service import search_web  # lazy import to avoid circular dependency
+
+        profile = state.get("profile") if isinstance(state.get("profile"), dict) else {}
+        default_audience = "teen" if str(profile.get("user_mode") or state.get("user_mode") or "") == "teen" else "all"
+        region = _clean_text(arguments.get("region") or state.get("crisis_resource_region") or "CN", limit=24) or "CN"
+        audience = _coerce_audience(arguments.get("audience"), fallback=default_audience)
+        query = f"{region} mental health crisis support resources {audience.value}"
+        results, error = search_web(query, max_results=3)
+        status = "completed" if error is None else "error"
+        items = [
+            {
+                "title": result.title,
+                "url": result.url,
+                "snippet": result.snippet,
+                "score": result.score,
+            }
+            for result in results
+        ]
+        capture.record_preview(
+            "safe_web_search",
+            status=status,
+            preview={"query": query, "count": len(items)},
+            error=f"search_failed: {error}" if error else None,
+        )
+        output: dict[str, Any] = {
+            "query": query,
+            "count": len(items),
+            "items": items,
+            "status": status,
+        }
+        if error:
+            output["error"] = error
+        return output
+
+    return safe_web_search
 
 
 def _build_get_current_time_handler(capture: ToolAuditCapture) -> ToolHandler:
@@ -878,6 +967,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "save_memory_summary": "save_memory_summary: produce safe summaries/candidate memories for the backend memory pipeline; it does not write directly.",
         "get_safety_resources": "get_safety_resources: return minimal safety resources by region/audience when real-world support is relevant.",
         "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
+        "safe_web_search": "safe_web_search: search trusted public support resources using backend-generated queries; never include user personal details or unsafe method terms.",
         "get_current_time": "get_current_time: return current UTC/local time, weekday, timezone, and session elapsed seconds.",
         "get_weather": "get_weather: get current weather for a city via wttr.in; use sparingly, only when weather context helps understand user's mood or situation.",
         "summarize_session": "summarize_session: summarize the current conversation for the user on request; read-only.",
@@ -912,6 +1002,7 @@ def build_dialogue_tool_plan(
         risk_level=str(state.get("risk_level") or "L0"),
         memory_mode=str(state.get("memory_mode") or "summary_only"),
         knowledge_enabled=knowledge_enabled,
+        tool_gate_mode=str(state.get("tool_gate_mode") or "normal_context"),
     )
     allowed_names = gate.allowed_tool_names()
     capture = ToolAuditCapture()
@@ -924,6 +1015,8 @@ def build_dialogue_tool_plan(
         handlers["get_safety_resources"] = _build_get_safety_resources_handler(state, capture)
     if "web_search" in allowed_names:
         handlers["web_search"] = _build_web_search_handler(state, capture)
+    if "safe_web_search" in allowed_names:
+        handlers["safe_web_search"] = _build_safe_web_search_handler(state, capture)
     if "get_current_time" in allowed_names:
         handlers["get_current_time"] = _build_get_current_time_handler(capture)
     if "get_weather" in allowed_names:

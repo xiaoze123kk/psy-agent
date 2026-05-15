@@ -47,6 +47,15 @@ class AgentState(TypedDict, total=False):
     risk_source: str
     risk_reason_codes: list[str]
     requires_safety_check: bool
+    risk_domain: str
+    immediacy: Literal["none", "vague", "near_term", "active"]
+    risk_confidence: Literal["low", "medium", "high"]
+    protective_signals: list[str]
+    risk_phase: Literal["first_contact", "stabilizing", "still_high", "deescalating", "post_crisis"]
+    risk_response_policy: dict
+    tool_gate_mode: Literal["normal_context", "safety_context", "blocked_context"]
+    safety_context_pack: dict
+    experience_validator_reasons: list[str]
 
     route_priority: Literal[
         "P0_immediate_safety",

@@ -65,6 +65,33 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertFalse(result["rag_used"])
         self.assertEqual(result["retrieved_counseling_examples"], [])
 
+    def test_control_plane_adds_risk_policy_fields_for_l3(self) -> None:
+        state = self.make_state(
+            "我今晚想自杀，药就在手里",
+            risk_level="L3",
+            semantic_risk={"ideation": True, "means": True, "timeframe": "near_term"},
+            risk_reason_codes=["explicit_ideation", "means_mentioned"],
+        )
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["risk_domain"], "self_harm")
+        self.assertEqual(result["immediacy"], "near_term")
+        self.assertEqual(result["risk_phase"], "first_contact")
+        self.assertEqual(result["risk_response_policy"]["length_profile"], "brief_first_contact")
+        self.assertEqual(result["tool_gate_mode"], "safety_context")
+        self.assertIn("micro_safety_step", result["risk_response_policy"]["allowed_moves"])
+
+    def test_control_plane_maps_medical_request_to_blocked_context(self) -> None:
+        state = self.make_state("我能不能自己停药，剂量怎么调")
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["control_category"], "diagnosis_or_medical_request")
+        self.assertEqual(result["risk_domain"], "medical_request")
+        self.assertEqual(result["tool_gate_mode"], "blocked_context")
+        self.assertEqual(result["risk_response_policy"]["length_profile"], "firm_brief")
+
     def test_support_turn_can_use_authorized_fewshot_examples(self) -> None:
         state = self.make_state("最近压力好大，晚上总是睡不着", intent="soothe")
         state.update(_run(control_plane(state)))
@@ -252,6 +279,120 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("12356", text)
         self.assertIn("120", text)
         self.assertIn("110", text)
+
+    def test_experience_validator_blocks_banned_phrase(self) -> None:
+        state = self.make_state(
+            "我很难受",
+            risk_level="L1",
+            assistant_text="我会接住你的情绪，我们慢慢说。",
+            suggested_actions=[],
+        )
+
+        result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("banned_phrase:接住", result["experience_validator_reasons"])
+
+    def test_experience_validator_blocks_first_turn_professional_referral(self) -> None:
+        state = self.make_state(
+            "我想死",
+            risk_level="L2",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "risk_phase": "first_contact",
+                "length_profile": "brief_first_contact",
+                "char_budget": {"target": 220, "max": 360},
+            },
+            assistant_text="我建议你尽快找专业心理咨询师或者精神科聊聊。",
+            suggested_actions=["找心理咨询师"],
+        )
+
+        result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("professional_referral_first_turn", result["experience_validator_reasons"])
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+
+    def test_experience_validator_checks_length_profile(self) -> None:
+        state = self.make_state(
+            "我现在很危险",
+            risk_level="L3",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "risk_phase": "first_contact",
+                "length_profile": "brief_first_contact",
+                "char_budget": {"target": 120, "max": 140},
+            },
+            assistant_text="我在。" * 100,
+            suggested_actions=[],
+        )
+
+        result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("length_budget_exceeded", result["experience_validator_reasons"])
+
+    def test_l3_crisis_response_is_low_pressure_without_method_repetition(self) -> None:
+        state = self.make_state(
+            "我现在想自杀，刀在手里",
+            risk_level="L3",
+            control_category="self_harm_risk",
+            risk_domain="self_harm",
+            immediacy="near_term",
+            risk_phase="first_contact",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "immediacy": "near_term",
+                "risk_phase": "first_contact",
+                "length_profile": "brief_first_contact",
+                "char_budget": {"target": 220, "max": 360},
+            },
+        )
+
+        from app.graphs.nodes.response_nodes import crisis_response
+
+        result = _run(crisis_response(state))
+        text = result["assistant_text"]
+
+        self.assertIn("这一分钟", text)
+        self.assertIn("回我一个字", text)
+        self.assertNotIn("刀", text)
+        self.assertNotIn("心理咨询师", text)
+        self.assertNotIn("精神科", text)
+        self.assertNotIn("医院心理门诊", text)
+        self.assertNotIn("接住", text)
+        self.assertLessEqual(len(text), 360)
+
+    def test_l2_crisis_response_uses_medium_length_when_user_asks_for_more(self) -> None:
+        state = self.make_state(
+            "我想死，但你多陪我说说",
+            risk_level="L2",
+            control_category="self_harm_risk",
+            risk_domain="self_harm",
+            immediacy="vague",
+            risk_phase="deescalating",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "immediacy": "vague",
+                "risk_phase": "deescalating",
+                "length_profile": "holding_longer",
+                "char_budget": {"target": 700, "max": 980},
+            },
+        )
+
+        from app.graphs.nodes.response_nodes import crisis_response
+
+        result = _run(crisis_response(state))
+        text = result["assistant_text"]
+
+        self.assertGreaterEqual(len(text), 180)
+        self.assertNotIn("珍惜生命", text)
+        self.assertNotIn("世界还有很多美好", text)
+        self.assertNotIn("接住", text)
 
     def test_generator_uses_state_examples_without_retrieving_again(self) -> None:
         state = self.make_state(

@@ -24,6 +24,7 @@ from app.db.models import (
 )
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
+from app.services.safety_context_service import SAFETY_CONTEXT_MEMORY_TYPES
 
 
 logger = logging.getLogger(__name__)
@@ -360,14 +361,14 @@ def build_memory_index(
     limit: int = 20,
     include_internal: bool = False,
 ) -> list[dict[str, Any]]:
-    allowed_types = INTERNAL_MEMORY_TYPES if include_internal else _allowed_memory_types_for_mode(memory_mode)
+    allowed_types = set(SAFETY_CONTEXT_MEMORY_TYPES) if include_internal else _allowed_memory_types_for_mode(memory_mode)
     if not allowed_types:
         return []
 
     items = []
     for memory in _base_memory_query(db, user_id, memory_types=allowed_types):
         if include_internal:
-            if memory.visibility != "internal_safety":
+            if not _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level="L2"):
                 continue
         elif memory.visibility != "user_visible":
             continue
@@ -564,7 +565,9 @@ def _memory_visible_for_turn(memory: UserMemory, *, allowed_types: set[str], ris
     if memory.memory_type not in allowed_types:
         return False
     if risk_level in {"L2", "L3"}:
-        return memory.visibility == "internal_safety" and memory.memory_type == "safety_summary"
+        if memory.memory_type == "safety_summary":
+            return memory.visibility == "internal_safety"
+        return memory.visibility == "user_visible" and memory.memory_type in SAFETY_CONTEXT_MEMORY_TYPES
     return memory.visibility == "user_visible"
 
 
@@ -637,7 +640,7 @@ def retrieve_memories_for_turn(
     include_internal = risk_level in {"L2", "L3"}
     allowed_types = _allowed_memory_types_for_mode(memory_mode, include_internal=include_internal)
     if include_internal:
-        allowed_types = {"safety_summary"}
+        allowed_types = set(SAFETY_CONTEXT_MEMORY_TYPES)
     if not allowed_types:
         return []
 
@@ -1080,7 +1083,8 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
     active_memories = [memory for memory in memories if memory.status == "active" and memory.content]
     if not active_memories or not embedding_client.is_configured:
         return
-    if not embedding_client.is_safe_for_realtime():
+    is_safe_for_realtime = getattr(embedding_client, "is_safe_for_realtime", None)
+    if callable(is_safe_for_realtime) and not is_safe_for_realtime():
         logger.warning("Skipping memory vector indexing because local realtime embedding is disabled for process safety.")
         return
     texts = [memory.content for memory in active_memories]

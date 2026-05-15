@@ -26,6 +26,7 @@ from app.services.memory_service import (
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
 )
+from app.services.safety_context_service import build_safety_context_pack
 from app.services.user_context_pack_service import build_user_context_pack
 from app.services.user_context_service import build_goal_state, build_user_profile_digest
 
@@ -240,6 +241,9 @@ async def _invoke_graph_with_fallback(
                 crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
                 retrieved_memories=retrieved_memories,
                 memory_index=memory_index,
+                safety_context_pack=user_context_pack.get("safety_context_pack", {})
+                if isinstance(user_context_pack, dict)
+                else {},
             ),
             timeout=timeout_seconds,
         )
@@ -634,6 +638,17 @@ async def _prepare_turn_context(
         goal_state=goal_state,
         retrieved_memories=retrieved_memories,
     )
+    safety_context_pack = build_safety_context_pack(
+        risk_level=pre_risk_level,
+        retrieved_memories=retrieved_memories,
+        session_digest=thread.session_digest or {},
+        user_context_pack=user_context_pack,
+    )
+    if safety_context_pack:
+        user_context_pack = {
+            **user_context_pack,
+            "safety_context_pack": safety_context_pack,
+        }
     return TurnContext(
         turn=turn,
         user_message=user_message,
@@ -692,6 +707,15 @@ async def _persist_turn_result(
         "risk_source": assistant_result.get("risk_source", ""),
         "risk_reason_codes": assistant_result.get("risk_reason_codes", []),
         "requires_safety_check": bool(assistant_result.get("requires_safety_check", False)),
+        "risk_domain": assistant_result.get("risk_domain", ""),
+        "immediacy": assistant_result.get("immediacy", ""),
+        "risk_confidence": assistant_result.get("risk_confidence", ""),
+        "protective_signals": assistant_result.get("protective_signals", []),
+        "risk_phase": assistant_result.get("risk_phase", ""),
+        "risk_response_policy": assistant_result.get("risk_response_policy", {}),
+        "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
+        "safety_context_summary": assistant_result.get("safety_context_pack", {}),
+        "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),
         "control_category": assistant_result.get("control_category", "normal_support"),
         "control_reasons": assistant_result.get("control_reasons", []),
         "control_confidence": assistant_result.get("control_confidence", 0.0),
@@ -932,6 +956,9 @@ async def process_message_turn_stream(
             crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
             retrieved_memories=context.retrieved_memories,
             memory_index=context.memory_index,
+            safety_context_pack=context.user_context_pack.get("safety_context_pack", {})
+            if isinstance(context.user_context_pack, dict)
+            else {},
         )
         next_event = asyncio.create_task(anext(graph_events))
         assistant_result: dict[str, object] | None = None
@@ -986,6 +1013,7 @@ async def process_message_turn_stream(
             "response_validator",
             risk_level=str(assistant_result.get("risk_level", context.pre_risk_level)),
             validator_blocked=bool(assistant_result.get("validator_blocked", False)),
+            experience_validator_reasons=list(assistant_result.get("experience_validator_reasons", [])),
             delivery_status=str(assistant_result.get("delivery_status", "generated")),
         )
         yield _graph_update_event("saving_record", delivery_status=str(assistant_result.get("delivery_status", "generated")))
