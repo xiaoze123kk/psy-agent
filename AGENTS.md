@@ -16,3 +16,8 @@
 ## 通用忽略
 - 不要编辑构建产物、缓存、虚拟环境、依赖安装目录或日志。
 - 常见例子包括 `node_modules/`、`.venv/`、`frontend/dist/`、`.pytest_cache/`、`*.log`、`.env*`、`backend/data/*.db`。
+
+## Git 提交
+- commit message 使用中文描述，并保持 Conventional Commit 格式：`type: 中文简短说明`。
+- `type` 使用常见类型，如 `feat`、`fix`、`docs`、`refactor`、`test`、`chore`。
+- 示例：`feat: 重构后端风控策略`、`docs: 记录提交信息规范`。
