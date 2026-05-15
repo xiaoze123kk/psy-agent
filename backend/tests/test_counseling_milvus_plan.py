@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.graphs.state import AgentState
 from app.services import counseling_vector_service
 from app.services.counseling_chunking import DialoguePair, build_layered_chunks
+from app.services.counseling_reranker import RerankResult, fallback_select_candidates
 from app.services.counseling_vector_service import counseling_chunk_to_vector_row
 from app.services.milvus_service import MilvusVectorStore, VectorHit
 from scripts import import_counseling_corpus
@@ -64,6 +65,16 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    @staticmethod
+    async def _fake_fallback_rerank(*, query, candidates, limit, timeout_seconds=None):
+        return RerankResult(
+            candidates=fallback_select_candidates(query, candidates, limit, reason="test_fallback"),
+            status="fallback",
+            reason="test_fallback",
+            duration_ms=0,
+            scored_count=0,
+        )
+
     async def test_high_risk_state_does_not_call_embedding(self) -> None:
         original_embed_query = counseling_vector_service.embedding_client.embed_query
 
@@ -103,6 +114,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         original_embed_query = counseling_vector_service.embedding_client.embed_query
         original_search = counseling_vector_service.milvus_store.search_counseling_examples
         original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_rerank = counseling_vector_service.model_reranker.rerank
 
         async def fake_embed_query(text: str):
             await asyncio.sleep(0)
@@ -133,6 +145,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
         counseling_vector_service.embedding_client.embed_query = fake_embed_query
         counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: [hit]
+        counseling_vector_service.model_reranker.rerank = self._fake_fallback_rerank
         object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
         try:
             state = AgentState(
@@ -151,6 +164,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
             counseling_vector_service.milvus_store.__class__.is_available = original_is_available
             counseling_vector_service.embedding_client.embed_query = original_embed_query
             counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
             object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
 
         self.assertEqual(len(result.examples), 1)
@@ -182,6 +196,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         original_embed_query = counseling_vector_service.embedding_client.embed_query
         original_search = counseling_vector_service.milvus_store.search_counseling_examples
         original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_rerank = counseling_vector_service.model_reranker.rerank
 
         async def fake_embed_query(text: str):
             return [0.1] * counseling_vector_service.milvus_store.dim
@@ -197,6 +212,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
         counseling_vector_service.embedding_client.embed_query = fake_embed_query
         counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: hits
+        counseling_vector_service.model_reranker.rerank = self._fake_fallback_rerank
         object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
         try:
             state = AgentState(
@@ -211,10 +227,244 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
             counseling_vector_service.milvus_store.__class__.is_available = original_is_available
             counseling_vector_service.embedding_client.embed_query = original_embed_query
             counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
             object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
 
-        self.assertEqual([example.chunk_type for example in result.examples], ["process_segment", "turn_pair", "turn_pair"])
-        self.assertEqual(result.trace["chunk_type_counts"], {"process_segment": 1, "turn_pair": 2})
+        self.assertEqual(
+            [example.chunk_type for example in result.examples],
+            ["process_segment", "session_sketch", "turn_pair"],
+        )
+        self.assertEqual(result.trace["chunk_type_counts"], {"process_segment": 1, "session_sketch": 1, "turn_pair": 1})
+
+    async def test_retrieval_uses_model_reranker_when_enabled(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_recall_top_n = counseling_vector_service.settings.counseling_recall_top_n
+        original_rerank_top_n = counseling_vector_service.settings.counseling_rerank_top_n
+        original_rerank = counseling_vector_service.model_reranker.rerank
+        recall_top_n = 125
+        captured: dict[str, object] = {"search_limits": []}
+
+        async def fake_embed_query(text: str):
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        hits = [
+            self._hit("vector-first", chunk_type="turn_pair", original_external_id="case-1", score=0.99),
+            self._hit("model-first", chunk_type="process_segment", original_external_id="case-2", score=0.81),
+            self._hit("model-second", chunk_type="session_sketch", original_external_id="case-3", score=0.80),
+            self._hit("extra", chunk_type="turn_pair", original_external_id="case-4", score=0.79),
+        ]
+
+        def fake_search(vector, mode=None, limit=5):
+            captured["search_limits"].append(limit)
+            return hits
+
+        async def fake_rerank(*, query, candidates, limit, timeout_seconds=None):
+            captured["query"] = query
+            captured["candidate_count"] = len(candidates)
+            captured["limit"] = limit
+            captured["timeout_seconds"] = timeout_seconds
+            by_id = {candidate.chunk_id: candidate for candidate in candidates}
+            selected = [by_id["model-first"], by_id["model-second"]]
+            for index, candidate in enumerate(selected):
+                candidate.rerank_score = 0.99 - index * 0.1
+                candidate.rerank_reasons = ["model_rerank"]
+            return RerankResult(
+                candidates=selected,
+                status="hit",
+                reason="model_rerank",
+                duration_ms=12,
+                scored_count=len(candidates),
+            )
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = fake_search
+        counseling_vector_service.model_reranker.rerank = fake_rerank
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
+        object.__setattr__(counseling_vector_service.settings, "counseling_recall_top_n", recall_top_n)
+        object.__setattr__(counseling_vector_service.settings, "counseling_rerank_top_n", 2)
+        try:
+            state = AgentState(
+                normalized_text="鎴戞渶杩戝帇鍔涘緢澶э紝鐫′笉濂?",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(state, mode="soothe", limit=3)
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
+            object.__setattr__(counseling_vector_service.settings, "counseling_recall_top_n", original_recall_top_n)
+            object.__setattr__(counseling_vector_service.settings, "counseling_rerank_top_n", original_rerank_top_n)
+
+        self.assertEqual([example.chunk_id for example in result.examples], ["model-first", "model-second"])
+        self.assertLessEqual(len(result.examples), 3)
+        self.assertEqual(result.examples[0].rerank_score, 0.99)
+        self.assertEqual(result.examples[0].rerank_reasons, ["model_rerank"])
+        self.assertEqual(captured["query"], state["normalized_text"])
+        self.assertEqual(captured["candidate_count"], 4)
+        self.assertEqual(captured["limit"], 2)
+        self.assertIsInstance(captured["timeout_seconds"], float)
+        self.assertGreaterEqual(min(captured["search_limits"]), recall_top_n)
+        self.assertEqual(result.trace["recall_top_n"], recall_top_n)
+        self.assertEqual(result.trace["recall_count"], 4)
+        self.assertEqual(result.trace["rerank_status"], "hit")
+        self.assertEqual(result.trace["rerank_reason"], "model_rerank")
+        self.assertEqual(result.trace["rerank_duration_ms"], 12)
+        self.assertEqual(result.trace["rerank_scored_count"], 4)
+
+    async def test_retrieval_maps_reranked_duplicate_chunk_id_to_selected_hit(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_rerank = counseling_vector_service.model_reranker.rerank
+
+        async def fake_embed_query(text: str):
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        def duplicate_hit(item_id: str, *, content: str, original_external_id: str, score: float) -> VectorHit:
+            return VectorHit(
+                id=item_id,
+                score=score,
+                entity={
+                    "content": content,
+                    "display_text": f"display {item_id}",
+                    "source_key": "smilechat",
+                    "source_name": "SMILECHAT",
+                    "mode": "soothe",
+                    "status": "published",
+                    "review_status": "approved",
+                    "risk_allowed": "non_crisis",
+                    "language": "zh-CN",
+                    "chunk_id": "duplicate-chunk",
+                    "chunk_type": "turn_pair",
+                    "original_external_id": original_external_id,
+                },
+            )
+
+        first_hit = duplicate_hit(
+            "milvus-row-first",
+            content="User: first duplicate\nCounselor: selected first response",
+            original_external_id="case-first",
+            score=0.91,
+        )
+        second_hit = duplicate_hit(
+            "milvus-row-second",
+            content="User: second duplicate\nCounselor: later response",
+            original_external_id="case-second",
+            score=0.90,
+        )
+
+        async def fake_rerank(*, query, candidates, limit, timeout_seconds=None):
+            selected = candidates[:1]
+            selected[0].rerank_score = 0.88
+            selected[0].rerank_reasons = ["model_rerank"]
+            return RerankResult(
+                candidates=selected,
+                status="hit",
+                reason="model_rerank",
+                duration_ms=1,
+                scored_count=len(candidates),
+            )
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: [
+            first_hit,
+            second_hit,
+        ]
+        counseling_vector_service.model_reranker.rerank = fake_rerank
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
+        try:
+            state = AgentState(
+                normalized_text="鎴戞渶杩戝帇鍔涘緢澶э紝鐫′笉濂?",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(state, mode="soothe", limit=3)
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
+
+        self.assertEqual(len(result.examples), 1)
+        self.assertEqual(result.examples[0].content, "User: first duplicate\nCounselor: selected first response")
+        self.assertEqual(result.examples[0].original_external_id, "case-first")
+        self.assertEqual(result.examples[0].rerank_reasons, ["model_rerank"])
+
+    async def test_retrieval_returns_fallback_examples_when_reranker_unavailable(self) -> None:
+        original_enabled = counseling_vector_service.milvus_store.enabled
+        original_is_available = counseling_vector_service.milvus_store.__class__.is_available
+        original_embed_query = counseling_vector_service.embedding_client.embed_query
+        original_search = counseling_vector_service.milvus_store.search_counseling_examples
+        original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_rerank = counseling_vector_service.model_reranker.rerank
+
+        async def fake_embed_query(text: str):
+            return [0.1] * counseling_vector_service.milvus_store.dim
+
+        hits = [
+            self._hit("process", chunk_type="process_segment", original_external_id="case-1", score=0.91),
+            self._hit("session", chunk_type="session_sketch", original_external_id="case-2", score=0.90),
+            self._hit("turn", chunk_type="turn_pair", original_external_id="case-3", score=0.89),
+        ]
+
+        async def fake_rerank(*, query, candidates, limit, timeout_seconds=None):
+            selected = candidates[:limit]
+            for candidate in selected:
+                candidate.rerank_score = candidate.vector_score
+                candidate.rerank_reasons = ["reranker_unavailable"]
+            return RerankResult(
+                candidates=selected,
+                status="fallback",
+                reason="reranker_unavailable",
+                duration_ms=3,
+                scored_count=0,
+            )
+
+        counseling_vector_service.milvus_store.enabled = True
+        counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
+        counseling_vector_service.embedding_client.embed_query = fake_embed_query
+        counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: hits
+        counseling_vector_service.model_reranker.rerank = fake_rerank
+        object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
+        try:
+            state = AgentState(
+                normalized_text="鎴戞渶杩戝帇鍔涘緢澶э紝鐫′笉濂?",
+                risk_level="L0",
+                route_priority="P2_support",
+                control_category="normal_support",
+            )
+            result = await counseling_vector_service.retrieve_counseling_examples_with_trace(state, mode="soothe", limit=3)
+        finally:
+            counseling_vector_service.milvus_store.enabled = original_enabled
+            counseling_vector_service.milvus_store.__class__.is_available = original_is_available
+            counseling_vector_service.embedding_client.embed_query = original_embed_query
+            counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
+            object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
+
+        self.assertEqual([example.chunk_id for example in result.examples], ["process", "session", "turn"])
+        self.assertEqual(result.examples[0].rerank_reasons, ["reranker_unavailable"])
+        self.assertEqual(result.trace["rerank_status"], "fallback")
+        self.assertEqual(result.trace["rerank_reason"], "reranker_unavailable")
+        self.assertEqual(result.trace["rerank_scored_count"], 0)
 
     async def test_retrieval_allows_session_sketch_for_continuation_turns(self) -> None:
         original_enabled = counseling_vector_service.milvus_store.enabled
@@ -222,6 +472,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         original_embed_query = counseling_vector_service.embedding_client.embed_query
         original_search = counseling_vector_service.milvus_store.search_counseling_examples
         original_rag_enabled = counseling_vector_service.settings.counseling_rag_enabled
+        original_rerank = counseling_vector_service.model_reranker.rerank
 
         async def fake_embed_query(text: str):
             return [0.1] * counseling_vector_service.milvus_store.dim
@@ -236,6 +487,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         counseling_vector_service.milvus_store.__class__.is_available = property(lambda self: True)
         counseling_vector_service.embedding_client.embed_query = fake_embed_query
         counseling_vector_service.milvus_store.search_counseling_examples = lambda vector, mode=None, limit=5: hits
+        counseling_vector_service.model_reranker.rerank = self._fake_fallback_rerank
         object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", True)
         try:
             state = AgentState(
@@ -250,6 +502,7 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
             counseling_vector_service.milvus_store.__class__.is_available = original_is_available
             counseling_vector_service.embedding_client.embed_query = original_embed_query
             counseling_vector_service.milvus_store.search_counseling_examples = original_search
+            counseling_vector_service.model_reranker.rerank = original_rerank
             object.__setattr__(counseling_vector_service.settings, "counseling_rag_enabled", original_rag_enabled)
 
         self.assertEqual([example.chunk_type for example in result.examples], ["session_sketch", "process_segment", "turn_pair"])

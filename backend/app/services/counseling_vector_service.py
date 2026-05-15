@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from app.core.config import settings
 from app.graphs.state import AgentState
 from app.services.embedding_service import embedding_client
+from app.services.counseling_reranker import RerankCandidate, model_reranker
 from app.services.milvus_service import milvus_store
 
 if TYPE_CHECKING:
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 CHUNK_TYPES = {"turn_pair", "process_segment", "session_sketch"}
 CONTINUATION_PATTERNS = ("继续", "还是", "刚才", "前面", "上次", "那个问题", "接着")
+
+
+RERANK_RETRIEVAL_KEY = "_retrieval_key"
 
 
 COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
@@ -87,6 +91,8 @@ class CounselingExampleHit:
     phase: str | None = None
     display_text: str | None = None
     process_quality_score: float | None = None
+    rerank_score: float | None = None
+    rerank_reasons: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -227,7 +233,9 @@ async def retrieve_counseling_examples_with_trace(
     if safe_limit <= 0:
         trace["skipped_reason"] = "invalid_limit"
         return _retrieval_result(trace=trace, started_at=started_at)
-    per_query_limit = max(safe_limit * 6, 18)
+    configured_recall_top_n = max(int(settings.counseling_recall_top_n), 0)
+    per_query_limit = max(configured_recall_top_n, safe_limit * 6, 18)
+    trace["recall_top_n"] = per_query_limit
     for search_mode in search_modes:
         search_started_at = perf_counter()
         try:
@@ -262,10 +270,45 @@ async def retrieve_counseling_examples_with_trace(
         if len(hits) >= per_query_limit:
             break
 
-    hits = _select_hits_by_quota(hits, state=state, mode=mode, limit=safe_limit)
+    trace["recall_count"] = len(hits)
+    candidates = [_hit_to_rerank_candidate(hit, retrieval_key=str(index)) for index, hit in enumerate(hits)]
+    configured_rerank_top_n = int(settings.counseling_rerank_top_n)
+    final_limit = min(safe_limit, configured_rerank_top_n) if configured_rerank_top_n > 0 else safe_limit
+    if not candidates:
+        trace["rerank_status"] = "empty"
+        trace["rerank_reason"] = "no_candidates"
+        trace["rerank_duration_ms"] = 0
+        trace["rerank_scored_count"] = 0
+        trace["status"] = "empty"
+        trace["hit_count"] = 0
+        trace["chunk_type_counts"] = {}
+        trace["skipped_reason"] = "no_safe_examples"
+        return _retrieval_result(trace=trace, started_at=started_at)
+
+    rerank_result = await model_reranker.rerank(
+        query=query,
+        candidates=candidates,
+        limit=final_limit,
+        timeout_seconds=remaining_seconds(),
+    )
+    trace["rerank_status"] = rerank_result.status
+    trace["rerank_reason"] = rerank_result.reason
+    trace["rerank_duration_ms"] = rerank_result.duration_ms
+    trace["rerank_scored_count"] = rerank_result.scored_count
+
+    hit_by_retrieval_key = {
+        str(candidate.metadata.get(RERANK_RETRIEVAL_KEY) or ""): hit for candidate, hit in zip(candidates, hits)
+    }
+    hit_by_chunk_id = {str(hit.entity.get("chunk_id") or hit.id or ""): hit for hit in hits}
+    selected_hits: list[tuple[Any, RerankCandidate]] = []
+    for candidate in rerank_result.candidates:
+        retrieval_key = str(candidate.metadata.get(RERANK_RETRIEVAL_KEY) or "")
+        hit = hit_by_retrieval_key.get(retrieval_key) or hit_by_chunk_id.get(candidate.chunk_id)
+        if hit is not None:
+            selected_hits.append((hit, candidate))
 
     examples: list[CounselingExampleHit] = []
-    for hit in hits[:safe_limit]:
+    for hit, candidate in selected_hits[:safe_limit]:
         content = str(hit.entity.get("content") or "").strip()
         if not content or not counseling_example_is_safe(hit.entity):
             continue
@@ -294,6 +337,8 @@ async def retrieve_counseling_examples_with_trace(
                 phase=str(hit.entity.get("phase") or "") or None,
                 display_text=str(hit.entity.get("display_text") or "") or None,
                 process_quality_score=_to_float(hit.entity.get("process_quality_score")),
+                rerank_score=candidate.rerank_score,
+                rerank_reasons=list(candidate.rerank_reasons or []),
             )
         )
     trace["status"] = "hit" if examples else "empty"
@@ -319,6 +364,28 @@ def _search_modes_for(mode: str) -> list[str | None]:
     if normalized == "counseling":
         return ["counseling", "vent", None]
     return [normalized or None, None]
+
+
+def _hit_to_rerank_candidate(hit: Any, *, retrieval_key: str) -> RerankCandidate:
+    entity = dict(hit.entity or {})
+    entity[RERANK_RETRIEVAL_KEY] = retrieval_key
+    content = str(entity.get("content") or "").strip()
+    display_text = str(entity.get("display_text") or "").strip()
+    chunk_id = str(entity.get("chunk_id") or hit.id or "")
+    vector_score = float(getattr(hit, "score", 0.0) or 0.0)
+    return RerankCandidate(
+        chunk_id=chunk_id,
+        text=display_text or content,
+        distance=1.0 - vector_score,
+        metadata=entity,
+        vector_score=vector_score,
+        mode=str(entity.get("mode") or ""),
+        chunk_type=_chunk_type_for_hit(hit),
+        original_external_id=_original_external_id_for_hit(hit),
+        source_key=str(entity.get("source_key") or ""),
+        content=content,
+        display_text=display_text,
+    )
 
 
 def _chunk_type_for_hit(hit: Any) -> str:
