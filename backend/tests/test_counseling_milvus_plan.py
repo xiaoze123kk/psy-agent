@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from app.graphs.state import AgentState
 from app.services import counseling_vector_service
@@ -285,6 +288,27 @@ class CounselingMilvusPlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("display_text", output_fields)
         self.assertIn("process_quality_score", output_fields)
 
+    def test_counseling_collection_schema_includes_layered_metadata_fields(self) -> None:
+        store = MilvusVectorStore()
+        captured: dict[str, object] = {}
+
+        def fake_ensure_collection(collection_name: str, *, extra_fields: list[tuple[str, int]]) -> bool:
+            captured["collection_name"] = collection_name
+            captured["extra_fields"] = extra_fields
+            return True
+
+        store._ensure_collection = fake_ensure_collection  # type: ignore[method-assign]
+
+        self.assertTrue(store.ensure_counseling_collection())
+
+        field_names = {field_name for field_name, _max_length in captured["extra_fields"]}
+        self.assertEqual(captured["collection_name"], store.counseling_collection)
+        self.assertIn("chunk_type", field_names)
+        self.assertIn("original_external_id", field_names)
+        self.assertIn("phase", field_names)
+        self.assertIn("display_text", field_names)
+        self.assertIn("process_quality_score", field_names)
+
 
 class CounselingCorpusImportTests(unittest.TestCase):
     def test_layered_chunking_builds_turn_segments_and_session_sketch(self) -> None:
@@ -395,6 +419,290 @@ class CounselingCorpusImportTests(unittest.TestCase):
         self.assertEqual(parsed[0].external_id, "smilechat_case-direct::turn")
         self.assertEqual(parsed[0].metadata["original_external_id"], "smilechat_case-direct")
         self.assertIn("display_text", parsed[-1].metadata)
+
+    def test_direct_index_resume_state_skips_completed_chunks_and_updates_progress(self) -> None:
+        examples = [
+            index_counseling_corpus_direct.ParsedExample(
+                source_key="smilechat",
+                source_name="SMILECHAT",
+                external_id=f"case-{index}",
+                chunk_index=0,
+                mode="vent",
+                topic="关系",
+                user_text="我觉得没人理解我",
+                assistant_text="这听起来很孤单。",
+                context_text="",
+                content=f"片段 {index}",
+                source_url="https://github.com/qiuhuachuan/smile",
+                license="CC0-1.0",
+                tags=[],
+                metadata={"chunk_type": "turn_pair"},
+            )
+            for index in range(3)
+        ]
+
+        async def fake_flush(batch):
+            flushed_batches.append([example.external_id for example in batch])
+            return index_counseling_corpus_direct.BatchFlushResult(indexed=len(batch), skipped=0, completed=True)
+
+        class FakeEmbeddingClient:
+            is_configured = True
+
+        original_embedding_client = index_counseling_corpus_direct.embedding_client
+        original_ensure = index_counseling_corpus_direct.milvus_store.ensure_counseling_collection
+        original_iter = index_counseling_corpus_direct._iter_positioned_source_examples
+        original_flush = index_counseling_corpus_direct._flush_batch
+        flushed_batches = []
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            state_file = Path(tmp_dir) / "resume.json"
+            state_file.write_text(
+                '{"sources": {"smilechat": {"completed_chunks": 2, "indexed": 2, "skipped": 0}}}',
+                encoding="utf-8",
+            )
+            try:
+                index_counseling_corpus_direct.embedding_client = FakeEmbeddingClient()
+                index_counseling_corpus_direct.milvus_store.ensure_counseling_collection = lambda: True
+                index_counseling_corpus_direct._iter_positioned_source_examples = lambda *args, **kwargs: (
+                    index_counseling_corpus_direct.PositionedExample(
+                        example=example,
+                        position=index_counseling_corpus_direct.SourcePosition(
+                            file_name="cases.json",
+                            item_index=index,
+                            chunk_offset=0,
+                        ),
+                    )
+                    for index, example in enumerate(examples)
+                )
+                index_counseling_corpus_direct._flush_batch = fake_flush
+
+                results = asyncio.run(
+                    index_counseling_corpus_direct.index_sources(
+                        sources=["smilechat"],
+                        corpus_root=Path("."),
+                        limit=None,
+                        batch_size=2,
+                        progress_every=1,
+                        resume_state_file=state_file,
+                        quiet_files=True,
+                    )
+                )
+            finally:
+                index_counseling_corpus_direct.embedding_client = original_embedding_client
+                index_counseling_corpus_direct.milvus_store.ensure_counseling_collection = original_ensure
+                index_counseling_corpus_direct._iter_positioned_source_examples = original_iter
+                index_counseling_corpus_direct._flush_batch = original_flush
+
+            self.assertEqual(flushed_batches, [["case-2"]])
+            self.assertEqual(results["smilechat"].resumed, 2)
+            self.assertEqual(results["smilechat"].parsed, 1)
+            self.assertEqual(results["smilechat"].indexed, 1)
+            self.assertIn('"completed_chunks": 3', state_file.read_text(encoding="utf-8"))
+
+    def test_direct_index_resume_position_skips_completed_source_items(self) -> None:
+        class FakeEmbeddingClient:
+            is_configured = True
+
+        async def fake_flush(batch):
+            flushed_batches.append([example.external_id for example in batch])
+            return index_counseling_corpus_direct.BatchFlushResult(indexed=len(batch), skipped=0, completed=True)
+
+        original_embedding_client = index_counseling_corpus_direct.embedding_client
+        original_ensure = index_counseling_corpus_direct.milvus_store.ensure_counseling_collection
+        original_flush = index_counseling_corpus_direct._flush_batch
+        flushed_batches = []
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            corpus_root = Path(tmp_dir)
+            source_dir = corpus_root / "soulchat_corpus"
+            source_dir.mkdir()
+            (source_dir / "cases.json").write_text(
+                """
+                [
+                  {"id": "case-0", "messages": [{"role": "user", "content": "我很难过"}, {"role": "assistant", "content": "听起来你很不好受。"}]},
+                  {"id": "case-1", "messages": [{"role": "user", "content": "我很孤单"}, {"role": "assistant", "content": "这份孤单确实很重。"}]},
+                  {"id": "case-2", "messages": [{"role": "user", "content": "我想聊聊工作"}, {"role": "assistant", "content": "我们可以慢慢梳理工作里的压力。"}]}
+                ]
+                """,
+                encoding="utf-8",
+            )
+            state_file = Path(tmp_dir) / "resume.json"
+            state_file.write_text(
+                """
+                {
+                  "sources": {
+                    "soulchat_corpus": {
+                      "completed_chunks": 0,
+                      "indexed": 0,
+                      "skipped": 0,
+                      "position": {"file_name": "cases.json", "item_index": 1, "chunk_offset": 0}
+                    }
+                  }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            try:
+                index_counseling_corpus_direct.embedding_client = FakeEmbeddingClient()
+                index_counseling_corpus_direct.milvus_store.ensure_counseling_collection = lambda: True
+                index_counseling_corpus_direct._flush_batch = fake_flush
+
+                asyncio.run(
+                    index_counseling_corpus_direct.index_sources(
+                        sources=["soulchat_corpus"],
+                        corpus_root=corpus_root,
+                        limit=None,
+                        batch_size=8,
+                        progress_every=1,
+                        resume_state_file=state_file,
+                        quiet_files=True,
+                    )
+                )
+            finally:
+                index_counseling_corpus_direct.embedding_client = original_embedding_client
+                index_counseling_corpus_direct.milvus_store.ensure_counseling_collection = original_ensure
+                index_counseling_corpus_direct._flush_batch = original_flush
+
+            self.assertEqual(flushed_batches, [["soulchat_corpus_cases_2_case-2::turn"]])
+            saved_state = state_file.read_text(encoding="utf-8")
+            self.assertIn('"file_name": "cases.json"', saved_state)
+            self.assertIn('"item_index": 2', saved_state)
+
+    def test_direct_index_smilechat_resume_position_uses_numeric_file_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            data_dir = Path(tmp_dir) / "smilechat" / "data"
+            data_dir.mkdir(parents=True)
+            for file_name in ("606.json", "5802.json", "5803.json"):
+                (data_dir / file_name).write_text(
+                    '[{"role": "client", "content": "我最近压力很大"},'
+                    '{"role": "counselor", "content": "听起来你已经撑了一阵子。"}]',
+                    encoding="utf-8",
+                )
+
+            examples = list(
+                index_counseling_corpus_direct._iter_positioned_source_examples(
+                    "smilechat",
+                    Path(tmp_dir),
+                    quiet_files=True,
+                    resume_position=index_counseling_corpus_direct.SourcePosition(
+                        file_name="5802.json",
+                        item_index=1,
+                        chunk_offset=9999,
+                    ),
+                )
+            )
+
+        self.assertEqual([item.position.file_name for item in examples], ["5802.json", "5803.json"])
+
+    def test_direct_flush_batch_splits_failed_large_batches(self) -> None:
+        examples = [
+            index_counseling_corpus_direct.ParsedExample(
+                source_key="smilechat",
+                source_name="SMILECHAT",
+                external_id=f"case-{index}",
+                chunk_index=0,
+                mode="vent",
+                topic="关系",
+                user_text="我觉得没人理解我",
+                assistant_text="这听起来很孤单。",
+                context_text="",
+                content=f"片段 {index}",
+                source_url="https://github.com/qiuhuachuan/smile",
+                license="CC0-1.0",
+                tags=[],
+                metadata={"chunk_type": "turn_pair"},
+            )
+            for index in range(4)
+        ]
+
+        captured_batches: list[list[str]] = []
+
+        async def fake_embed_documents(texts: list[str]):
+            if len(texts) > 2:
+                return None
+            return [[0.1] * 1024 for _ in texts]
+
+        def fake_upsert(rows):
+            captured_batches.append([row["external_id"] for row in rows])
+            return True
+
+        original_embed_documents = index_counseling_corpus_direct.embedding_client.embed_documents
+        original_upsert = index_counseling_corpus_direct.milvus_store.upsert_counseling_examples
+
+        try:
+            index_counseling_corpus_direct.embedding_client.embed_documents = fake_embed_documents
+            index_counseling_corpus_direct.milvus_store.upsert_counseling_examples = fake_upsert
+            result = asyncio.run(index_counseling_corpus_direct._flush_batch(examples))
+        finally:
+            index_counseling_corpus_direct.embedding_client.embed_documents = original_embed_documents
+            index_counseling_corpus_direct.milvus_store.upsert_counseling_examples = original_upsert
+
+        self.assertTrue(result.completed)
+        self.assertEqual(result.indexed, 4)
+        self.assertEqual(captured_batches, [["case-0", "case-1"], ["case-2", "case-3"]])
+
+    def test_direct_index_resume_state_save_retries_transient_replace_error(self) -> None:
+        original_replace = Path.replace
+        attempts = {"count": 0}
+
+        def flaky_replace(self, target):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise PermissionError("transient Windows file lock")
+            return original_replace(self, target)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            state_file = Path(tmp_dir) / "resume.json"
+            state = {"sources": {}}
+
+            with patch.object(Path, "replace", flaky_replace):
+                index_counseling_corpus_direct._save_resume_state(
+                    state_file,
+                    state,
+                    "smilechat",
+                    completed_chunks=64,
+                    indexed=64,
+                    skipped=0,
+                )
+
+            self.assertGreaterEqual(attempts["count"], 2)
+            self.assertIn('"completed_chunks": 64', state_file.read_text(encoding="utf-8"))
+
+    def test_direct_index_resume_state_loads_utf8_bom_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            state_file = Path(tmp_dir) / "resume.json"
+            state_file.write_text(
+                '{"sources": {"soulchat_corpus": {"completed_chunks": 19712}}}',
+                encoding="utf-8-sig",
+            )
+
+            state = index_counseling_corpus_direct._load_resume_state(state_file)
+
+        self.assertEqual(state["sources"]["soulchat_corpus"]["completed_chunks"], 19712)
+
+    def test_direct_index_vector_row_clips_display_text_for_milvus_schema(self) -> None:
+        example = index_counseling_corpus_direct.ParsedExample(
+            source_key="smilechat",
+            source_name="SMILECHAT",
+            external_id="case-long",
+            chunk_index=0,
+            mode="vent",
+            topic="关系",
+            user_text="我觉得没人理解我",
+            assistant_text="这听起来很孤单。",
+            context_text="",
+            content="用户：我觉得没人理解我\n咨询回应：这听起来很孤单。",
+            source_url="https://github.com/qiuhuachuan/smile",
+            license="CC0-1.0",
+            tags=[],
+            metadata={"chunk_type": "process_segment", "display_text": "长" * 3000},
+        )
+
+        row = index_counseling_corpus_direct._vector_row(example, [0.1] * 1024)
+
+        self.assertLessEqual(len(row["display_text"]), 2048)
+        self.assertLessEqual(len(row["display_text"].encode("utf-8")), 2048)
 
     def test_parser_filters_high_risk_examples(self) -> None:
         item = {

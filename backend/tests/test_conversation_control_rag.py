@@ -210,6 +210,49 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("安全", result["assistant_text"])
         self.assertFalse(result["retryable"])
 
+    def test_validator_l2_safety_fallback_is_gentle_not_emergency_template(self) -> None:
+        state = self.make_state(
+            "有点想死",
+            risk_level="L2",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            assistant_text="",
+            suggested_actions=[],
+        )
+
+        result = _run(response_validator(state))
+        text = result.get("assistant_text", "")
+        actions = result.get("suggested_actions", [])
+
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+        self.assertIn("听见", text)
+        self.assertIn("现在是安全", text)
+        self.assertIn("可信任的人", text)
+        self.assertNotIn("离开危险物品", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
+        self.assertNotIn("拨打", actions[0])
+
+    def test_validator_l3_safety_fallback_stays_direct(self) -> None:
+        state = self.make_state(
+            "我现在想自杀，刀在手里",
+            risk_level="L3",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            assistant_text="",
+            suggested_actions=[],
+        )
+
+        result = _run(response_validator(state))
+        text = result.get("assistant_text", "")
+
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+        self.assertIn("安全", text)
+        self.assertIn("危险物品", text)
+        self.assertIn("12356", text)
+        self.assertIn("120", text)
+        self.assertIn("110", text)
+
     def test_generator_uses_state_examples_without_retrieving_again(self) -> None:
         state = self.make_state(
             "我最近压力很大",

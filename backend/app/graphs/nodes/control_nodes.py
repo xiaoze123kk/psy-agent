@@ -22,6 +22,11 @@ SELF_HARM_TERMS = (
     "want to die",
 )
 IMMEDIATE_TERMS = ("现在", "马上", "立刻", "今晚", "今天", "已经", "准备", "手里", "刀", "药", "楼顶", "绳", "煤气", "right now", "tonight", "plan", "pills")
+SELF_HARM_MEANS_TERMS = ("手里", "刀", "药", "楼顶", "跳楼", "跳下去", "绳", "煤气", "knife", "pills", "roof", "bridge")
+SELF_HARM_ACTION_TERMS = ("自杀", "结束生命", "伤害自己", "自残", "割腕", "跳楼", "上吊", "吞药", "吃药自杀", "kill myself", "end my life", "hurt myself")
+SELF_HARM_URGENT_ACTION_TERMS = ("马上", "立刻", "就要", "准备", "打算", "计划", "right now", "going to", "intend", "plan")
+SELF_HARM_NEAR_TERM_TERMS = ("今晚", "明天", "tonight", "tomorrow")
+SELF_HARM_PRESENT_CONTEXT_TERMS = ("现在", "这会儿", "今天", "today")
 HARM_OTHER_TERMS = ("杀了", "弄死", "打死", "砍", "捅", "报复", "炸", "想打", "想揍", "伤害老师", "伤害同学", "kill him", "kill her", "hurt them")
 ANGER_TARGET_TERMS = ("老师", "父母", "爸", "妈", "同学", "朋友", "对象", "男朋友", "女朋友", "老板", "领导")
 VICTIMIZATION_TERMS = ("家暴", "被打", "被威胁", "被跟踪", "性侵", "强奸", "猥亵", "霸凌", "勒索", "裸照", "控制我")
@@ -87,6 +92,18 @@ def _clarification_reason(state: AgentState, text: str) -> str:
     return ""
 
 
+def _has_self_harm_near_term_or_means_signal(text: str, semantic_risk: dict) -> bool:
+    if bool(semantic_risk.get("means")) or has_any_text(text, SELF_HARM_MEANS_TERMS):
+        return True
+    if bool(semantic_risk.get("plan")):
+        return True
+    if has_any_text(text, SELF_HARM_URGENT_ACTION_TERMS):
+        return True
+    if has_any_text(text, SELF_HARM_NEAR_TERM_TERMS):
+        return True
+    return has_any_text(text, SELF_HARM_ACTION_TERMS) and has_any_text(text, SELF_HARM_PRESENT_CONTEXT_TERMS)
+
+
 async def control_plane(state: AgentState) -> AgentState:
     text = state.get("normalized_text", "") or state.get("user_text", "")
     risk_level = state.get("risk_level", "L0")
@@ -115,7 +132,11 @@ async def control_plane(state: AgentState) -> AgentState:
         and any(bool(semantic_risk.get(key)) for key in ("ideation", "intent", "plan", "means"))
     )
     self_harm = (not discussion_only and has_any_text(text, SELF_HARM_TERMS)) or semantic_self_harm
-    immediate = (
+    immediate_self_harm = (
+        not discussion_only
+        and _has_self_harm_near_term_or_means_signal(text, semantic_risk)
+    )
+    immediate_harm_other = (
         not discussion_only
         and (
             has_any_text(text, IMMEDIATE_TERMS)
@@ -136,18 +157,18 @@ async def control_plane(state: AgentState) -> AgentState:
         if state.get("requires_safety_check"):
             labels.append("requires_safety_check")
         reasons.extend(matched_text(text, SELF_HARM_TERMS) or state.get("risk_reasons", []) or risk_reason_codes)
-        if immediate or risk_level == "L3":
+        if immediate_self_harm:
             labels.append("near_term_or_means_signal")
-        risk_level = "L3" if immediate or risk_level == "L3" else "L2"
+        risk_level = "L3" if immediate_self_harm else "L2"
         confidence = 0.92
     elif harm_other:
-        category = "harm_to_other_risk" if immediate else "anger_toward_other"
-        route_priority = "P0_immediate_safety" if immediate else "P3_bridge_boundary"
-        memory_policy = "crisis_audit_only" if immediate else "skip_sensitive"
+        category = "harm_to_other_risk" if immediate_harm_other else "anger_toward_other"
+        route_priority = "P0_immediate_safety" if immediate_harm_other else "P3_bridge_boundary"
+        memory_policy = "crisis_audit_only" if immediate_harm_other else "skip_sensitive"
         allow_rag = False
         labels.append("harm_to_other_signal")
         reasons.extend(matched_text(text, HARM_OTHER_TERMS))
-        if immediate:
+        if immediate_harm_other:
             labels.append("near_term_or_means_signal")
             risk_level = "L3"
         confidence = 0.88

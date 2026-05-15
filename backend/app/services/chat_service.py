@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, generate_uuid, utcnow
-from app.graphs.nodes import sync_risk_classify
+from app.graphs.nodes import classify_risk_text, control_plane
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
@@ -145,6 +145,17 @@ def _fallback_assistant_result(*, risk_level: str, reason: str) -> dict[str, obj
     if risk_level in {"L2", "L3"}:
         return _safety_fallback_result(risk_level=risk_level, reason=reason)
     return _failed_no_reply_result(risk_level=risk_level, reason=reason)
+
+
+async def _preclassify_risk_level(text: str) -> str:
+    assessment = classify_risk_text(text)
+    state = {
+        "user_text": text,
+        "normalized_text": text,
+        **assessment,
+    }
+    controlled = await control_plane(state)
+    return str(controlled.get("risk_level") or assessment.get("risk_level") or "L0")
 
 
 def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -> dict[str, object]:
@@ -595,7 +606,7 @@ async def _prepare_turn_context(
         recent_messages=serialized_recent_messages,
     ) or {}
     memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
-    pre_risk_level = sync_risk_classify(payload.content)
+    pre_risk_level = await _preclassify_risk_level(payload.content)
     memory_index = build_memory_index(
         db,
         user.id,

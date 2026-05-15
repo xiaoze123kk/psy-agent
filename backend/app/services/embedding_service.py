@@ -284,6 +284,7 @@ class EmbeddingClient:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                limit=8 * 1024 * 1024,
             )
         except Exception as exc:  # pragma: no cover - process startup depends on host runtime
             logger.warning("Local embedding worker start failed: %s", exc)

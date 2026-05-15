@@ -206,6 +206,21 @@ class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vector, [0.5] * client.dim)
         self.assertEqual(captured, {"texts": ["worker query"], "kind": "query"})
 
+    async def test_worker_process_stdout_limit_handles_document_batches(self) -> None:
+        client = _make_local_client()
+        client.local_batch_size = 32
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_subprocess_exec(*args: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+            return None
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            await client._ensure_local_worker()
+
+        self.assertGreaterEqual(captured["limit"], 8 * 1024 * 1024)
+
     def test_local_worker_uses_kind_specific_encoding(self) -> None:
         fake_module = textwrap.dedent(
             """

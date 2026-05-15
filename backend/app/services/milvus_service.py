@@ -305,11 +305,6 @@ class MilvusVectorStore:
                 ("contraindications", 512),
                 ("quality_score", 32),
                 ("safety_score", 32),
-                ("chunk_type", 32),
-                ("original_external_id", 180),
-                ("phase", 32),
-                ("display_text", 2048),
-                ("process_quality_score", 32),
             ],
         )
 
@@ -338,6 +333,11 @@ class MilvusVectorStore:
                 ("contraindications", 512),
                 ("quality_score", 32),
                 ("safety_score", 32),
+                ("chunk_type", 32),
+                ("original_external_id", 180),
+                ("phase", 32),
+                ("display_text", 2048),
+                ("process_quality_score", 32),
             ],
         )
 

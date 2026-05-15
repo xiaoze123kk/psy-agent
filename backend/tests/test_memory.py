@@ -655,6 +655,28 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["should_write_memory"])
         self.assertEqual(memories, [])
 
+    async def test_l2_chat_turn_timeout_uses_gentle_safety_fallback(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        _, assistant_message, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我现在有点想死"),
+        )
+
+        self.assertIsNotNone(assistant_message)
+        self.assertEqual(result["risk_level"], "L2")
+        self.assertEqual(result["delivery_status"], "safety_fallback")
+        self.assertIn("安全", assistant_message.content)
+        self.assertIn("可信", assistant_message.content)
+        self.assertNotIn("危险物品", assistant_message.content)
+        self.assertNotIn("120", assistant_message.content)
+        self.assertNotIn("110", assistant_message.content)
+        self.assertFalse(result["retryable"])
+
     async def test_stream_chat_turn_timeout_cleans_up_without_runtime_error(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
         chat_service.graph_runtime = SlowGraphStreamRuntime()

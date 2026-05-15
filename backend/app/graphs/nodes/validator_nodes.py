@@ -44,14 +44,30 @@ def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> li
     return sorted(set(reasons))
 
 
+def _validator_l2_safety_text() -> tuple[str, list[str]]:
+    return (
+        "我听见你现在已经难受到有点撑不住了。我们先不急着分析原因，先确认一件小事：你现在是安全的吗？"
+        "如果可以，先别一个人硬扛，联系一个可信任的人陪你一会儿；这类念头反复出现时，也建议尽快找心理咨询师、精神科或医院心理门诊一起看。"
+        "如果念头突然变得很急，或你担心自己会伤害自己，就要马上联系现实支持或急救资源。",
+        ["我现在是安全的", "我能联系一个人", "我想先说一会儿"],
+    )
+
+
+def _validator_l3_safety_text() -> tuple[str, list[str]]:
+    return (
+        "我更关心你现在的安全。先不要一个人扛，尽量离开危险物品或对方，去有人在的地方，并立刻联系可信的人；"
+        "在中国大陆可拨打 12356，紧急时拨打 120 或 110。",
+        ["我现在不安全", "我能联系谁", "拨打 12356"],
+    )
+
+
 def validator_safe_text(state: AgentState) -> tuple[str, list[str]]:
     route_priority = state.get("route_priority", "P2_support")
     category = state.get("control_category", "")
     if route_priority == "P0_immediate_safety":
-        return (
-            "我更关心你现在的安全。先不要一个人扛，尽量离开危险物品或对方，去有人在的地方，并立刻联系可信的人；在中国大陆可拨打 12356，紧急时拨打 120 或 110。",
-            ["我现在不安全", "我能联系谁", "拨打 12356"],
-        )
+        if state.get("risk_level") == "L3":
+            return _validator_l3_safety_text()
+        return _validator_l2_safety_text()
     if route_priority == "P1_red_flag":
         return (
             "这件事已经值得让现实里的可靠支持介入。我不会给你下诊断，也不会确认危险想法为真；我们先关注你此刻是否安全，以及能联系谁。",
