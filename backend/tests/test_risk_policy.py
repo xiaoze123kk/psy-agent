@@ -32,6 +32,139 @@ class RiskPolicyTests(unittest.TestCase):
         self.assertIn("micro_safety_step", policy["allowed_moves"])
         self.assertIn("professional_referral_first_turn", policy["forbidden_moves"])
 
+    def test_normal_support_after_question_streak_uses_no_question_budget(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L0",
+                "control_category": "normal_support",
+                "normalized_text": "在轮下，记得吗",
+                "recent_messages": [
+                    {"role": "assistant", "content": "你是想聊这本书吗？"},
+                    {"role": "user", "content": "记得"},
+                ],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "reflective_pause")
+        self.assertEqual(policy["question_budget"], 0)
+        self.assertEqual(policy["avoid_question_reason"], "previous_turn_ended_with_question")
+        self.assertEqual(policy["question_ending_streak"], 1)
+        self.assertFalse(policy["last_turn_had_safety_question"])
+        self.assertTrue(policy["user_answered_previous_question"])
+        self.assertEqual(policy["max_questions"], 1)
+
+    def test_normal_support_defaults_to_no_question_budget(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L0",
+                "control_category": "normal_support",
+                "normalized_text": "今天只是想随便聊聊在轮下",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "natural_close")
+        self.assertEqual(policy["question_budget"], 0)
+        self.assertEqual(policy["avoid_question_reason"], "no_clarification_needed")
+
+    def test_l1_distress_after_question_streak_uses_no_question_budget(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L1",
+                "control_category": "normal_support",
+                "semantic_risk": {"risk_domain": "general_distress"},
+                "normalized_text": "就是那种一直被推着跑的感觉",
+                "recent_messages": [
+                    {"role": "assistant", "content": "你是觉得自己也被什么东西一直往下压吗？"},
+                    {"role": "user", "content": "就是那种一直被推着跑的感觉"},
+                ],
+            }
+        )
+
+        self.assertEqual(policy["risk_domain"], "general_distress")
+        self.assertEqual(policy["ending_style"], "reflective_pause")
+        self.assertEqual(policy["question_budget"], 0)
+        self.assertEqual(policy["avoid_question_reason"], "previous_turn_ended_with_question")
+
+    def test_l3_first_contact_allows_immediate_safety_question(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L3",
+                "control_category": "self_harm_risk",
+                "semantic_risk": {"means": True, "timeframe": "near_term"},
+                "normalized_text": "我现在不想活了，那个东西就在手边",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "micro_step")
+        self.assertEqual(policy["question_budget"], 1)
+        self.assertEqual(policy["allow_question_reason"], "immediate_safety_check")
+        self.assertEqual(policy["question_ending_streak"], 0)
+        self.assertFalse(policy["last_turn_had_safety_question"])
+        self.assertFalse(policy["user_answered_previous_question"])
+        self.assertEqual(policy["max_questions"], 1)
+
+    def test_l3_first_contact_does_not_treat_safety_words_as_answer_without_previous_question(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L3",
+                "control_category": "self_harm_risk",
+                "semantic_risk": {"means": True, "timeframe": "near_term"},
+                "normalized_text": "我还在楼顶，那个东西还在手边，但我没有计划",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "micro_step")
+        self.assertEqual(policy["question_budget"], 1)
+        self.assertEqual(policy["allow_question_reason"], "immediate_safety_check")
+        self.assertIsNone(policy["avoid_question_reason"])
+
+    def test_deescalating_safety_answer_stops_repeated_safety_question(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L2",
+                "control_category": "self_harm_risk",
+                "semantic_risk": {"protective_factor": True},
+                "normalized_text": "我现在安全，没有计划",
+                "recent_messages": [
+                    {"role": "assistant", "content": "你现在安全吗？"},
+                    {"role": "user", "content": "我现在安全，没有计划"},
+                ],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "micro_step")
+        self.assertEqual(policy["question_budget"], 0)
+        self.assertEqual(policy["avoid_question_reason"], "safety_answer_already_given")
+        self.assertEqual(policy["question_ending_streak"], 1)
+        self.assertTrue(policy["last_turn_had_safety_question"])
+        self.assertTrue(policy["user_answered_previous_question"])
+        self.assertEqual(policy["max_questions"], 1)
+
+    def test_clarification_needed_allows_factual_clarification_question(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L1",
+                "control_category": "normal_support",
+                "normalized_text": "不是那本书，是另一篇",
+                "clarification_needed": True,
+                "recent_messages": [
+                    {"role": "assistant", "content": "我先确认一下你说的是哪本。"},
+                    {"role": "user", "content": "不是那本书，是另一篇"},
+                ],
+            }
+        )
+
+        self.assertEqual(policy["ending_style"], "question")
+        self.assertEqual(policy["question_budget"], 1)
+        self.assertEqual(policy["allow_question_reason"], "factual_clarification")
+        self.assertEqual(policy["question_ending_streak"], 0)
+        self.assertFalse(policy["last_turn_had_safety_question"])
+        self.assertFalse(policy["user_answered_previous_question"])
+        self.assertEqual(policy["max_questions"], 1)
+
     def test_deescalating_policy_allows_warm_medium_length(self) -> None:
         state = {
             "risk_level": "L2",

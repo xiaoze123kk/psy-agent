@@ -493,6 +493,81 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["experience_validator_warnings"], ["too_many_questions"])
         self.assertEqual(result["experience_validator_blocking_reasons"], [])
 
+    def test_validator_warns_when_question_budget_zero_ends_with_question(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            risk_response_policy={
+                "ending_style": "reflective_pause",
+                "question_budget": 0,
+                "question_ending_streak": 1,
+            },
+            assistant_text="《在轮下》那种被推着走的窒息感确实贴近你刚才说的处境。你是觉得自己也被什么东西一直往下压吗？",
+            suggested_actions=[],
+        )
+
+        result = _run(response_validator(state))
+
+        self.assertFalse(result["validator_blocked"])
+        self.assertIn("unnecessary_question_ending", result["experience_validator_reasons"])
+        self.assertIn("question_streak", result["experience_validator_reasons"])
+        self.assertEqual(result["validator_severity"], "warning")
+
+    def test_validator_blocks_repeated_safety_question_after_answer(self) -> None:
+        state = self.make_state(
+            "我现在安全，没有计划",
+            risk_level="L2",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "risk_phase": "deescalating",
+                "ending_style": "micro_step",
+                "question_budget": 0,
+                "avoid_question_reason": "safety_answer_already_given",
+                "last_turn_had_safety_question": True,
+                "char_budget": {"target": 220, "max": 360},
+            },
+            assistant_text="我听到了。你现在安全吗？身边有人吗？",
+            suggested_actions=[],
+        )
+        model_reply = "好，先不继续盘问安全问题了。我们只把这一分钟放慢一点，你回我一个字也可以。\n---\n我还在\n先慢一点\n继续陪我"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
+            result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("repeated_safety_question", result["experience_validator_reasons"])
+        self.assertEqual(result["delivery_status"], "generated")
+
+    def test_validator_blocks_repeated_plan_and_self_harm_question_after_answer(self) -> None:
+        state = self.make_state(
+            "我现在安全，没有计划",
+            risk_level="L2",
+            route_priority="P0_immediate_safety",
+            control_category="self_harm_risk",
+            risk_response_policy={
+                "risk_domain": "self_harm",
+                "risk_phase": "deescalating",
+                "ending_style": "micro_step",
+                "question_budget": 0,
+                "avoid_question_reason": "safety_answer_already_given",
+                "last_turn_had_safety_question": True,
+                "char_budget": {"target": 220, "max": 360},
+            },
+            assistant_text="我听到了。那你现在还有没有马上行动的计划？能保证不伤害自己吗？",
+            suggested_actions=[],
+        )
+        model_reply = "好，我不继续追问这些了。先把这一分钟放慢，你只要回我一个字也可以。\n---\n我还在\n慢一点\n继续陪我"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
+            result = _run(response_validator(state))
+
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("repeated_safety_question", result["experience_validator_reasons"])
+        self.assertIn("too_many_questions", result["experience_validator_reasons"])
+        self.assertEqual(result["delivery_status"], "generated")
+
     def test_validator_regeneration_accepts_too_many_questions_warning(self) -> None:
         state = self.make_state(
             "有点想死",

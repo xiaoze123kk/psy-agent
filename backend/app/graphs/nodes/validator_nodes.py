@@ -27,8 +27,33 @@ ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "12356", "988", "911"}
 EXPERIENCE_BANNED_TERMS = ("接住",)
 MORALIZING_TERMS = ("珍惜生命", "世界还有很多美好", "想想你的家人")
 FIRST_TURN_REFERRAL_TERMS = ("心理咨询师", "精神科", "医院心理门诊", "尽快就医")
+QUESTION_MARKS = ("\uff1f", "?")
+SAFETY_QUESTION_PHRASES = (
+    "安全吗",
+    "安全么",
+    "还在吗",
+    "还在么",
+    "身边有人吗",
+    "身边有人么",
+    "旁边有人吗",
+    "旁边有人么",
+    "有人陪你吗",
+    "有人陪你么",
+    "有人在你身边吗",
+    "有人在你身边么",
+    "能保证不伤害自己吗",
+    "能保证不伤害自己么",
+    "会不会伤害自己",
+    "有没有马上行动的计划",
+    "有没有具体计划",
+    "还有没有计划",
+    "离那个东西远一点了吗",
+    "离危险远一点了吗",
+)
 EXPERIENCE_REASON_SEVERITY = {
     "too_many_questions": "warning",
+    "unnecessary_question_ending": "warning",
+    "question_streak": "warning",
 }
 
 
@@ -57,6 +82,33 @@ def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> li
     return sorted(set(reasons))
 
 
+def _question_count(text: str) -> int:
+    return sum(text.count(mark) for mark in QUESTION_MARKS)
+
+
+def _ends_with_question(text: str) -> bool:
+    return text.rstrip().endswith(QUESTION_MARKS)
+
+
+def _int_or_default(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _question_limit(policy: dict) -> int:
+    limit = policy.get("question_budget") if "question_budget" in policy else policy.get("max_questions", 1)
+    return _int_or_default(limit, 1)
+
+
+def _contains_safety_question(text: str) -> bool:
+    if _question_count(text) == 0:
+        return False
+    compact_text = "".join(text.split())
+    return any(phrase in compact_text for phrase in SAFETY_QUESTION_PHRASES)
+
+
 def experience_validator_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
     reasons: list[str] = []
     for term in EXPERIENCE_BANNED_TERMS:
@@ -75,8 +127,19 @@ def experience_validator_reasons(text: str, actions: list[str], state: AgentStat
     max_chars = budget.get("max") if isinstance(budget, dict) else None
     if isinstance(max_chars, int) and len(text) > max_chars:
         reasons.append("length_budget_exceeded")
-    if text.count("？") + text.count("?") > int(policy.get("max_questions", 1) if isinstance(policy, dict) else 1):
+    question_count = _question_count(text)
+    question_budget = _int_or_default(policy.get("question_budget"), -1) if "question_budget" in policy else None
+    question_limit = _question_limit(policy) if isinstance(policy, dict) else 1
+    ends_with_question = _ends_with_question(text)
+    if question_count > question_limit:
         reasons.append("too_many_questions")
+    if question_budget == 0 and ends_with_question:
+        reasons.append("unnecessary_question_ending")
+    question_ending_streak = _int_or_default(policy.get("question_ending_streak"), 0)
+    if question_ending_streak >= 1 and risk_level in {"L0", "L1"} and ends_with_question:
+        reasons.append("question_streak")
+    if policy.get("avoid_question_reason") == "safety_answer_already_given" and _contains_safety_question(text):
+        reasons.append("repeated_safety_question")
     return sorted(set(reasons))
 
 

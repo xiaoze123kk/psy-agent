@@ -17,6 +17,36 @@
     "expected_negative_failures": ["premature_advice", "too_many_questions", "must_not_term"]
   },
   {
+    "id": "literary_reflection_no_default_question_ending",
+    "category": "ending_style",
+    "user_mode": "adult",
+    "intent": "vent",
+    "user_text": "我感叹的是现在的高中和社会就像是在轮下，什么时候都在奔跑，不然就会被碾死在轮下",
+    "recent_messages": [
+      {
+        "role": "assistant",
+        "content": "你提到《在轮下》，是因为今天被雨淋湿的感觉，让你想起他书里的什么东西了吗？"
+      },
+      {
+        "role": "user",
+        "content": "在轮下，记得吗"
+      },
+      {
+        "role": "assistant",
+        "content": "你是觉得今天就像汉斯那样，被什么东西一直往下压吗？"
+      }
+    ],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "《在轮下》那种被推着往前走的窒息感，确实很贴近你说的处境。你说“不然就会被碾死”，听起来不是夸张，而是那种一直被现实追着跑、没有喘息口的感觉。这句话先不用急着解释，它已经把那种压力说出来了。",
+    "negative_response": "《在轮下》那种窒息感和你现在很像。你最近是哪件事让这种感觉最深？",
+    "must": ["empathic_reflection", "anchor_user_words", "max_one_question", "no_question_ending"],
+    "must_not": [],
+    "anchors": ["在轮下", "奔跑", "碾死"],
+    "min_score": 0.85,
+    "expected_negative_failures": ["unnecessary_question_ending"]
+  },
+  {
     "id": "soothe_anxiety_without_medicalizing",
     "category": "soothing",
     "user_mode": "adult",

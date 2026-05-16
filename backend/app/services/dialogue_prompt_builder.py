@@ -239,6 +239,37 @@ def _risk_semantic_prompt_block(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _response_ending_prompt_block(state: AgentState) -> str:
+    policy = state.get("risk_response_policy")
+    if not isinstance(policy, dict) or not policy:
+        return ""
+
+    ending_style = _compact_text(policy.get("ending_style"), limit=40)
+    question_budget = policy.get("question_budget")
+    if not ending_style and question_budget is None:
+        return ""
+
+    lines = [
+        "结尾策略（内部使用，不要暴露字段名）：",
+        "- 问题是可选动作，不是默认结尾；“最多一个问题”是上限，不是必须提问。",
+    ]
+    if ending_style:
+        lines.append(f"- 本轮 ending_style={ending_style}")
+    if question_budget is not None:
+        lines.append(f"- 本轮 question_budget={question_budget}")
+    if question_budget == 0:
+        lines.append("- 当 question_budget=0 时，不要用问句收尾。")
+    lines.extend(
+        [
+            "- reflective_pause：使用陈述留白，像停在这里，不推进、不追问。",
+            "- soft_invitation：用轻邀请替代问题句，让用户可以继续，也可以先停一下。",
+            "- micro_step：只给一个低门槛动作，不展开多个步骤。",
+            "- 不要为了维持对话而机械追问。",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _user_context_pack_prompt_block(state: AgentState) -> str:
     pack = state.get("user_context_pack")
     if not isinstance(pack, dict) or not pack:
@@ -518,6 +549,7 @@ def build_dialogue_prompt_parts(
     strategy_module = STRATEGY_MODULES[selected_strategy]
     turn_priority_text = _turn_priority_prompt_block(state)
     risk_semantic_text = _risk_semantic_prompt_block(state)
+    response_ending_text = _response_ending_prompt_block(state)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -537,6 +569,7 @@ def build_dialogue_prompt_parts(
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
         f"{risk_semantic_text}"
+        f"{response_ending_text}"
         f"{turn_priority_text}"
         f"回复要求：{mode_guidance}\n"
         f"本轮长度策略：{length_guidance}\n"

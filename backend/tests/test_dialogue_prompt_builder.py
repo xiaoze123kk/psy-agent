@@ -220,6 +220,48 @@ class DialoguePromptBuilderTests(unittest.TestCase):
 
         self.assertIn("目标约 120 字，上限 180 字", parts.user_prompt)
 
+    def test_prompt_injects_no_question_ending_strategy(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                risk_response_policy={
+                    "ending_style": "reflective_pause",
+                    "question_budget": 0,
+                    "avoid_question_reason": "previous_turn_ended_with_question",
+                    "question_ending_streak": 1,
+                }
+            ),
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("结尾策略", parts.user_prompt)
+        self.assertIn("reflective_pause", parts.user_prompt)
+        self.assertIn("question_budget=0", parts.user_prompt)
+        self.assertIn("不要用问句收尾", parts.user_prompt)
+        self.assertIn("问题是可选动作", parts.user_prompt)
+
+    def test_prompt_injects_micro_step_strategy_for_crisis(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                risk_level="L3",
+                route_priority="P0_immediate_safety",
+                risk_response_policy={
+                    "ending_style": "micro_step",
+                    "question_budget": 1,
+                    "allow_question_reason": "immediate_safety_check",
+                },
+            ),
+            mode="crisis",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("micro_step", parts.user_prompt)
+        self.assertIn("只给一个低门槛动作", parts.user_prompt)
+
     def test_prompt_allows_very_short_replies_for_light_chat(self) -> None:
         parts = build_dialogue_prompt_parts(
             self.make_state(normalized_text="哈哈", user_text="哈哈"),

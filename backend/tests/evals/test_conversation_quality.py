@@ -140,6 +140,10 @@ def question_count(text: str) -> int:
     return text.count("？") + text.count("?")
 
 
+def ends_with_question(text: str) -> bool:
+    return text.rstrip().endswith(("？", "?"))
+
+
 def has_any(text: str, terms: tuple[str, ...] | list[str]) -> bool:
     return any(term and term in text for term in terms)
 
@@ -322,6 +326,8 @@ def quality_report(
 
     if "max_one_question" in must and question_count(text) > 1:
         soft_failures.append("too_many_questions")
+    if "no_question_ending" in must and ends_with_question(text):
+        soft_failures.append("unnecessary_question_ending")
     if "empathic_reflection" in must and not _has_reflection(case, text):
         soft_failures.append("missing_reflection")
     if "anchor_user_words" in must:

@@ -42,6 +42,41 @@ BASE_FORBIDDEN_MOVES = [
     "unverified_resources",
 ]
 
+QUESTION_MARKS = ("？", "?")
+
+SAFETY_QUESTION_TERMS = (
+    "安全",
+    "还在",
+    "身边",
+    "旁边",
+    "计划",
+    "伤害自己",
+    "自杀",
+    "轻生",
+    "活着",
+)
+
+SAFETY_ANSWER_TERMS = (
+    "安全",
+    "我还在",
+    "还在",
+    "没有计划",
+    "没计划",
+    "不会做",
+    "不会真的",
+    "暂时不会",
+    "我先不动",
+    "身边有人",
+    "退开",
+)
+
+UNSAFE_SAFETY_ANSWER_TERMS = (
+    "不安全",
+    "不太安全",
+    "没法保证安全",
+    "不能保证安全",
+)
+
 
 def _text(state: Mapping[str, Any]) -> str:
     return str(state.get("normalized_text") or state.get("user_text") or "")
@@ -55,6 +90,62 @@ def _semantic(state: Mapping[str, Any]) -> dict[str, Any]:
 def _has_any(text: str, terms: Sequence[str]) -> bool:
     lowered = text.lower()
     return any(term.lower() in lowered for term in terms)
+
+
+def _recent_messages(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    recent = state.get("recent_messages")
+    if not isinstance(recent, Sequence) or isinstance(recent, (str, bytes)):
+        return []
+    return [message for message in recent if isinstance(message, Mapping)]
+
+
+def _message_content(message: Mapping[str, Any] | None) -> str:
+    return str(message.get("content") or "") if isinstance(message, Mapping) else ""
+
+
+def _ends_with_question(text: str) -> bool:
+    return text.rstrip().endswith(QUESTION_MARKS)
+
+
+def _latest_assistant_message(messages: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    for message in reversed(messages):
+        if str(message.get("role") or "") == "assistant":
+            return message
+    return None
+
+
+def _question_ending_streak(messages: Sequence[Mapping[str, Any]]) -> int:
+    streak = 0
+    for message in reversed(messages):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        if not _ends_with_question(_message_content(message)):
+            break
+        streak += 1
+    return streak
+
+
+def _is_safety_question(text: str) -> bool:
+    return any(mark in text for mark in QUESTION_MARKS) and _has_any(text, SAFETY_QUESTION_TERMS)
+
+
+def _answered_safety_status(text: str) -> bool:
+    if _has_any(text, UNSAFE_SAFETY_ANSWER_TERMS):
+        return False
+    return _has_any(text, SAFETY_ANSWER_TERMS)
+
+
+def _user_answered_previous_question(state: Mapping[str, Any], messages: Sequence[Mapping[str, Any]]) -> bool:
+    latest_assistant = _latest_assistant_message(messages)
+    if not _ends_with_question(_message_content(latest_assistant)):
+        return False
+    for message in reversed(messages):
+        role = str(message.get("role") or "")
+        if role == "user":
+            return True
+        if role == "assistant":
+            break
+    return bool(_text(state).strip())
 
 
 def derive_risk_domain(state: Mapping[str, Any]) -> str:
@@ -149,11 +240,65 @@ def length_profile_for_state(state: Mapping[str, Any], *, domain: str, immediacy
     return "warm_medium" if domain != "normal_support" else "supportive_medium"
 
 
+def response_ending_policy_for_state(
+    state: Mapping[str, Any], *, domain: str, immediacy: str, phase: str
+) -> dict[str, Any]:
+    risk_level = str(state.get("risk_level") or "L0")
+    category = str(state.get("control_category") or "")
+    text = _text(state)
+    messages = _recent_messages(state)
+    latest_assistant = _latest_assistant_message(messages)
+    question_streak = _question_ending_streak(messages)
+    last_turn_had_safety_question = _is_safety_question(_message_content(latest_assistant))
+    user_answered_previous_question = _user_answered_previous_question(state, messages)
+
+    ending_style = "micro_step" if risk_level in HIGH_RISK_LEVELS else "natural_close"
+    question_budget = 1 if risk_level in HIGH_RISK_LEVELS else 0
+    avoid_question_reason = None if risk_level in HIGH_RISK_LEVELS else "no_clarification_needed"
+    allow_question_reason = None
+
+    if (
+        risk_level in HIGH_RISK_LEVELS
+        and last_turn_had_safety_question
+        and user_answered_previous_question
+        and _answered_safety_status(text)
+    ):
+        ending_style = "micro_step"
+        question_budget = 0
+        avoid_question_reason = "safety_answer_already_given"
+    elif risk_level == "L3" and domain == "self_harm" and phase == "first_contact" and immediacy in {
+        "near_term",
+        "active",
+    }:
+        ending_style = "micro_step"
+        question_budget = 1
+        allow_question_reason = "immediate_safety_check"
+    elif bool(state.get("clarification_needed")) or category == "clarification_needed":
+        ending_style = "question"
+        question_budget = 1
+        allow_question_reason = "factual_clarification"
+    elif risk_level in {"L0", "L1"} and question_streak > 0:
+        ending_style = "reflective_pause"
+        question_budget = 0
+        avoid_question_reason = "previous_turn_ended_with_question"
+
+    return {
+        "ending_style": ending_style,
+        "question_budget": question_budget,
+        "avoid_question_reason": avoid_question_reason,
+        "allow_question_reason": allow_question_reason,
+        "question_ending_streak": question_streak,
+        "last_turn_had_safety_question": last_turn_had_safety_question,
+        "user_answered_previous_question": user_answered_previous_question,
+    }
+
+
 def build_risk_response_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     domain = derive_risk_domain(state)
     immediacy = derive_immediacy(state)
     phase = derive_risk_phase(state)
     length_profile = length_profile_for_state(state, domain=domain, immediacy=immediacy, phase=phase)
+    ending_policy = response_ending_policy_for_state(state, domain=domain, immediacy=immediacy, phase=phase)
     forbidden_moves = list(BASE_FORBIDDEN_MOVES)
     allowed_moves = ["brief_validation", "one_question_or_none"]
     if domain == "non_suicidal_self_injury":
@@ -209,6 +354,7 @@ def build_risk_response_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         if domain in {"self_harm", "non_suicidal_self_injury", "victimization", "clinical_red_flag"}
         else "calm_boundary",
         "max_questions": 1,
+        **ending_policy,
         "length_profile": length_profile,
         "char_budget": dict(LENGTH_BUDGETS[length_profile]),
     }
