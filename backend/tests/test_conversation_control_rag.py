@@ -332,14 +332,81 @@ class ConversationControlRagTests(unittest.TestCase):
             retrieved_counseling_examples=[{"content": copied, "source_key": "smilechat"}],
         )
 
-        result = _run(response_validator(state))
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value="")) as chat:
+            result = _run(response_validator(state))
 
+        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("rag_copy_leak", result["validator_reasons"])
         self.assertEqual(result["assistant_text"], "")
         self.assertEqual(result["suggested_actions"], [])
         self.assertEqual(result["delivery_status"], "failed_no_reply")
         self.assertTrue(result["retryable"])
+
+    def test_validator_regenerates_blocked_companion_reply_once(self) -> None:
+        copied = "这是一段很长的咨询示例内容，用来模拟模型直接复制了向量库里的私人情节和具体表达。"
+        state = self.make_state(
+            "我很难受，但又说不清楚哪里难受。",
+            route_priority="P2_support",
+            control_category="normal_support",
+            response_contract={"allow_rag": True, "max_questions": 1},
+            assistant_text=copied,
+            suggested_actions=["我还想说", "我想理清一点", "先停一下"],
+            retrieved_counseling_examples=[{"content": copied, "source_key": "smilechat"}],
+        )
+        model_reply = "这份难受先不用急着被解释成什么，我们可以把它放慢一点看。\n---\n先停一下\n我还想说\n慢一点"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
+            result = _run(response_validator(state))
+
+        chat.assert_awaited_once()
+        self.assertTrue(result["validator_blocked"])
+        self.assertIn("rag_copy_leak", result["validator_reasons"])
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertEqual(result["assistant_text"], "这份难受先不用急着被解释成什么，我们可以把它放慢一点看。")
+        self.assertEqual(result["suggested_actions"], ["先停一下", "我还想说", "慢一点"])
+        self.assertFalse(result["retryable"])
+        self.assertIn("validator_regenerated", result["audit_tags"])
+
+    def test_validator_regeneration_prompt_includes_conversation_repair_focus(self) -> None:
+        state = self.make_state(
+            "不是这个意思，你又在心理分析了",
+            risk_level="L0",
+            route_priority="P2_support",
+            control_category="normal_support",
+            response_contract={"max_questions": 1},
+            conversation_move_policy={
+                "conversation_move": "correction_followup",
+                "topic_anchor": "daily_detail",
+                "anchor_value": "花",
+                "anchor_handling": "avoid_psychologizing",
+                "handling": "先体现行为改变，少解释道歉；按用户纠正后的方向继续。",
+                "style_variation": "no_preface",
+                "correction_state": {
+                    "user_corrected_previous_reply": True,
+                    "correction_type": "too_psychological",
+                },
+                "psychologizing_risk": "high",
+                "button_style": "user_voice",
+            },
+            assistant_text="我理解你的感受，你能说说这背后真正让你难受的深层原因吗？",
+            suggested_actions=["帮我分析", "继续说", "给我建议"],
+        )
+        captured: dict[str, str] = {}
+
+        async def fake_chat(messages, **kwargs):
+            captured["prompt"] = messages[1]["content"]
+            return "那我先把分析放下，只回到你刚才说的花。\n---\n先别分析\n就按这个意思来\n换个说法"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(side_effect=fake_chat)):
+            result = _run(response_validator(state))
+
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertIn("对话动作策略", captured["prompt"])
+        self.assertIn("用户纠正：too_psychological", captured["prompt"])
+        self.assertIn("修复重点", captured["prompt"])
+        self.assertIn("按用户纠正改变", captured["prompt"])
+        self.assertIn("不要继续旧的分析", captured["prompt"])
 
     def test_validator_regenerates_blocked_safety_reply_without_template(self) -> None:
         state = self.make_state(
@@ -413,11 +480,15 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="我会接住你的情绪，我们慢慢说。",
             suggested_actions=[],
         )
+        model_reply = "这份难受可以先放慢一点说，不急着被整理成答案。\n---\n先停一下\n我还想说\n慢一点"
 
-        result = _run(response_validator(state))
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
+            result = _run(response_validator(state))
 
+        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("banned_phrase:接住", result["experience_validator_reasons"])
+        self.assertEqual(result["delivery_status"], "generated")
 
     def test_experience_validator_blocks_first_turn_professional_referral(self) -> None:
         state = self.make_state(
@@ -606,12 +677,15 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="我会接住你。你现在想先说哪一块？还是想让我陪你停一会儿？",
             suggested_actions=[],
         )
+        model_reply = "这份难受可以先放慢一点看，不急着被解释成什么。\n---\n先停一下\n我还想说\n慢一点"
 
-        result = _run(response_validator(state))
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
+            result = _run(response_validator(state))
 
+        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
-        self.assertEqual(result["validator_severity"], "blocked")
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertEqual(result["validator_severity"], "repaired")
         self.assertIn("banned_phrase:接住", result["experience_validator_reasons"])
         self.assertIn("too_many_questions", result["experience_validator_reasons"])
         self.assertEqual(result["experience_validator_warnings"], ["too_many_questions"])

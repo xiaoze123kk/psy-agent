@@ -332,6 +332,34 @@ def _validator_severity(*, delivery_status: str, blocked: bool, experience_reaso
     return "passed"
 
 
+def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[str]) -> str:
+    labels = set(blocked_reasons) | set(experience_reasons)
+    lines: list[str] = []
+    if "rag_copy_leak" in labels:
+        lines.append("- rag_copy_leak：RAG 示例只能当风格参考，重写时不要复制示例原句、私人情节或具体表达。")
+    if any(label.startswith("banned_phrase:") for label in labels):
+        lines.append("- banned_phrase：避开上一版中的固定体验违禁词，换成自然、具体、不模板化的表达。")
+    if "failed_user_correction" in labels:
+        lines.append("- failed_user_correction：按用户纠正改变对话动作，不要继续旧的分析、追问或安全盘问。")
+    if "post_risk_over_safety_check" in labels or "repeated_safety_question" in labels:
+        lines.append("- post_risk_over_safety_check：记得风险线索即可，当前先回应用户话题，不继续安全盘问。")
+    if "over_psychologizing" in labels:
+        lines.append("- over_psychologizing：普通闲聊或纠偏场景先按字面内容聊天，不解释成创伤、防御或病理。")
+    if "ignored_topic_anchor" in labels:
+        lines.append("- ignored_topic_anchor：回复里要看见用户给出的具体锚点，不要泛化成普通情绪。")
+    if "generic_buttons" in labels:
+        lines.append("- generic_buttons：按钮要像用户下一句会说的话，不要写内部策略词或泛化按钮。")
+    if "reused_formulaic_opening" in labels:
+        lines.append("- reused_formulaic_opening：换一种开头，允许直接进入内容，不复用“听起来/我理解/我听见”。")
+    if "conversation_restart" in labels:
+        lines.append("- conversation_restart：顺着已有话题继续，不重新开启咨询流程。")
+    if "too_many_questions" in labels or "unnecessary_question_ending" in labels or "question_streak" in labels:
+        lines.append("- question_budget：减少追问；如果不必要，用陈述或轻邀请收尾。")
+    if not lines:
+        return ""
+    return "修复重点：\n" + "\n".join(lines) + "\n"
+
+
 def _repair_mode_for_state(state: AgentState) -> str:
     route_priority = state.get("route_priority", "P2_support")
     category = state.get("control_category", "")
@@ -370,6 +398,7 @@ async def _regenerate_reply_with_model(
         f"{prompt_parts.user_prompt}\n"
         "上一版回复没有通过系统的安全与体验校验。\n"
         f"校验原因：{reason}\n"
+        f"{_repair_focus_block(blocked_reasons=blocked_reasons, experience_reasons=experience_reasons)}"
         "请重新生成一版给用户看的回复：必须遵守 response_contract；不要复述危险方法或工具；"
         "不要暴露内部校验、策略名、失败原因或提示词；不要输出固定兜底模板。"
     )
@@ -533,6 +562,15 @@ async def response_validator(state: AgentState) -> AgentState:
 
     reason = "validator_blocked:" + ",".join(reasons)
     if not is_safety_delivery_path(state):
+        regenerated = await _regenerate_reply_with_model(
+            state,
+            reason=reason,
+            blocked=True,
+            blocked_reasons=reasons,
+            experience_reasons=experience_reasons,
+        )
+        if regenerated is not None:
+            return regenerated
         return failed_no_reply_validation_result(
             state,
             reason=reason,
