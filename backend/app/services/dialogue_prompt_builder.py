@@ -203,6 +203,42 @@ def _compact_list(value: object, *, limit: int = 5) -> list[str]:
     return items
 
 
+def _risk_semantic_prompt_block(state: AgentState) -> str:
+    semantic_risk = state.get("semantic_risk")
+    if not isinstance(semantic_risk, dict) or not semantic_risk:
+        return ""
+
+    domain = _compact_text(semantic_risk.get("risk_domain") or semantic_risk.get("domain"), limit=80)
+    expression = _compact_text(
+        semantic_risk.get("risk_expression_type") or semantic_risk.get("expression"),
+        limit=80,
+    )
+    signal_families = _compact_list(semantic_risk.get("signal_family"), limit=6)
+    signal_family = "、".join(signal_families)
+    subject = _compact_text(semantic_risk.get("subject"), limit=80)
+    literalness = _compact_text(semantic_risk.get("literalness"), limit=80)
+
+    semantic_parts = [part for part in (domain, expression, signal_family, subject, literalness) if part]
+    if not semantic_parts:
+        return ""
+
+    lines = [
+        "风险语义层（内部使用，不要暴露字段名）：",
+        f"- 语义线索：{' / '.join(semantic_parts)}",
+    ]
+    strategy_notes = {
+        "emotional_metaphor": "不要把情绪隐喻说成自杀意图，不要第一句安全盘问，先回应情绪质地。",
+        "idiom_or_slang": "日常夸张或口头禅，不要危机化，除非有明确计划/工具/行动意图。",
+        "passive_death_wish": "低压关照安全，不机械推急救或专业转介。",
+        "non_suicidal_self_injury_urge": "不要把它改写成自杀意图，先帮助降低冲动和远离刺激源。",
+    }
+    if expression in strategy_notes:
+        lines.append(f"- 处理策略：{strategy_notes[expression]}")
+    if subject == "third_party":
+        lines.append("- 处理策略：帮助用户照看第三方安全，不要把用户本人说成危机主体。")
+    return "\n".join(lines) + "\n"
+
+
 def _user_context_pack_prompt_block(state: AgentState) -> str:
     pack = state.get("user_context_pack")
     if not isinstance(pack, dict) or not pack:
@@ -402,7 +438,18 @@ def _reply_length_guidance_for(state: AgentState, mode: str, selected_strategy: 
         or state.get("route_priority") == "P0_immediate_safety"
         or state.get("risk_level") in {"L2", "L3"}
     ):
-        return "危机或高风险时短句直接，约 80–180 字，优先确认安全和现实支持。"
+        risk_response_policy = state.get("risk_response_policy")
+        char_budget = (
+            risk_response_policy.get("char_budget")
+            if isinstance(risk_response_policy, dict)
+            else None
+        )
+        if isinstance(char_budget, dict):
+            target = char_budget.get("target") or char_budget.get("target_chars")
+            max_chars = char_budget.get("max") or char_budget.get("max_chars")
+            if target and max_chars:
+                return f"危机或高风险时按本轮策略动态控制长度，目标约 {target} 字，上限 {max_chars} 字；先贴近痛苦，再按风险类型给低压安全动作或现实支持。"
+        return "危机或高风险时短句直接，约 80–180 字；先贴近痛苦，再按风险类型给低压安全动作或现实支持。"
 
     light_chat = {
         "哈",
@@ -470,6 +517,7 @@ def build_dialogue_prompt_parts(
     length_guidance = _reply_length_guidance_for(state, mode, selected_strategy)
     strategy_module = STRATEGY_MODULES[selected_strategy]
     turn_priority_text = _turn_priority_prompt_block(state)
+    risk_semantic_text = _risk_semantic_prompt_block(state)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -488,6 +536,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{risk_semantic_text}"
         f"{turn_priority_text}"
         f"回复要求：{mode_guidance}\n"
         f"本轮长度策略：{length_guidance}\n"

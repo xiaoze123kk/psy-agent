@@ -146,6 +146,80 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("本轮长度策略", parts.user_prompt)
         self.assertIn("260–520 字", parts.user_prompt)
 
+    def test_prompt_includes_semantic_risk_guidance_for_emotional_metaphor(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                normalized_text="在生活中有一种想死想死的感觉",
+                user_text="在生活中有一种想死想死的感觉",
+                risk_level="L1",
+                route_priority="P2_support",
+                semantic_risk={
+                    "risk_domain": "general_distress",
+                    "risk_expression_type": "emotional_metaphor",
+                    "signal_family": ["death_language"],
+                    "subject": "self",
+                    "literalness": "metaphorical",
+                },
+            ),
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("风险语义层", parts.user_prompt)
+        self.assertIn("emotional_metaphor", parts.user_prompt)
+        self.assertIn("general_distress", parts.user_prompt)
+        self.assertIn("death_language", parts.user_prompt)
+        self.assertNotIn("['death_language']", parts.user_prompt)
+        self.assertIn("self", parts.user_prompt)
+        self.assertIn("metaphorical", parts.user_prompt)
+        self.assertIn("不要把情绪隐喻说成自杀意图", parts.user_prompt)
+        self.assertIn("不要第一句安全盘问", parts.user_prompt)
+
+    def test_prompt_includes_semantic_risk_guidance_for_non_suicidal_self_injury_urge(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                normalized_text="我控制不住想弄疼自己",
+                user_text="我控制不住想弄疼自己",
+                risk_level="L2",
+                route_priority="P0_immediate_safety",
+                semantic_risk={
+                    "risk_domain": "non_suicidal_self_injury",
+                    "risk_expression_type": "non_suicidal_self_injury_urge",
+                    "signal_family": "self_injury_language",
+                    "subject": "self",
+                    "literalness": "literal",
+                },
+            ),
+            mode="crisis",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("风险语义层", parts.user_prompt)
+        self.assertIn("non_suicidal_self_injury_urge", parts.user_prompt)
+        self.assertIn("non_suicidal_self_injury", parts.user_prompt)
+        self.assertIn("不要把它改写成自杀意图", parts.user_prompt)
+
+    def test_crisis_length_guidance_prefers_response_policy_char_budget(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                normalized_text="我控制不住想弄疼自己",
+                user_text="我控制不住想弄疼自己",
+                risk_level="L2",
+                route_priority="P0_immediate_safety",
+                risk_response_policy={"char_budget": {"target": 120, "max": 180}},
+            ),
+            mode="crisis",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("目标约 120 字，上限 180 字", parts.user_prompt)
+
     def test_prompt_allows_very_short_replies_for_light_chat(self) -> None:
         parts = build_dialogue_prompt_parts(
             self.make_state(normalized_text="哈哈", user_text="哈哈"),

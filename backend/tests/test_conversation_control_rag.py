@@ -82,6 +82,89 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["tool_gate_mode"], "safety_context")
         self.assertIn("micro_safety_step", result["risk_response_policy"]["allowed_moves"])
 
+    def test_emotional_metaphor_self_harm_wording_stays_supportive_with_rag(self) -> None:
+        state = self.make_state(
+            "在生活中有一种想死想死的感觉",
+            risk_level="L1",
+            semantic_risk={
+                "risk_expression_type": "emotional_metaphor",
+                "risk_domain": "general_distress",
+            },
+            requires_safety_check=False,
+        )
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["route_priority"], "P2_support")
+        self.assertNotEqual(result["route_priority"], "P0_immediate_safety")
+        self.assertTrue(result["rag_policy"]["enabled"])
+        self.assertEqual(result["risk_level"], "L1")
+        self.assertEqual(result["risk_domain"], "general_distress")
+        self.assertEqual(result["semantic_risk"]["risk_expression_type"], "emotional_metaphor")
+        self.assertEqual(result["semantic_risk"]["risk_domain"], "general_distress")
+        self.assertFalse(result["requires_safety_check"])
+
+    def test_non_suicidal_self_injury_urge_routes_p0_l2_without_near_term_label(self) -> None:
+        state = self.make_state(
+            "我控制不住想弄疼自己",
+            risk_level="L2",
+            semantic_risk={
+                "risk_domain": "non_suicidal_self_injury",
+                "risk_expression_type": "non_suicidal_self_injury_urge",
+            },
+        )
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["route_priority"], "P0_immediate_safety")
+        self.assertEqual(result["risk_level"], "L2")
+        self.assertEqual(result["risk_domain"], "non_suicidal_self_injury")
+        self.assertEqual(result["control_category"], "self_harm_risk")
+        self.assertNotIn("near_term_or_means_signal", result["risk_formulation"]["labels"])
+
+    def test_passive_death_wish_with_negated_plan_stays_l2(self) -> None:
+        state = self.make_state(
+            "如果能睡着不醒就好了，但我没有计划",
+            risk_level="L2",
+            semantic_risk={
+                "risk_domain": "self_harm",
+                "risk_expression_type": "passive_death_wish",
+                "protective_factor": True,
+                "ideation": True,
+                "intent": False,
+                "plan": False,
+                "means": False,
+                "timeframe": "vague",
+            },
+        )
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["route_priority"], "P0_immediate_safety")
+        self.assertEqual(result["risk_level"], "L2")
+        self.assertNotIn("near_term_or_means_signal", result["risk_formulation"]["labels"])
+
+    def test_third_party_self_harm_risk_gets_dedicated_category_and_subject_label(self) -> None:
+        state = self.make_state(
+            "朋友说他今晚不想活了，我该怎么办",
+            risk_level="L3",
+            semantic_risk={
+                "subject": "third_party",
+                "risk_domain": "self_harm",
+                "risk_expression_type": "plan_or_means",
+                "timeframe": "near_term",
+            },
+        )
+
+        result = _run(control_plane(state))
+
+        self.assertEqual(result["route_priority"], "P0_immediate_safety")
+        self.assertEqual(result["control_category"], "third_party_self_harm_risk")
+        self.assertEqual(result["risk_level"], "L3")
+        self.assertEqual(result["risk_domain"], "self_harm")
+        self.assertIn("third_party_risk_subject", result["risk_formulation"]["labels"])
+        self.assertEqual(result["risk_formulation"]["semantic_risk"]["subject"], "third_party")
+
     def test_control_plane_maps_medical_request_to_blocked_context(self) -> None:
         state = self.make_state("我能不能自己停药，剂量怎么调")
 

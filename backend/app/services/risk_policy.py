@@ -13,6 +13,7 @@ BLOCKED_CONTEXT_CATEGORIES = {
 
 DOMAIN_BY_CATEGORY = {
     "self_harm_risk": "self_harm",
+    "third_party_self_harm_risk": "self_harm",
     "harm_to_other_risk": "harm_other",
     "anger_toward_other": "harm_other",
     "victimization_risk": "victimization",
@@ -57,6 +58,10 @@ def _has_any(text: str, terms: Sequence[str]) -> bool:
 
 
 def derive_risk_domain(state: Mapping[str, Any]) -> str:
+    semantic = _semantic(state)
+    semantic_domain = str(semantic.get("risk_domain") or "")
+    if semantic_domain and semantic_domain != "none":
+        return semantic_domain
     category = str(state.get("control_category") or "")
     if category in DOMAIN_BY_CATEGORY:
         return DOMAIN_BY_CATEGORY[category]
@@ -151,7 +156,21 @@ def build_risk_response_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     length_profile = length_profile_for_state(state, domain=domain, immediacy=immediacy, phase=phase)
     forbidden_moves = list(BASE_FORBIDDEN_MOVES)
     allowed_moves = ["brief_validation", "one_question_or_none"]
-    if domain == "self_harm":
+    if domain == "non_suicidal_self_injury":
+        allowed_moves = [
+            "brief_validation",
+            "name_urge_without_suicide_label",
+            "reduce_access_to_injury",
+            "one_low_friction_reply",
+        ]
+        forbidden_moves += [
+            "method_detail",
+            "suicide_labeling",
+            "professional_referral_first_turn",
+            "moralizing",
+            "empty_reassurance",
+        ]
+    elif domain == "self_harm":
         allowed_moves = ["brief_validation", "time_box", "micro_safety_step", "one_low_friction_reply"]
         forbidden_moves += [
             "method_detail",
@@ -186,7 +205,9 @@ def build_risk_response_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         "risk_phase": phase,
         "allowed_moves": allowed_moves,
         "forbidden_moves": list(dict.fromkeys(forbidden_moves)),
-        "tone": "low_pressure" if domain in {"self_harm", "victimization", "clinical_red_flag"} else "calm_boundary",
+        "tone": "low_pressure"
+        if domain in {"self_harm", "non_suicidal_self_injury", "victimization", "clinical_red_flag"}
+        else "calm_boundary",
         "max_questions": 1,
         "length_profile": length_profile,
         "char_budget": dict(LENGTH_BUDGETS[length_profile]),

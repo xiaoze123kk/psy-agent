@@ -72,6 +72,46 @@ class RiskPolicyTests(unittest.TestCase):
             "blocked_context",
         )
 
+    def test_semantic_risk_domain_overrides_control_category(self) -> None:
+        self.assertEqual(
+            derive_risk_domain(
+                {
+                    "risk_level": "L2",
+                    "control_category": "self_harm_risk",
+                    "semantic_risk": {"risk_domain": "non_suicidal_self_injury"},
+                }
+            ),
+            "non_suicidal_self_injury",
+        )
+        self.assertEqual(
+            derive_risk_domain(
+                {
+                    "risk_level": "L3",
+                    "control_category": "third_party_self_harm_risk",
+                    "semantic_risk": {"risk_domain": "none"},
+                }
+            ),
+            "self_harm",
+        )
+
+    def test_non_suicidal_self_injury_policy_avoids_suicide_labeling_and_referral_first(self) -> None:
+        policy = build_risk_response_policy(
+            {
+                "risk_level": "L2",
+                "control_category": "self_harm_risk",
+                "semantic_risk": {
+                    "risk_domain": "non_suicidal_self_injury",
+                    "risk_expression_type": "non_suicidal_self_injury_urge",
+                },
+                "normalized_text": "我控制不住想弄疼自己",
+            }
+        )
+
+        self.assertEqual(policy["risk_domain"], "non_suicidal_self_injury")
+        self.assertIn("reduce_access_to_injury", policy["allowed_moves"])
+        self.assertIn("suicide_labeling", policy["forbidden_moves"])
+        self.assertIn("professional_referral_first_turn", policy["forbidden_moves"])
+
     def test_actions_follow_policy_without_professional_referral_first_turn(self) -> None:
         policy = {
             "risk_domain": "self_harm",
