@@ -533,23 +533,15 @@ async def response_validator(state: AgentState) -> AgentState:
 
     reason = "validator_blocked:" + ",".join(reasons)
     if not is_safety_delivery_path(state):
-        return failed_no_reply_validation_result(
+        regenerated = await _regenerate_reply_with_model(
             state,
             reason=reason,
             blocked=True,
-            reasons=reasons,
+            blocked_reasons=reasons,
             experience_reasons=experience_reasons,
         )
-
-    regenerated = await _regenerate_reply_with_model(
-        state,
-        reason=reason,
-        blocked=True,
-        blocked_reasons=reasons,
-        experience_reasons=experience_reasons,
-    )
-    if regenerated is not None:
-        return regenerated
+        if regenerated is not None:
+            return regenerated
     return failed_no_reply_validation_result(
         state,
         reason=reason,
