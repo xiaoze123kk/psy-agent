@@ -69,6 +69,9 @@ SAFE_DIRECT_KEYS = {
     "should_write_memory",
     "validator_blocked",
     "validator_reasons",
+    "validator_severity",
+    "experience_validator_warnings",
+    "experience_validator_blocking_reasons",
 }
 
 SAFE_RISK_FORMULATION_KEYS = {
@@ -276,6 +279,8 @@ def extract_reason_codes(summary: dict[str, object]) -> list[str]:
     codes: list[str] = []
     codes.extend(_as_string_list(summary.get("risk_reason_codes")))
     codes.extend(_as_string_list(summary.get("validator_reasons")))
+    codes.extend(_as_string_list(summary.get("experience_validator_blocking_reasons")))
+    codes.extend(_as_string_list(summary.get("experience_validator_warnings")))
     if isinstance(summary.get("risk_formulation"), dict):
         codes.extend(_as_string_list(summary["risk_formulation"].get("reason_codes")))
     for key in ("failure_reason", "rag_skipped_reason", "memory_policy_reason"):
@@ -375,6 +380,19 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
     validator_reasons = _as_string_list(result.get("validator_reasons")) or _as_string_list(
         _latest_trace_value(graph_trace, "validator_reasons")
     )
+    experience_validator_warnings = _as_string_list(result.get("experience_validator_warnings")) or _as_string_list(
+        _latest_trace_value(graph_trace, "experience_validator_warnings")
+    )
+    experience_validator_blocking_reasons = _as_string_list(
+        result.get("experience_validator_blocking_reasons")
+    ) or _as_string_list(_latest_trace_value(graph_trace, "experience_validator_blocking_reasons"))
+    validator_severity = str(
+        _first_present(
+            result.get("validator_severity"),
+            _latest_trace_value(graph_trace, "validator_severity"),
+            "passed" if not validator_reasons and not experience_validator_warnings else "warning",
+        )
+    )
     referenced_memories = _safe_memory_references(result.get("referenced_memories"))
     retrieved_memory_count = _max_present_int(
         result.get("retrieved_memory_count"),
@@ -458,6 +476,9 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
             "checked": any(str(record.get("node_name") or "") == "response_validator" for record in graph_trace),
             "blocked": validator_blocked,
             "reasons": validator_reasons,
+            "severity": validator_severity,
+            "warnings": experience_validator_warnings,
+            "experience_blocking_reasons": experience_validator_blocking_reasons,
             "delivery_status": delivery_status,
         },
         "tooling": tooling,

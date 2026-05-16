@@ -61,22 +61,23 @@ class TurnClaim:
 
 
 def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object]:
+    is_safety_risk = risk_level in {"L2", "L3"}
     return {
         "assistant_text": "",
         "risk_level": risk_level,
-        "intent": "vent" if risk_level == "L1" else "other",
+        "intent": "crisis" if is_safety_risk else ("vent" if risk_level == "L1" else "other"),
         "risk_reasons": [],
         "semantic_risk": {},
         "risk_source": "fallback",
         "risk_reason_codes": [],
-        "requires_safety_check": False,
-        "route_priority": "P2_support",
+        "requires_safety_check": is_safety_risk,
+        "route_priority": "P0_immediate_safety" if is_safety_risk else "P2_support",
         "control_category": "fallback",
         "control_reasons": [reason],
         "control_confidence": 0.0,
         "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
         "response_contract": {},
-        "memory_policy": "skip_sensitive",
+        "memory_policy": "crisis_audit_only" if is_safety_risk else "skip_sensitive",
         "memory_policy_reason": reason,
         "rag_used": False,
         "rag_skipped_reason": reason,
@@ -84,6 +85,10 @@ def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object
         "example_source_keys": [],
         "validator_blocked": False,
         "validator_reasons": [],
+        "experience_validator_reasons": [],
+        "experience_validator_warnings": [],
+        "experience_validator_blocking_reasons": [],
+        "validator_severity": "failed",
         "suggested_actions": [],
         "session_summary": "",
         "memory_candidates": [],
@@ -98,53 +103,7 @@ def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object
     }
 
 
-def _safety_fallback_result(*, risk_level: str, reason: str) -> dict[str, object]:
-    assistant_text = (
-        "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；"
-        "如果马上有危险，请立刻拨打当地紧急电话。"
-    )
-    suggested_actions = ["我现在不安全", "我能联系谁", "先陪我稳住"]
-
-    return {
-        "assistant_text": assistant_text,
-        "risk_level": risk_level,
-        "intent": "crisis",
-        "risk_reasons": [],
-        "semantic_risk": {},
-        "risk_source": "fallback",
-        "risk_reason_codes": [],
-        "requires_safety_check": True,
-        "route_priority": "P0_immediate_safety",
-        "control_category": "fallback",
-        "control_reasons": [reason],
-        "control_confidence": 0.0,
-        "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
-        "response_contract": {},
-        "memory_policy": "crisis_audit_only",
-        "memory_policy_reason": reason,
-        "rag_used": False,
-        "rag_skipped_reason": reason,
-        "example_ids": [],
-        "example_source_keys": [],
-        "validator_blocked": False,
-        "validator_reasons": [],
-        "suggested_actions": suggested_actions,
-        "session_summary": "",
-        "memory_candidates": [],
-        "should_write_memory": False,
-        "memory_write_decisions": [{"status": "skipped", "reason": reason}],
-        "referenced_memories": [],
-        "referenced_counseling_examples": [],
-        "delivery_status": "safety_fallback",
-        "failure_reason": reason,
-        "retryable": False,
-        "audit_tags": [reason],
-    }
-
-
 def _fallback_assistant_result(*, risk_level: str, reason: str) -> dict[str, object]:
-    if risk_level in {"L2", "L3"}:
-        return _safety_fallback_result(risk_level=risk_level, reason=reason)
     return _failed_no_reply_result(risk_level=risk_level, reason=reason)
 
 
@@ -170,13 +129,8 @@ def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -
     if delivery_status == "generated" and not assistant_text:
         delivery_status = "failed_no_reply"
 
-    if delivery_status == "failed_no_reply" and risk_level in {"L2", "L3"}:
-        return _safety_fallback_result(
-            risk_level=risk_level,
-            reason=str(result.get("failure_reason") or "safety_fallback"),
-        )
-
     if delivery_status == "failed_no_reply":
+        is_safety_risk = risk_level in {"L2", "L3"}
         result.update(
             {
                 "assistant_text": "",
@@ -186,22 +140,23 @@ def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -
                 "should_write_memory": False,
                 "referenced_memories": [],
                 "referenced_counseling_examples": [],
-                "memory_policy": "skip_sensitive",
+                "requires_safety_check": bool(result.get("requires_safety_check", is_safety_risk)),
+                "route_priority": result.get("route_priority") or ("P0_immediate_safety" if is_safety_risk else "P2_support"),
+                "memory_policy": "crisis_audit_only" if is_safety_risk else "skip_sensitive",
                 "memory_policy_reason": str(result.get("failure_reason") or "failed_no_reply"),
                 "delivery_status": "failed_no_reply",
                 "failure_reason": str(result.get("failure_reason") or "failed_no_reply"),
                 "retryable": True,
+                "validator_severity": result.get("validator_severity") or "failed",
+                "experience_validator_warnings": result.get("experience_validator_warnings", []),
+                "experience_validator_blocking_reasons": result.get("experience_validator_blocking_reasons", []),
             }
         )
         return result
 
-    result["delivery_status"] = "safety_fallback" if delivery_status == "safety_fallback" else "generated"
+    result["delivery_status"] = "generated"
     result["failure_reason"] = result.get("failure_reason")
     result["retryable"] = bool(result.get("retryable", False))
-    if result["delivery_status"] == "safety_fallback":
-        result["referenced_memories"] = []
-        result["referenced_counseling_examples"] = []
-        result["retryable"] = False
     return result
 
 
@@ -716,6 +671,9 @@ async def _persist_turn_result(
         "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
         "safety_context_summary": assistant_result.get("safety_context_pack", {}),
         "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),
+        "experience_validator_warnings": assistant_result.get("experience_validator_warnings", []),
+        "experience_validator_blocking_reasons": assistant_result.get("experience_validator_blocking_reasons", []),
+        "validator_severity": assistant_result.get("validator_severity", "passed"),
         "control_category": assistant_result.get("control_category", "normal_support"),
         "control_reasons": assistant_result.get("control_reasons", []),
         "control_confidence": assistant_result.get("control_confidence", 0.0),
@@ -1014,6 +972,9 @@ async def process_message_turn_stream(
             risk_level=str(assistant_result.get("risk_level", context.pre_risk_level)),
             validator_blocked=bool(assistant_result.get("validator_blocked", False)),
             experience_validator_reasons=list(assistant_result.get("experience_validator_reasons", [])),
+            experience_validator_warnings=list(assistant_result.get("experience_validator_warnings", [])),
+            experience_validator_blocking_reasons=list(assistant_result.get("experience_validator_blocking_reasons", [])),
+            validator_severity=str(assistant_result.get("validator_severity", "passed")),
             delivery_status=str(assistant_result.get("delivery_status", "generated")),
         )
         yield _graph_update_event("saving_record", delivery_status=str(assistant_result.get("delivery_status", "generated")))

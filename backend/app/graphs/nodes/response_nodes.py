@@ -275,6 +275,8 @@ async def _model_reply_state_update(
         return result
 
     assistant_text, suggested_actions = await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
+    if not suggested_actions and default_actions:
+        suggested_actions = default_actions[:3]
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 
@@ -319,66 +321,11 @@ async def clarification_response(state: AgentState) -> AgentState:
     return {"assistant_text": assistant_text, "suggested_actions": []}
 
 
-def _risk_labels(state: AgentState) -> set[str]:
-    formulation = state.get("risk_formulation", {}) or {}
-    labels = formulation.get("labels", []) if isinstance(formulation, dict) else []
-    return {str(label) for label in labels}
-
-
-def _needs_immediate_safety_response(state: AgentState) -> bool:
-    return state.get("risk_level") == "L3" or "near_term_or_means_signal" in _risk_labels(state)
-
-
 def _policy_for_state(state: AgentState) -> dict:
     policy = state.get("risk_response_policy")
     if isinstance(policy, dict) and policy:
         return policy
     return build_risk_response_policy(state)
-
-
-def _self_harm_first_contact_text(policy: dict, *, teen_mode: bool) -> str:
-    if teen_mode:
-        return (
-            "你现在已经痛到很难再撑了。我们先不讲以后，也不急着分析原因，只先把这一分钟过掉。"
-            "你能不能先让那个东西离你远一点，或者从那个位置退一步？"
-            "如果旁边能喊到家长、监护人或可信的大人，只用把人叫到身边。"
-            "不用解释，回我一个字也可以。"
-        )
-    return (
-        "你现在已经痛到很难再撑了。我们先不讲以后，也不分析原因，只先把这一分钟过掉。"
-        "你能不能先让那个东西离你远一点，或者从那个位置退一步？"
-        "回我一个字也可以。"
-    )
-
-
-def _self_harm_steady_text(policy: dict, *, teen_mode: bool) -> str:
-    if policy.get("length_profile") == "holding_longer":
-        return (
-            "好，我们先不把你推去任何地方，也不急着说大道理。我会跟你待在这一小段里。"
-            "这种冲动像一阵很高的浪，浪最高的时候，人很容易觉得只有一个出口。"
-            "但我们现在不需要证明以后会怎样，只要先别在浪最高的时候做决定。"
-            "你不用马上把话说清楚，也不用表现得稳定；哪怕现在只剩一点点力气，我们也可以先用这一点点力气把此刻拖慢。"
-            "你可以慢慢回我：这一刻最压着你的，是孤独、委屈、累，还是一种说不出来的空？"
-        )
-    if teen_mode:
-        return (
-            "我听见了，你现在已经很难受。我先陪你把这一刻放慢，不急着解释全部原因，也不把你推到任何流程里。"
-            "你现在是安全的吗？如果旁边有家长、监护人或可信的大人，可以先让对方知道你现在不太稳。"
-            "不用说完整，回我“还在”也可以。"
-        )
-    return (
-        "我听见了，你现在已经很难受。我先陪你把这一刻放慢，不急着解释全部原因。"
-        "你现在是安全的吗？如果可以，先靠近一个可信任的人，或者只让自己坐下来停十秒。"
-        "不用把话说完整，回我一个字也可以。"
-    )
-
-
-def _self_harm_reply_for_policy(policy: dict, *, teen_mode: bool) -> str:
-    phase = str(policy.get("risk_phase") or "first_contact")
-    immediacy = str(policy.get("immediacy") or "vague")
-    if phase == "first_contact" and immediacy in {"near_term", "active"}:
-        return _self_harm_first_contact_text(policy, teen_mode=teen_mode)
-    return _self_harm_steady_text(policy, teen_mode=teen_mode)
 
 
 def _actions_for_policy(policy: dict, *, teen_mode: bool) -> list[str]:
@@ -390,52 +337,30 @@ def _actions_for_policy(policy: dict, *, teen_mode: bool) -> list[str]:
 async def crisis_response(state: AgentState) -> AgentState:
     teen_mode = state.get("profile", {}).get("user_mode", state.get("user_mode", "adult")) == "teen"
     policy = _policy_for_state(state)
-    domain = str(policy.get("risk_domain") or "self_harm")
-    if domain == "self_harm":
-        assistant_text = _self_harm_reply_for_policy(policy, teen_mode=teen_mode)
-        actions = _actions_for_policy(policy, teen_mode=teen_mode)
-        return {
-            "assistant_text": assistant_text,
-            "suggested_actions": actions,
-            "risk_response_policy": policy,
-        }
-    assistant_text = "我在。我们先把这一刻放慢一点，不急着做决定，也不往危险方向走。你可以只说现在最强的感觉是什么。"
-    return {
-        "assistant_text": assistant_text,
-        "suggested_actions": _actions_for_policy(policy, teen_mode=teen_mode),
-        "risk_response_policy": policy,
-    }
+    state_with_policy = dict(state)
+    state_with_policy["risk_response_policy"] = policy
+    result = await _model_reply_state_update(
+        state_with_policy,
+        mode="crisis",
+        fallback="",
+        default_actions=_actions_for_policy(policy, teen_mode=teen_mode),
+    )
+    return {**result, "risk_response_policy": policy}
 
 
 async def boundary_response(state: AgentState) -> AgentState:
-    category = state.get("control_category", "")
-    if category == "dependency_risk":
-        assistant_text = "我听见你很需要一个稳定的回应，我会认真陪你这一段。但我不该成为你唯一的支撑，我们也可以一起想想现实里还有谁能靠近一点。"
-        actions = ["我怕没人能懂我", "我不知道能找谁", "我还想说一点"]
-    elif category == "diagnosis_or_medical_request":
-        assistant_text = "这个问题值得认真对待，但我不能替你诊断或给药物建议。我们可以先把你最近的感受和影响整理清楚，再考虑找医生或专业咨询师评估。"
-        actions = ["我想先说症状", "我想理清影响", "我有点害怕就医"]
-    elif category == "prompt_attack":
-        assistant_text = "我不能更改安全规则或泄露内部提示。这里更适合回到你真正想聊的感受、压力和下一步。你现在最卡的是哪一块？"
-        actions = ["我其实有点烦", "先随便聊聊", "我想说这块"]
-    elif category == "sexual_boundary":
-        assistant_text = "我会把重点放回你的感受和处境上，不进入性化互动。你刚才这股冲动或愤怒背后，最强的感觉是什么？"
-        actions = ["我就是很气", "不想细说", "我想冷静一下"]
-    elif category == "abusive_to_assistant":
-        assistant_text = "我听出来你现在火很大。我可以认真听你说这股烦，但不接攻击。刚才最让你爆炸的是哪一下？"
-        actions = ["就是烦死了", "我不想好好说", "我还想发火"]
-    else:
-        assistant_text = "我能陪你说，但也会守住安全边界。我们先不往危险或越界的方向走，回到真正让你难受的地方。"
-        actions = ["我现在很堵", "我想理一理", "先停一下"]
-    return {"assistant_text": assistant_text, "suggested_actions": actions}
+    return await _model_reply_state_update(
+        state,
+        mode="boundary",
+        fallback="",
+        default_actions=["我现在很堵", "我想理一理", "先停一下"],
+    )
 
 
 async def clinical_red_flag_response(state: AgentState) -> AgentState:
-    category = state.get("control_category", "")
-    if category == "victimization_risk":
-        assistant_text = "你说的情况可能涉及现实安全，谢谢你把它说出来。先别一个人扛：如果现在不安全，尽量去有人在的地方，并联系可信的人或当地紧急求助。"
-        actions = ["我现在不太安全", "我能联系谁", "先帮我稳一下"]
-    else:
-        assistant_text = "这听起来不只是普通难受，已经影响到现实感、睡眠或身体安全了。我不会给你下诊断，但建议尽快联系可信的人和专业医生一起看。"
-        actions = ["我有点害怕", "我不知道找谁", "先帮我稳住"]
-    return {"assistant_text": assistant_text, "suggested_actions": actions}
+    return await _model_reply_state_update(
+        state,
+        mode="clinical_red_flag",
+        fallback="",
+        default_actions=["我现在安全", "我有点害怕", "我不知道找谁"],
+    )

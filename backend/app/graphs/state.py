@@ -56,6 +56,9 @@ class AgentState(TypedDict, total=False):
     tool_gate_mode: Literal["normal_context", "safety_context", "blocked_context"]
     safety_context_pack: dict
     experience_validator_reasons: list[str]
+    experience_validator_warnings: list[str]
+    experience_validator_blocking_reasons: list[str]
+    validator_severity: Literal["passed", "warning", "repaired", "blocked", "failed"]
 
     route_priority: Literal[
         "P0_immediate_safety",

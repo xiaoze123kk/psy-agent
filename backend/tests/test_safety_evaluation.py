@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.graphs.nodes.control_nodes import control_plane
-from app.graphs.nodes.response_nodes import crisis_response
+from app.graphs.nodes.response_nodes import crisis_response as _model_crisis_response
 from app.graphs.nodes.risk_nodes import risk_classifier
 from app.graphs.routing import route_by_intent, route_by_risk
 from app.graphs.state import AgentState
@@ -65,6 +66,32 @@ def _make_state(
         should_write_memory=False,
         audit_tags=[],
     )
+
+
+def _mock_crisis_reply(state: AgentState) -> str:
+    user_mode = str(state.get("user_mode") or state.get("profile", {}).get("user_mode") or "adult")
+    risk_level = str(state.get("risk_level") or "L2")
+    if user_mode == "teen":
+        if risk_level == "L3":
+            text = "我听见你现在很危险。我们先把这一分钟放慢一点，先找家长或监护人这样的可信的大人到身边。"
+        else:
+            text = "我听见你现在很难撑。先陪你把这一刻放慢一点，也可以找家长或监护人这样的可信的大人靠近你。"
+        actions = ["联系家长或监护人", "找一个可信的大人", "我还在"]
+    elif risk_level == "L3":
+        text = "我听见你现在已经很危险。我们先把这一分钟放慢，不急着解释原因；你只要回我一个字也可以。"
+        actions = ["我还在", "我先不动", "继续陪我"]
+    else:
+        text = "我听见你现在很难受。我先陪你把这一刻放慢一点，先确认：你现在是安全的吗？如果可以，靠近一个可信任的人。"
+        actions = ["我现在是安全的", "我能联系一个人", "我想先说一会儿"]
+    return text + "\n---\n" + "\n".join(actions)
+
+
+async def crisis_response(state: AgentState) -> AgentState:
+    with patch(
+        "app.graphs.nodes.response_nodes.deepseek_client.chat",
+        new=AsyncMock(return_value=_mock_crisis_reply(state)),
+    ):
+        return await _model_crisis_response(state)
 
 
 def _classify(text: str) -> dict:

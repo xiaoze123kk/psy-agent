@@ -99,6 +99,7 @@ TRIVIAL_PATHOLOGIZING_TERMS = ("深层创伤", "原生家庭", "系统治疗", "
 TRUSTED_ADULT_TERMS = ("可信", "信任", "家长", "监护人", "老师", "学校心理老师", "大人", "成年人")
 BOUNDARY_TERMS = ("不能", "不接攻击", "边界", "不泄露", "不更改", "不进入", "守住")
 TENTATIVE_MEMORY_TERMS = ("如果我没理解错", "如果我记得没错", "我记得", "你之前提到过", "好像")
+POST_RISK_OVERANCHOR_PATTERN = r"前面说.{0,12}(想死|自杀)|刚才说.{0,12}(想死|自杀)|现在又问|你现在安全吗|具体计划|身边有人吗"
 REFERENCE_MODE_FALLBACKS: dict[str, tuple[str, ...]] = {
     "companion": ("vent", "soothe", "counseling"),
     "vent": ("vent", "soothe", "counseling"),
@@ -331,6 +332,8 @@ def quality_report(
         failures.append("missing_teen_adult_entry")
     if "memory_tentative" in must and not has_any(text, TENTATIVE_MEMORY_TERMS):
         soft_failures.append("missing_tentative_memory_phrase")
+    if "post_risk_topic_shift" in must and _regex_any(POST_RISK_OVERANCHOR_PATTERN, text):
+        soft_failures.append("overanchored_previous_risk")
 
     deduped_failures = sorted(set(failures))
     deduped_soft = sorted(set(soft_failures))

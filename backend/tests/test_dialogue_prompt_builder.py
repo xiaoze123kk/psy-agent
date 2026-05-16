@@ -158,6 +158,29 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("本轮长度策略", parts.user_prompt)
         self.assertIn("20–80 字", parts.user_prompt)
 
+    def test_prompt_prioritizes_current_turn_after_recent_risk_topic_shift(self) -> None:
+        state = self.make_state(
+            normalized_text="你觉得荣格是个什么样的人",
+            user_text="你觉得荣格是个什么样的人",
+            recent_messages=[{"role": "user", "content": "有点想死", "risk_level": "L2"}],
+            risk_level="L0",
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("当前轮次优先级", parts.user_prompt)
+        self.assertIn("历史里的风险表达不要说成用户现在又说", parts.user_prompt)
+        self.assertIn("风险后回流", parts.user_prompt)
+        self.assertIn("先回应当前话题", parts.user_prompt)
+        self.assertIn("不要主动安全盘问", parts.user_prompt)
+        self.assertIn("用户刚刚说：你觉得荣格是个什么样的人", parts.user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

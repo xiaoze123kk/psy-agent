@@ -20,6 +20,9 @@ def test_map_result_includes_risk_policy_metadata() -> None:
             "tool_gate_mode": "safety_context",
             "safety_context_pack": {"schema_version": 1},
             "experience_validator_reasons": [],
+            "experience_validator_warnings": ["too_many_questions"],
+            "experience_validator_blocking_reasons": [],
+            "validator_severity": "warning",
             "delivery_status": "generated",
         },
         retrieved_memories=[],
@@ -30,6 +33,8 @@ def test_map_result_includes_risk_policy_metadata() -> None:
     assert result["risk_phase"] == "first_contact"
     assert result["tool_gate_mode"] == "safety_context"
     assert result["risk_response_policy"]["length_profile"] == "brief_first_contact"
+    assert result["validator_severity"] == "warning"
+    assert result["experience_validator_warnings"] == ["too_many_questions"]
 
 
 class FakeStreamingGraph:
@@ -63,6 +68,8 @@ class FakeStreamingGraph:
                 "intent": "vent",
                 "delivery_status": "generated",
                 "validator_blocked": False,
+                "validator_severity": "warning",
+                "experience_validator_warnings": ["too_many_questions"],
             }
         }
 
@@ -108,10 +115,13 @@ class GraphRuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("duration_ms" in event for event in progress_events))
         self.assertTrue(any(event.get("retrieved_example_count") == 1 for event in progress_events))
         self.assertTrue(any((event.get("rag_trace_summary") or {}).get("status") == "hit" for event in progress_events))
+        self.assertTrue(any(event.get("validator_severity") == "warning" for event in progress_events))
         self.assertEqual(token_events, ["I am "])
         self.assertLess(event_order.index("token"), event_order.index("graph_result"))
         self.assertIsNotNone(final_result)
         self.assertEqual(final_result["assistant_text"], "I am here.")
         self.assertEqual(final_result["rag_skipped_reason"], "")
         self.assertEqual(final_result["rag_trace_summary"]["status"], "hit")
+        self.assertEqual(final_result["validator_severity"], "warning")
+        self.assertEqual(final_result["experience_validator_warnings"], ["too_many_questions"])
         self.assertGreaterEqual(len(final_result["graph_trace"]), 3)

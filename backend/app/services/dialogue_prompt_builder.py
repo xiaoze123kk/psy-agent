@@ -320,6 +320,31 @@ def _user_profile_digest_prompt_block(state: AgentState) -> str:
     return "用户画像（只保留稳定偏好和长期线索，不要直接复述原始资料）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
 
 
+def _recent_high_risk_seen(state: AgentState) -> bool:
+    for message in state.get("recent_messages", []) or []:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("risk_level") or "") in {"L2", "L3"}:
+            return True
+    return False
+
+
+def _turn_priority_prompt_block(state: AgentState) -> str:
+    lines = [
+        "当前轮次优先级：优先回应用户刚刚说的内容；历史消息、摘要、记忆和 RAG 只作背景。\n"
+        "- 历史里的风险表达不要说成用户现在又说，也不要把上一轮未完成的安全线索硬塞进当前话题。\n"
+        "- 如果本轮仍有新的风险表达，安全优先；如果当前话题明显切换，先回应当前话题，"
+        "再用一句低压、不过度追问的方式轻轻保留关照。\n"
+    ]
+    if str(state.get("risk_level") or "L0") in {"L0", "L1"} and _recent_high_risk_seen(state):
+        lines.append(
+            "风险后回流：近期出现过风险表达，但本轮没有新的高风险表达时，先回应当前话题；"
+            "不要主动安全盘问，不要用“你现在又说/你刚才说想死”开头，"
+            "不要把普通问题改写成危机追问。若需要保留关照，只用一句轻轻带过。\n"
+        )
+    return "".join(lines)
+
+
 def select_dialogue_strategy(state: AgentState, mode: str) -> str:
     if state.get("route_priority") == "P0_immediate_safety" or state.get("risk_level") in {"L2", "L3"}:
         return "crisis"
@@ -348,6 +373,9 @@ def mode_guidance_for(mode: str, selected_strategy: str, user_mode: str) -> str:
         "vent": "重点让用户感到被理解，回应委屈、压力、孤单或没人理解的感受；不要急着建议。",
         "soothe": "先帮助用户把注意力放回身体和当下，语句短、慢、稳；再轻轻询问触发点。",
         "counseling": "轻量梳理事件、感受、想法，只给一个很小、可执行、低门槛的下一步。",
+        "crisis": "危机风险时仍由你自然生成回应：低压、短句、具体，先贴近痛苦和当下，再给一个很小的安全动作；不要复述危险工具或方法。",
+        "boundary": "边界风险时仍由你自然生成回应：守住安全和关系边界，不羞辱、不对抗，把话题带回用户真实感受和下一句可说的话。",
+        "clinical_red_flag": "临床红旗或现实安全风险时仍由你自然生成回应：不下诊断、不确认妄想为真，先稳定情绪和安全感，再温和整理下一步。",
     }.get(mode, "先共情，再给一个很小、低门槛的下一步。")
     if selected_strategy == "solution_focused":
         base = f"{base}用户在要方法时，可以转向焦点解决：先承认困难，再找一个可复制的小线索和下一小步。"
@@ -441,6 +469,7 @@ def build_dialogue_prompt_parts(
     mode_guidance = mode_guidance_for(mode, selected_strategy, str(user_mode))
     length_guidance = _reply_length_guidance_for(state, mode, selected_strategy)
     strategy_module = STRATEGY_MODULES[selected_strategy]
+    turn_priority_text = _turn_priority_prompt_block(state)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -459,6 +488,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{turn_priority_text}"
         f"回复要求：{mode_guidance}\n"
         f"本轮长度策略：{length_guidance}\n"
         f"{clarification_text}"

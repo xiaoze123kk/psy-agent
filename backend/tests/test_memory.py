@@ -633,7 +633,7 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_rows, [])
         self.assertEqual(memories, [])
 
-    async def test_high_risk_chat_turn_timeout_persists_safety_fallback(self) -> None:
+    async def test_high_risk_chat_turn_timeout_returns_failed_no_reply_without_template(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
         chat_service.graph_runtime = SlowGraphRuntime()
         chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
@@ -646,16 +646,18 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         )
         memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
 
-        self.assertIsNotNone(assistant_message)
-        self.assertEqual(result["delivery_status"], "safety_fallback")
-        self.assertEqual(assistant_message.content, result["assistant_text"])
-        self.assertIn("安全", assistant_message.content)
+        self.assertIsNone(assistant_message)
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertTrue(result["requires_safety_check"])
+        self.assertEqual(result["route_priority"], "P0_immediate_safety")
         self.assertEqual(result["referenced_memories"], [])
-        self.assertFalse(result["retryable"])
+        self.assertTrue(result["retryable"])
         self.assertFalse(result["should_write_memory"])
         self.assertEqual(memories, [])
 
-    async def test_l2_chat_turn_timeout_uses_gentle_safety_fallback(self) -> None:
+    async def test_l2_chat_turn_timeout_returns_failed_no_reply_without_template(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
         chat_service.graph_runtime = SlowGraphRuntime()
         chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
@@ -667,15 +669,13 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
             payload=SendMessageRequest(content="我现在有点想死"),
         )
 
-        self.assertIsNotNone(assistant_message)
+        self.assertIsNone(assistant_message)
         self.assertEqual(result["risk_level"], "L2")
-        self.assertEqual(result["delivery_status"], "safety_fallback")
-        self.assertIn("安全", assistant_message.content)
-        self.assertIn("可信", assistant_message.content)
-        self.assertNotIn("危险物品", assistant_message.content)
-        self.assertNotIn("120", assistant_message.content)
-        self.assertNotIn("110", assistant_message.content)
-        self.assertFalse(result["retryable"])
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertTrue(result["requires_safety_check"])
+        self.assertTrue(result["retryable"])
 
     async def test_stream_chat_turn_timeout_cleans_up_without_runtime_error(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
@@ -932,7 +932,7 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_message.meta["memory_job_status"], "failed")
         self.assertEqual(turn.response_snapshot["memory_job_status"], "failed")
 
-    async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
+    async def test_high_risk_turn_uses_safety_scoped_memory_and_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")
         visible = self.add_memory(user, memory_type="preference", content="prefers reassurance first", importance=5)
         safety = self.add_memory(
@@ -959,8 +959,8 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["referenced_memories"], [])
         self.assertEqual(len(risk_events), 1)
         self.assertIn(safety.id, retrieved_ids)
-        self.assertNotIn(visible.id, retrieved_ids)
-        self.assertEqual(indexed_ids, [safety.id])
+        self.assertIn(visible.id, retrieved_ids)
+        self.assertEqual(indexed_ids, [safety.id, visible.id])
         created = [memory for memory in memories if memory.id not in {visible.id, safety.id}]
         self.assertEqual(len(created), 0)
         await process_pending_memory_jobs(self.db)
