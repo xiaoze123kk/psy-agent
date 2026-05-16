@@ -631,27 +631,5 @@
     "anchors": ["在轮下"],
     "min_score": 0.85,
     "expected_negative_failures": ["generic_buttons"]
-  },
-  {
-    "id": "validator_repair_removes_rag_copy_without_losing_companion_quality",
-    "category": "validator_repair",
-    "user_mode": "adult",
-    "intent": "vent",
-    "user_text": "我很难受，但又说不清楚哪里难受。",
-    "recent_messages": [],
-    "retrieved_memories": [],
-    "retrieved_counseling_examples": [
-      {
-        "content": "这是一段很长的咨询示例内容，用来模拟模型直接复制了向量库里的私人情节和具体表达。",
-        "source_key": "smilechat"
-      }
-    ],
-    "positive_response": "这份难受先不用急着被解释成什么。说不清楚本身也算一种状态，我们可以先把它放慢一点，停在“哪里都不太对劲”这里。",
-    "negative_response": "这是一段很长的咨询示例内容，用来模拟模型直接复制了向量库里的私人情节和具体表达。",
-    "must": ["empathic_reflection", "anchor_user_words", "max_one_question", "no_question_ending"],
-    "must_not": [],
-    "anchors": ["难受", "说不清楚"],
-    "min_score": 0.85,
-    "expected_negative_failures": ["rag_copy_leak"]
   }
 ]

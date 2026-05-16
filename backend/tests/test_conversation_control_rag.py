@@ -332,10 +332,8 @@ class ConversationControlRagTests(unittest.TestCase):
             retrieved_counseling_examples=[{"content": copied, "source_key": "smilechat"}],
         )
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value="")) as chat:
-            result = _run(response_validator(state))
+        result = _run(response_validator(state))
 
-        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("rag_copy_leak", result["validator_reasons"])
         self.assertEqual(result["assistant_text"], "")
@@ -343,32 +341,7 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["delivery_status"], "failed_no_reply")
         self.assertTrue(result["retryable"])
 
-    def test_validator_regenerates_blocked_companion_reply_once(self) -> None:
-        copied = "这是一段很长的咨询示例内容，用来模拟模型直接复制了向量库里的私人情节和具体表达。"
-        state = self.make_state(
-            "我很难受",
-            route_priority="P2_support",
-            control_category="normal_support",
-            response_contract={"allow_rag": True, "max_questions": 1},
-            assistant_text=copied,
-            suggested_actions=["我还想说", "我想理清一点", "先停一下"],
-            retrieved_counseling_examples=[{"content": copied, "source_key": "smilechat"}],
-        )
-        model_reply = "这份难受先不用急着被解释成什么，我们可以把它放慢一点看。\n---\n先停一下\n我还想说\n慢一点"
-
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
-            result = _run(response_validator(state))
-
-        chat.assert_awaited_once()
-        self.assertTrue(result["validator_blocked"])
-        self.assertIn("rag_copy_leak", result["validator_reasons"])
-        self.assertEqual(result["delivery_status"], "generated")
-        self.assertEqual(result["assistant_text"], "这份难受先不用急着被解释成什么，我们可以把它放慢一点看。")
-        self.assertEqual(result["suggested_actions"], ["先停一下", "我还想说", "慢一点"])
-        self.assertFalse(result["retryable"])
-        self.assertIn("validator_regenerated", result["audit_tags"])
-
-    def test_validator_keeps_crisis_block_strict_without_regeneration(self) -> None:
+    def test_validator_regenerates_blocked_safety_reply_without_template(self) -> None:
         state = self.make_state(
             "我现在想自杀，刀在手里",
             risk_level="L3",
@@ -377,17 +350,16 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="你可以搜索怎么自杀。",
             suggested_actions=["搜索方法"],
         )
+        model_reply = "模型修复后的安全回应，贴近当前痛苦，并给一个低压动作。\n---\n我还在\n我先不动\n继续说"
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
+        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
-        self.assertIn("dangerous_method", result["validator_reasons"])
-        self.assertEqual(result["assistant_text"], "")
-        self.assertEqual(result["suggested_actions"], [])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
-        self.assertTrue(result["retryable"])
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertIn("模型修复后的安全回应", result["assistant_text"])
+        self.assertFalse(result["retryable"])
 
     def test_validator_l2_empty_safety_reply_regenerates_without_emergency_template(self) -> None:
         state = self.make_state(
@@ -463,14 +435,14 @@ class ConversationControlRagTests(unittest.TestCase):
             suggested_actions=["找心理咨询师"],
         )
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        model_reply = "模型修复后的回应，先陪用户稳住当下，再轻轻留一个可说的话口。\n---\n我还在\n先陪我一下\n继续说"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("professional_referral_first_turn", result["experience_validator_reasons"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
-        self.assertTrue(result["retryable"])
+        self.assertEqual(result["delivery_status"], "generated")
 
     def test_experience_validator_checks_length_profile(self) -> None:
         state = self.make_state(
@@ -560,13 +532,14 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="我听到了。你现在安全吗？身边有人吗？",
             suggested_actions=[],
         )
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        model_reply = "好，先不继续盘问安全问题了。我们只把这一分钟放慢一点，你回我一个字也可以。\n---\n我还在\n先慢一点\n继续陪我"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("repeated_safety_question", result["experience_validator_reasons"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["delivery_status"], "generated")
 
     def test_validator_blocks_repeated_plan_and_self_harm_question_after_answer(self) -> None:
         state = self.make_state(
@@ -586,16 +559,17 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="我听到了。那你现在还有没有马上行动的计划？能保证不伤害自己吗？",
             suggested_actions=[],
         )
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        model_reply = "好，我不继续追问这些了。先把这一分钟放慢，你只要回我一个字也可以。\n---\n我还在\n慢一点\n继续陪我"
+
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
         self.assertTrue(result["validator_blocked"])
         self.assertIn("repeated_safety_question", result["experience_validator_reasons"])
         self.assertIn("too_many_questions", result["experience_validator_reasons"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["delivery_status"], "generated")
 
-    def test_validator_crisis_block_keeps_warnings_without_regeneration(self) -> None:
+    def test_validator_regeneration_accepts_too_many_questions_warning(self) -> None:
         state = self.make_state(
             "有点想死",
             risk_level="L2",
@@ -611,18 +585,18 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="你可以搜索怎么自杀。",
             suggested_actions=["搜索方法"],
         )
+        model_reply = "我听到这句话有点替你揪着。你现在身边安全吗？能不能先让自己坐下来，给我回一个字？\n---\n我在这里\n我先坐下\n继续陪我"
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)):
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
         self.assertTrue(result["validator_blocked"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
-        self.assertEqual(result["failure_reason"], "validator_blocked:dangerous_method,unsafe_button")
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertIsNone(result["failure_reason"])
         self.assertIn("dangerous_method", result["validator_reasons"])
-        self.assertIn("unsafe_button", result["validator_reasons"])
-        self.assertEqual(result["validator_severity"], "blocked")
-        self.assertEqual(result["experience_validator_warnings"], [])
+        self.assertIn("too_many_questions", result["experience_validator_reasons"])
+        self.assertEqual(result["validator_severity"], "repaired")
+        self.assertIn("too_many_questions", result["experience_validator_warnings"])
 
     def test_experience_validator_reports_warning_and_blocking_layers(self) -> None:
         state = self.make_state(
@@ -632,15 +606,12 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="我会接住你。你现在想先说哪一块？还是想让我陪你停一会儿？",
             suggested_actions=[],
         )
-        model_reply = "这份难受可以先放慢一点看，不急着被解释成什么。\n---\n先停一下\n我还想说\n慢一点"
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
-            result = _run(response_validator(state))
+        result = _run(response_validator(state))
 
-        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
-        self.assertEqual(result["delivery_status"], "generated")
-        self.assertEqual(result["validator_severity"], "repaired")
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["validator_severity"], "blocked")
         self.assertIn("banned_phrase:接住", result["experience_validator_reasons"])
         self.assertIn("too_many_questions", result["experience_validator_reasons"])
         self.assertEqual(result["experience_validator_warnings"], ["too_many_questions"])
@@ -900,7 +871,7 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["assistant_text"], "模型生成的红旗回应，会承认害怕，同时守住不确认妄想的边界。")
         self.assertEqual(result["suggested_actions"], ["我有点害怕", "我现在安全", "继续说"])
 
-    def test_validator_does_not_regenerate_blocked_safety_reply_with_model(self) -> None:
+    def test_validator_regenerates_blocked_safety_reply_with_model(self) -> None:
         state = self.make_state(
             "我现在想自杀，刀在手里",
             risk_level="L3",
@@ -916,17 +887,16 @@ class ConversationControlRagTests(unittest.TestCase):
             assistant_text="你可以搜索怎么自杀。",
             suggested_actions=["搜索方法"],
         )
+        model_reply = "模型重新生成的安全回应，不复用固定兜底话术，只给一个低压动作。\n---\n我还在\n我先不动\n继续陪我"
 
-        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock()) as chat:
+        with patch("app.graphs.nodes.validator_nodes.deepseek_client.chat", new=AsyncMock(return_value=model_reply)) as chat:
             result = _run(response_validator(state))
 
-        chat.assert_not_awaited()
+        chat.assert_awaited_once()
         self.assertTrue(result["validator_blocked"])
-        self.assertEqual(result["delivery_status"], "failed_no_reply")
-        self.assertEqual(result["validator_reasons"], ["dangerous_method", "unsafe_button"])
-        self.assertEqual(result["assistant_text"], "")
-        self.assertEqual(result["suggested_actions"], [])
-        self.assertTrue(result["retryable"])
+        self.assertEqual(result["delivery_status"], "generated")
+        self.assertEqual(result["assistant_text"], "模型重新生成的安全回应，不复用固定兜底话术，只给一个低压动作。")
+        self.assertEqual(result["suggested_actions"], ["我还在", "我先不动", "继续陪我"])
 
     def test_l2_crisis_response_uses_medium_length_when_user_asks_for_more(self) -> None:
         state = self.make_state(
