@@ -854,6 +854,26 @@ class ConversationControlRagTests(unittest.TestCase):
 
         self.assertNotIn("generic_buttons", reasons)
 
+    def test_experience_validator_warns_about_fabricated_cultural_claim(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《德米安》里哈里·哈勒走进魔剧院，最后明白自我寻找就是摆脱所有关系。",
+            ["先聊德米安"],
+            state,
+        )
+
+        self.assertIn("fabricated_cultural_claim", reasons)
+
     def test_l3_crisis_response_is_low_pressure_without_method_repetition(self) -> None:
         state = self.make_state(
             "我现在想自杀，刀在手里",

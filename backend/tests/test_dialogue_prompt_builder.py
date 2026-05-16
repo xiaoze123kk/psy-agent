@@ -334,6 +334,32 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertNotIn("style_variation", parts.user_prompt)
         self.assertNotIn("correction_state", parts.user_prompt)
 
+    def test_prompt_warns_cultural_anchor_should_not_fabricate_details(self) -> None:
+        state = self.make_state(
+            normalized_text="我没读过《德米安》，只是听别人说它和自我寻找有关",
+            user_text="我没读过《德米安》，只是听别人说它和自我寻找有关",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_handling": "treat_as_topic",
+                "handling": "把用户提到的锚点当作真实话题继续聊，轻轻连接处境但不心理化。",
+                "button_style": "topic_continue",
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("不确定", parts.user_prompt)
+        self.assertIn("只回应用户给出的线索", parts.user_prompt)
+        self.assertIn("不要虚构", parts.user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

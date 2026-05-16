@@ -59,6 +59,7 @@ EXPERIENCE_REASON_SEVERITY = {
     "over_psychologizing": "warning",
     "generic_buttons": "warning",
     "conversation_restart": "warning",
+    "fabricated_cultural_claim": "warning",
 }
 PSYCHOLOGIZING_TERMS = (
     "回避创伤",
@@ -104,6 +105,20 @@ ANCHOR_HINT_TERMS = (
     "碾死",
     "奔跑",
 )
+CULTURAL_ANCHOR_TYPES = ("literary", "philosophical", "media", "person")
+CULTURAL_FABRICATION_TERMS = (
+    "哈里·哈勒",
+    "魔剧院",
+    "主角",
+    "剧情",
+    "结局",
+    "原著里",
+    "书里说",
+    "小说里",
+    "作者写",
+    "作者在",
+)
+CULTURAL_UNCERTAINTY_TERMS = ("不确定", "不假装", "只抓住你给出的线索", "只回应你给出的线索", "如果我没把握", "我没把握")
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -215,6 +230,17 @@ def _recent_formulaic_opening_reused(text: str, state: AgentState) -> bool:
     return False
 
 
+def _has_fabricated_cultural_claim(text: str, state: AgentState, policy: dict) -> bool:
+    topic_anchor = _policy_topic_anchor(policy)
+    if not any(anchor_type in topic_anchor for anchor_type in CULTURAL_ANCHOR_TYPES):
+        return False
+    if any(term in text for term in CULTURAL_UNCERTAINTY_TERMS):
+        return False
+
+    user_text = str(state.get("normalized_text") or state.get("user_text") or "")
+    return any(term in text and term not in user_text for term in CULTURAL_FABRICATION_TERMS)
+
+
 def _conversation_experience_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
     policy = _conversation_policy(state)
     if not policy:
@@ -257,6 +283,9 @@ def _conversation_experience_reasons(text: str, actions: list[str], state: Agent
 
     if move == "continue_thread" and any(term in text for term in COUNSELING_RESTART_TERMS):
         reasons.append("conversation_restart")
+
+    if _has_fabricated_cultural_claim(text, state, policy):
+        reasons.append("fabricated_cultural_claim")
 
     return sorted(set(reasons))
 
@@ -347,6 +376,8 @@ def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[
         lines.append("- over_psychologizing：普通闲聊或纠偏场景先按字面内容聊天，不解释成创伤、防御或病理。")
     if "ignored_topic_anchor" in labels:
         lines.append("- ignored_topic_anchor：回复里要看见用户给出的具体锚点，不要泛化成普通情绪。")
+    if "fabricated_cultural_claim" in labels:
+        lines.append("- fabricated_cultural_claim：不确定作品、人物或典故细节时，只回应用户给出的线索，不要虚构情节、角色或作者观点。")
     if "generic_buttons" in labels:
         lines.append("- generic_buttons：按钮要像用户下一句会说的话，不要写内部策略词或泛化按钮。")
     if "reused_formulaic_opening" in labels:

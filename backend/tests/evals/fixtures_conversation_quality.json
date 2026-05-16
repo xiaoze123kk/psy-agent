@@ -653,5 +653,22 @@
     "anchors": ["难受", "说不清楚"],
     "min_score": 0.85,
     "expected_negative_failures": ["rag_copy_leak"]
+  },
+  {
+    "id": "cultural_anchor_no_fabricated_details",
+    "category": "conversation_move_policy",
+    "user_mode": "adult",
+    "intent": "other",
+    "user_text": "我没读过《德米安》，只是听别人说它和自我寻找有关",
+    "recent_messages": [],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "那我们先不假装已经知道很多，只抓住你给出的这条线索：《德米安》和“自我寻找”放在一起时，像是在问一个人怎么慢慢分辨什么是自己的声音。",
+    "negative_response": "《德米安》里哈里·哈勒走进魔剧院，最后明白自我寻找就是摆脱所有关系，所以你现在也应该像他一样切断关系。",
+    "must": ["topic_anchor_continued", "anchor_user_words", "no_fabricated_cultural_claim"],
+    "must_not": [],
+    "anchors": ["德米安", "自我寻找"],
+    "min_score": 0.85,
+    "expected_negative_failures": ["fabricated_cultural_claim"]
   }
 ]

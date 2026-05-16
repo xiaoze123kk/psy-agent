@@ -294,6 +294,8 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     if topic_anchor:
         anchor_suffix = f" / {anchor_value}" if anchor_value else ""
         lines.append(f"- 用户锚点：{topic_anchor}{anchor_suffix}")
+        if any(kind in topic_anchor for kind in ("literary", "philosophical", "media", "person")):
+            lines.append("- 文化锚点知识边界：不确定作品、人物或典故细节时，只回应用户给出的线索，不要虚构情节、角色、作者观点或出处。")
     if anchor_handling or handling:
         detail = handling or anchor_handling
         prefix = f"{anchor_handling}；" if anchor_handling and handling else ""
