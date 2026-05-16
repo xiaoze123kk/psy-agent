@@ -270,6 +270,51 @@ def _response_ending_prompt_block(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _conversation_move_policy_prompt_block(state: AgentState) -> str:
+    policy = state.get("conversation_move_policy")
+    if not isinstance(policy, dict) or not policy:
+        return ""
+
+    move = _compact_text(policy.get("conversation_move"), limit=60)
+    topic_anchor = _compact_text(policy.get("topic_anchor"), limit=80)
+    anchor_value = _compact_text(policy.get("anchor_value"), limit=80)
+    anchor_handling = _compact_text(policy.get("anchor_handling"), limit=80)
+    handling = _compact_text(policy.get("handling"), limit=160)
+    opening_style = _compact_text(policy.get("opening_style") or policy.get("style_variation"), limit=120)
+    button_style = _compact_text(policy.get("button_style"), limit=60)
+    psychologizing_risk = _compact_text(policy.get("psychologizing_risk"), limit=40)
+    correction = policy.get("correction_state")
+    correction_type = ""
+    if isinstance(correction, dict):
+        correction_type = _compact_text(correction.get("correction_type"), limit=60)
+
+    lines = ["对话动作策略（内部使用，不要暴露字段名）："]
+    if move:
+        lines.append(f"- 本轮对话动作：{move}")
+    if topic_anchor:
+        anchor_suffix = f" / {anchor_value}" if anchor_value else ""
+        lines.append(f"- 用户锚点：{topic_anchor}{anchor_suffix}")
+    if anchor_handling or handling:
+        detail = handling or anchor_handling
+        prefix = f"{anchor_handling}；" if anchor_handling and handling else ""
+        lines.append(f"- 处理方式：{prefix}{detail}")
+    if opening_style:
+        lines.append(f"- 开头方式：{opening_style}")
+    if correction_type and correction_type != "none":
+        lines.append(f"- 用户纠正：{correction_type}；下一句要体现行为改变，不要只解释或道歉。")
+    if psychologizing_risk:
+        lines.append(f"- 过度心理化风险：{psychologizing_risk}")
+    if button_style:
+        lines.append(f"- 按钮风格：{button_style}")
+        if button_style == "topic_continue":
+            lines.append("- 按钮要贴着当前话题，像用户下一句会说的话，避免“继续陪我/帮我分析/给我建议”。")
+        elif button_style == "user_voice":
+            lines.append("- 按钮要像用户自己的口吻，可轻松、可纠偏，不要像流程选项。")
+        elif button_style == "safety_micro_reply":
+            lines.append("- 按钮保持低压安全微回应，不扩展成流程清单。")
+    return "\n".join(lines) + "\n"
+
+
 def _user_context_pack_prompt_block(state: AgentState) -> str:
     pack = state.get("user_context_pack")
     if not isinstance(pack, dict) or not pack:
@@ -550,6 +595,7 @@ def build_dialogue_prompt_parts(
     turn_priority_text = _turn_priority_prompt_block(state)
     risk_semantic_text = _risk_semantic_prompt_block(state)
     response_ending_text = _response_ending_prompt_block(state)
+    conversation_move_text = _conversation_move_policy_prompt_block(state)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -568,6 +614,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{conversation_move_text}"
         f"{risk_semantic_text}"
         f"{response_ending_text}"
         f"{turn_priority_text}"

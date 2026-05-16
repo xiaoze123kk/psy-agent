@@ -668,6 +668,7 @@ async def _persist_turn_result(
         "protective_signals": assistant_result.get("protective_signals", []),
         "risk_phase": assistant_result.get("risk_phase", ""),
         "risk_response_policy": assistant_result.get("risk_response_policy", {}),
+        "conversation_move_policy": assistant_result.get("conversation_move_policy", {}),
         "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
         "safety_context_summary": assistant_result.get("safety_context_pack", {}),
         "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),

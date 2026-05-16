@@ -53,6 +53,7 @@ class AgentState(TypedDict, total=False):
     protective_signals: list[str]
     risk_phase: Literal["first_contact", "stabilizing", "still_high", "deescalating", "post_crisis"]
     risk_response_policy: dict
+    conversation_move_policy: dict
     tool_gate_mode: Literal["normal_context", "safety_context", "blocked_context"]
     safety_context_pack: dict
     experience_validator_reasons: list[str]

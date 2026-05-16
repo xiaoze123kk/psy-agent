@@ -42,6 +42,7 @@ SAFE_DIRECT_KEYS = {
     "control_category",
     "control_confidence",
     "control_reasons",
+    "conversation_move_policy",
     "delivery_status",
     "example_ids",
     "example_source_keys",

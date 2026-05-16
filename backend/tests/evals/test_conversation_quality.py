@@ -96,6 +96,7 @@ ADVICE_TERMS = (
 )
 GENTLE_NEXT_STEP_TERMS = ("可以", "先", "试试", "慢慢", "一起", "缓", "呼气", "踩稳", "整理")
 TRIVIAL_PATHOLOGIZING_TERMS = ("深层创伤", "原生家庭", "系统治疗", "症状", "治疗", "障碍", "病理", "回避创伤")
+GENERIC_BUTTON_TERMS = ("继续陪我", "帮我分析", "给我建议", "继续说", "分析一下", "给建议")
 TRUSTED_ADULT_TERMS = ("可信", "信任", "家长", "监护人", "老师", "学校心理老师", "大人", "成年人")
 BOUNDARY_TERMS = ("不能", "不接攻击", "边界", "不泄露", "不更改", "不进入", "守住")
 TENTATIVE_MEMORY_TERMS = ("如果我没理解错", "如果我记得没错", "我记得", "你之前提到过", "好像")
@@ -340,6 +341,19 @@ def quality_report(
         soft_failures.append("missing_gentle_next_step")
     if "trivial_lightness" in must and has_any(text, TRIVIAL_PATHOLOGIZING_TERMS):
         soft_failures.append("over_pathologizing_trivial")
+    if "ordinary_chat_not_psychologized" in must and has_any(text, TRIVIAL_PATHOLOGIZING_TERMS):
+        soft_failures.append("over_psychologizing")
+    if "topic_anchor_continued" in must:
+        anchors = [anchor for anchor in case.get("anchors", []) if str(anchor).strip()]
+        if anchors and not any(anchor in text for anchor in anchors):
+            soft_failures.append("ignored_topic_anchor")
+    if "user_correction_followed" in must and has_any(
+        text,
+        ("我理解你的感受", "你能说说", "背后真正", "深层原因"),
+    ):
+        failures.append("failed_user_correction")
+    if "natural_buttons" in must and any(has_any(action, GENERIC_BUTTON_TERMS) for action in actions):
+        soft_failures.append("generic_buttons")
     if "calm_boundary" in must and not has_any(text, BOUNDARY_TERMS):
         soft_failures.append("missing_boundary")
     if "safe_alternative" in must and not has_any(text, ("更适合", "回到", "可以", "下一步", "直接说")):
@@ -474,7 +488,11 @@ class ConversationQualityFixtureTests(unittest.TestCase):
     def test_negative_examples_trigger_expected_failures(self) -> None:
         for case in load_quality_cases():
             with self.subTest(case=case["id"]):
-                report = quality_report(case, case["negative_response"])
+                report = quality_report(
+                    case,
+                    case["negative_response"],
+                    actions=list(case.get("negative_actions", [])),
+                )
                 expected = set(case.get("expected_negative_failures", []))
                 self.assertTrue(expected.intersection(report["all_failures"]), report)
                 self.assertLess(report["score"], case["min_score"], report)

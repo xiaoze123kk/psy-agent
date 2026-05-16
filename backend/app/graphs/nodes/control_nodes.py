@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.graphs.nodes.common import AgentState, has_any_text, matched_text
+from app.services.conversation_move_policy import build_conversation_move_policy
 from app.services.risk_policy import build_risk_response_policy, tool_gate_mode_for_state
 
 
@@ -327,6 +328,9 @@ async def control_plane(state: AgentState) -> AgentState:
         "risk_reason_codes": risk_reason_codes,
     }
     risk_response_policy = build_risk_response_policy(policy_state)
+    conversation_move_policy = build_conversation_move_policy(
+        {**policy_state, "risk_response_policy": risk_response_policy}
+    )
     tool_gate_mode = tool_gate_mode_for_state(policy_state)
     return {
         "risk_level": risk_level,
@@ -336,6 +340,7 @@ async def control_plane(state: AgentState) -> AgentState:
         "protective_signals": risk_response_policy["protective_signals"],
         "risk_phase": risk_response_policy["risk_phase"],
         "risk_response_policy": risk_response_policy,
+        "conversation_move_policy": conversation_move_policy,
         "tool_gate_mode": tool_gate_mode,
         "route_priority": route_priority,
         "control_category": category,

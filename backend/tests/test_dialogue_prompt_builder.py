@@ -298,5 +298,41 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("用户刚刚说：你觉得荣格是个什么样的人", parts.user_prompt)
 
 
+    def test_prompt_includes_conversation_move_policy_as_readable_block(self) -> None:
+        state = self.make_state(
+            normalized_text="在轮下，记得吗",
+            user_text="在轮下，记得吗",
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary/metaphor",
+                "style_variation": "fixed_opening_avoidance",
+                "correction_state": {"active": False},
+                "psychologizing_risk": "medium",
+                "button_style": "topic_continue",
+                "handling": "先接住《在轮下》这个锚点，不把它改写成心理分析。",
+                "opening_style": "直接回应用户刚刚的词，不复用固定开头。",
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("本轮对话动作", parts.user_prompt)
+        self.assertIn("用户锚点", parts.user_prompt)
+        self.assertIn("处理方式", parts.user_prompt)
+        self.assertIn("开头方式", parts.user_prompt)
+        self.assertIn("按钮风格", parts.user_prompt)
+        self.assertIn("continue_thread", parts.user_prompt)
+        self.assertIn("literary/metaphor", parts.user_prompt)
+        self.assertIn("topic_continue", parts.user_prompt)
+        self.assertNotIn("style_variation", parts.user_prompt)
+        self.assertNotIn("correction_state", parts.user_prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

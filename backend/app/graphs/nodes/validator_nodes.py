@@ -54,7 +54,38 @@ EXPERIENCE_REASON_SEVERITY = {
     "too_many_questions": "warning",
     "unnecessary_question_ending": "warning",
     "question_streak": "warning",
+    "reused_formulaic_opening": "warning",
+    "ignored_topic_anchor": "warning",
+    "over_psychologizing": "warning",
+    "generic_buttons": "warning",
+    "conversation_restart": "warning",
 }
+PSYCHOLOGIZING_TERMS = (
+    "回避创伤",
+    "深层创伤",
+    "心理防御",
+    "原生家庭",
+    "深层原因",
+    "潜意识",
+    "压抑",
+    "病理",
+    "系统治疗",
+)
+GENERIC_BUTTON_TERMS = ("继续陪我", "帮我分析", "给我建议", "继续说", "分析一下", "给建议")
+FORMULAIC_OPENINGS = ("听起来", "我听见", "我听到", "我理解", "我能理解")
+COUNSELING_RESTART_TERMS = ("先了解一下", "说说最近压力最大的事情", "从什么时候开始", "发生了什么")
+OLD_CORRECTION_MODE_TERMS = ("我理解你的感受", "你能说说", "背后真正", "深层原因", "为什么会这样")
+ANCHOR_HINT_TERMS = (
+    "在轮下",
+    "德米安",
+    "荣格",
+    "黑塞",
+    "花",
+    "包子",
+    "猫",
+    "碾死",
+    "奔跑",
+)
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -109,6 +140,109 @@ def _contains_safety_question(text: str) -> bool:
     return any(phrase in compact_text for phrase in SAFETY_QUESTION_PHRASES)
 
 
+def _conversation_policy(state: AgentState) -> dict:
+    policy = state.get("conversation_move_policy")
+    return dict(policy) if isinstance(policy, dict) else {}
+
+
+def _policy_topic_anchor(policy: dict) -> str:
+    anchor = policy.get("topic_anchor")
+    if isinstance(anchor, dict):
+        return str(anchor.get("type") or anchor.get("value") or "")
+    return str(anchor or "")
+
+
+def _policy_anchor_terms(policy: dict, state: AgentState) -> list[str]:
+    raw_terms: list[str] = []
+    for key in ("anchor_value", "topic_anchor_value"):
+        value = str(policy.get(key) or "").strip()
+        if value and value not in {"none", "daily_detail", "literary/metaphor"}:
+            raw_terms.append(value)
+    anchor = policy.get("topic_anchor")
+    if isinstance(anchor, dict):
+        for key in ("value", "title"):
+            value = str(anchor.get(key) or "").strip()
+            if value:
+                raw_terms.append(value)
+    user_text = str(state.get("normalized_text") or state.get("user_text") or "")
+    for term in ANCHOR_HINT_TERMS:
+        if term in user_text:
+            raw_terms.append(term)
+    book_titles = re.findall(r"《([^》]{1,32})》", user_text)
+    raw_terms.extend(book_titles)
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in raw_terms:
+        cleaned = term.strip("《》 /")
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        terms.append(cleaned)
+    return terms
+
+
+def _recent_formulaic_opening_reused(text: str, state: AgentState) -> bool:
+    current = next((opening for opening in FORMULAIC_OPENINGS if text.strip().startswith(opening)), "")
+    if not current:
+        return False
+    recent = state.get("recent_messages")
+    if not isinstance(recent, list):
+        return False
+    for message in reversed(recent[-4:]):
+        if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+            continue
+        previous = str(message.get("content") or "").strip()
+        return previous.startswith(current)
+    return False
+
+
+def _conversation_experience_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
+    policy = _conversation_policy(state)
+    if not policy:
+        return []
+
+    reasons: list[str] = []
+    move = str(policy.get("conversation_move") or "")
+    button_style = str(policy.get("button_style") or "")
+    psychologizing_risk = str(policy.get("psychologizing_risk") or "")
+    topic_anchor = _policy_topic_anchor(policy)
+    correction = policy.get("correction_state")
+    correction_type = str(correction.get("correction_type") if isinstance(correction, dict) else "")
+
+    if psychologizing_risk == "high" or move in {"ordinary_chat", "correction_followup"}:
+        if any(term in text for term in PSYCHOLOGIZING_TERMS):
+            reasons.append("over_psychologizing")
+
+    if move in {"continue_thread", "respond_to_anchor", "post_risk_return"} and topic_anchor not in {"", "none"}:
+        anchor_terms = _policy_anchor_terms(policy, state)
+        if anchor_terms and not any(term in text for term in anchor_terms):
+            reasons.append("ignored_topic_anchor")
+
+    if move == "correction_followup" or correction_type not in {"", "none"}:
+        if any(term in text for term in OLD_CORRECTION_MODE_TERMS):
+            reasons.append("failed_user_correction")
+        if correction_type == "too_many_questions" and _question_count(text) > 0:
+            reasons.append("failed_user_correction")
+        if correction_type == "too_safety_focused" and _contains_safety_question(text):
+            reasons.append("failed_user_correction")
+
+    if button_style in {"topic_continue", "user_voice"}:
+        if any(any(term in action for term in GENERIC_BUTTON_TERMS) for action in actions):
+            reasons.append("generic_buttons")
+
+    if move == "post_risk_return" and _contains_safety_question(text):
+        reasons.append("post_risk_over_safety_check")
+
+    if _recent_formulaic_opening_reused(text, state):
+        reasons.append("reused_formulaic_opening")
+
+    if move == "continue_thread" and any(term in text for term in COUNSELING_RESTART_TERMS):
+        reasons.append("conversation_restart")
+
+    return sorted(set(reasons))
+
+
 def experience_validator_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
     reasons: list[str] = []
     for term in EXPERIENCE_BANNED_TERMS:
@@ -140,6 +274,7 @@ def experience_validator_reasons(text: str, actions: list[str], state: AgentStat
         reasons.append("question_streak")
     if policy.get("avoid_question_reason") == "safety_answer_already_given" and _contains_safety_question(text):
         reasons.append("repeated_safety_question")
+    reasons.extend(_conversation_experience_reasons(text, actions, state))
     return sorted(set(reasons))
 
 

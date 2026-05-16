@@ -9,6 +9,7 @@ from app.graphs.nodes.common import AgentState, memory_context, parse_actions_re
 from app.graphs.nodes.control_nodes import base_contract
 from app.graphs.nodes.rag_nodes import coerce_optional_float, coerce_string_list, example_hit_to_dict
 from app.services import tooling as dialogue_tooling
+from app.services.conversation_move_policy import default_actions_for_conversation_move_policy
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 from app.services.risk_policy import build_risk_response_policy, default_actions_for_policy
@@ -277,6 +278,8 @@ async def _model_reply_state_update(
     assistant_text, suggested_actions = await _streamed_reply_with_actions(_reply_messages(state, prompt_parts))
     if not suggested_actions and default_actions:
         suggested_actions = default_actions[:3]
+    if not suggested_actions:
+        suggested_actions = default_actions_for_conversation_move_policy(state.get("conversation_move_policy"))[:3]
     return {"assistant_text": assistant_text, "suggested_actions": suggested_actions}
 
 

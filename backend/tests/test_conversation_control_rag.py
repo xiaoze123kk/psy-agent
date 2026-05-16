@@ -10,7 +10,7 @@ from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.rag_nodes import example_retriever
 from app.graphs.nodes.response_nodes import _model_reply_with_actions, boundary_response, clarification_response, clinical_red_flag_response, crisis_response
 from app.graphs.routing import route_by_control
-from app.graphs.nodes.validator_nodes import response_validator, validator_reasons
+from app.graphs.nodes.validator_nodes import experience_validator_reasons, response_validator, validator_reasons
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
 from app.services.companion_style import DEFAULT_COMPANION_STYLE_PROMPT, build_companion_style_prompt
@@ -615,6 +615,83 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertIn("too_many_questions", result["experience_validator_reasons"])
         self.assertEqual(result["experience_validator_warnings"], ["too_many_questions"])
         self.assertEqual(result["experience_validator_blocking_reasons"], ["banned_phrase:接住"])
+
+    def test_experience_validator_warns_when_ordinary_chat_is_over_psychologized(self) -> None:
+        state = self.make_state(
+            "今天看到一朵花",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "ordinary_chat",
+                "topic_anchor": "daily_detail",
+                "psychologizing_risk": "high",
+                "button_style": "user_voice",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "你把花提出来，可能是在回避更深层的创伤，我们需要分析它背后的心理防御。",
+            [],
+            state,
+        )
+
+        self.assertIn("over_psychologizing", reasons)
+
+    def test_experience_validator_warns_when_literary_anchor_is_ignored(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary/metaphor",
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "听起来你现在很辛苦，也许可以说说最近压力最大的事情。",
+            [],
+            state,
+        )
+
+        self.assertIn("ignored_topic_anchor", reasons)
+
+    def test_experience_validator_blocks_old_counseling_mode_after_user_correction(self) -> None:
+        state = self.make_state(
+            "不是这个意思，你又在心理分析了",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "correction_followup",
+                "correction_state": {"correction_type": "too_psychological"},
+                "button_style": "user_voice",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "我理解你的感受，你能说说这背后真正让你难受的部分吗？",
+            [],
+            state,
+        )
+
+        self.assertIn("failed_user_correction", reasons)
+
+    def test_experience_validator_warns_about_generic_buttons_under_topic_continue(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary/metaphor",
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《在轮下》这个词先放在这里，它已经把那种被推着跑的感觉说出来了。",
+            ["继续陪我", "帮我分析", "给我建议"],
+            state,
+        )
+
+        self.assertIn("generic_buttons", reasons)
 
     def test_l3_crisis_response_is_low_pressure_without_method_repetition(self) -> None:
         state = self.make_state(
