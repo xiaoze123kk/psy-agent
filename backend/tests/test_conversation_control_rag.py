@@ -793,6 +793,40 @@ class ConversationControlRagTests(unittest.TestCase):
 
         self.assertIn("reused_formulaic_opening", reasons)
 
+    def test_experience_validator_warns_when_avoided_reply_structure_repeats(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            recent_messages=[
+                {
+                    "role": "assistant",
+                    "content": "《在轮下》这个比喻确实很重。\n\n你是不是在说那种不能慢下来的感觉？",
+                },
+                {"role": "user", "content": "嗯，就是不能慢。"},
+                {
+                    "role": "assistant",
+                    "content": "不能慢就像一直被现实往前推。\n\n你觉得最重的是学校，还是整个社会？",
+                },
+            ],
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary",
+                "anchor_value": "在轮下",
+                "structure_mode": "single_paragraph",
+                "avoid_structure": "two_beat_question",
+                "avoid_reused_structure": True,
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《在轮下》还是那个核心画面：你不是单纯累，而是被一种不能慢的规则推着。\n\n你最想停下来的，是哪一段？",
+            ["先停在在轮下这里"],
+            state,
+        )
+
+        self.assertIn("reused_reply_structure", reasons)
+
     def test_experience_validator_warns_about_internal_strategy_buttons(self) -> None:
         state = self.make_state(
             "在轮下，记得吗",

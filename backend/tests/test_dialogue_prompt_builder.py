@@ -311,6 +311,8 @@ class DialoguePromptBuilderTests(unittest.TestCase):
                 "button_style": "topic_continue",
                 "handling": "先接住《在轮下》这个锚点，不把它改写成心理分析。",
                 "opening_style": "直接回应用户刚刚的词，不复用固定开头。",
+                "structure_mode": "single_paragraph",
+                "structure_style": "single_paragraph，避免复用上一轮的两段式整理+追问。",
             },
         )
 
@@ -326,9 +328,12 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("用户锚点", parts.user_prompt)
         self.assertIn("处理方式", parts.user_prompt)
         self.assertIn("开头方式", parts.user_prompt)
+        self.assertIn("结构方式", parts.user_prompt)
         self.assertIn("按钮风格", parts.user_prompt)
         self.assertIn("continue_thread", parts.user_prompt)
         self.assertIn("literary/metaphor", parts.user_prompt)
+        self.assertIn("single_paragraph", parts.user_prompt)
+        self.assertIn("两段式整理+追问", parts.user_prompt)
         self.assertIn("topic_continue", parts.user_prompt)
         self.assertIn("不要把 topic_continue", parts.user_prompt)
         self.assertNotIn("style_variation", parts.user_prompt)

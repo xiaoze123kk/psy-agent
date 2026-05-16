@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -27,6 +28,7 @@ PHILOSOPHICAL_TERMS = (
     "阴影",
 )
 MEDIA_TERMS = ("电影", "电视剧", "动漫", "角色", "剧里", "片子")
+PERSON_TERMS = ("鲁迅", "海子", "余华", "村上春树", "马尔克斯", "博尔赫斯", "伍尔夫")
 DAILY_DETAIL_TERMS = ("花", "包子", "天气", "猫", "饭", "路上", "咖啡", "奶茶")
 METAPHOR_TERMS = ("像", "好像", "隐喻", "比喻", "奔跑", "碾死", "轮下", "推着走")
 LIGHT_CHAT_TERMS = ("哈哈", "呵呵", "嘿嘿", "笑死", "随便聊", "就聊聊")
@@ -80,7 +82,7 @@ def _anchor_value(text: str, anchor_type: str) -> str:
     book_title = _extract_book_title(text)
     if book_title:
         return book_title
-    for terms in (LITERARY_TERMS, PHILOSOPHICAL_TERMS, MEDIA_TERMS, DAILY_DETAIL_TERMS):
+    for terms in (LITERARY_TERMS, PHILOSOPHICAL_TERMS, MEDIA_TERMS, PERSON_TERMS, DAILY_DETAIL_TERMS):
         for term in terms:
             if term and term in text:
                 return term
@@ -98,6 +100,8 @@ def _topic_anchor_type(text: str) -> str:
         return "philosophical"
     if _has_any(text, MEDIA_TERMS):
         return "media"
+    if _has_any(text, PERSON_TERMS):
+        return "person"
     if _has_any(text, DAILY_DETAIL_TERMS):
         return "daily_detail"
     if _has_any(text, METAPHOR_TERMS):
@@ -136,6 +140,97 @@ def _recent_assistant_opening_mode(messages: Sequence[Mapping[str, Any]]) -> str
         if content:
             return "other"
     return "none"
+
+
+def _recent_assistant_contents(messages: Sequence[Mapping[str, Any]], *, limit: int = 3) -> list[str]:
+    contents: list[str] = []
+    for message in messages:
+        if str(message.get("role") or "") != "assistant":
+            continue
+        content = str(message.get("content") or "").strip()
+        if content:
+            contents.append(content)
+    return contents[-limit:]
+
+
+def _reply_structure_signature(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n|\n", stripped) if part.strip()]
+    question_count = stripped.count("？") + stripped.count("?")
+    compact = "".join(stripped.split())
+    if question_count > 0 and len(paragraphs) >= 2:
+        return "two_beat_question"
+    if question_count > 0 and stripped.startswith(("听起来", "我听见", "我听到", "我能理解", "我理解")):
+        return "two_beat_question"
+    if len(compact) <= 80 and question_count == 0:
+        return "brief_answer"
+    if question_count == 0 and _has_any(stripped, ("先停", "放在这里", "不用急着", "不推进", "停一会儿")):
+        return "pause_then_invite"
+    if len(paragraphs) <= 1:
+        return "single_paragraph"
+    return "multi_paragraph"
+
+
+def _recent_reused_structure(messages: Sequence[Mapping[str, Any]]) -> str:
+    signatures = [
+        _reply_structure_signature(content)
+        for content in _recent_assistant_contents(messages)
+    ]
+    signatures = [
+        signature
+        for signature in signatures
+        if signature in {"two_beat_question", "single_paragraph", "brief_answer", "pause_then_invite"}
+    ]
+    if len(signatures) >= 2 and signatures[-1] == signatures[-2]:
+        return signatures[-1]
+    return ""
+
+
+def _base_structure_mode(conversation_move: str, text: str) -> str:
+    compact = "".join(text.split())
+    if conversation_move == "micro_step":
+        return "brief_answer"
+    if conversation_move == "ordinary_chat":
+        if len(compact) <= 20 or _has_any(text, LIGHT_CHAT_TERMS):
+            return "brief_answer"
+        return "single_paragraph"
+    if conversation_move in {"continue_thread", "respond_to_anchor", "post_risk_return", "correction_followup"}:
+        return "single_paragraph"
+    if conversation_move == "soft_invitation":
+        return "pause_then_invite"
+    return "single_paragraph"
+
+
+def _structure_mode_for(conversation_move: str, text: str, messages: Sequence[Mapping[str, Any]]) -> tuple[str, str]:
+    base = _base_structure_mode(conversation_move, text)
+    avoid_structure = _recent_reused_structure(messages)
+    if avoid_structure == "two_beat_question":
+        return "single_paragraph", avoid_structure
+    if avoid_structure == "single_paragraph" and base == "single_paragraph":
+        if conversation_move in {"continue_thread", "respond_to_anchor", "post_risk_return"}:
+            return "pause_then_invite", avoid_structure
+        return "brief_answer", avoid_structure
+    if avoid_structure == "brief_answer" and base == "brief_answer":
+        return "single_paragraph", avoid_structure
+    if avoid_structure == "pause_then_invite" and base == "pause_then_invite":
+        return "single_paragraph", avoid_structure
+    return base, avoid_structure
+
+
+def _structure_style(mode: str, avoid_structure: str) -> str:
+    descriptions = {
+        "single_paragraph": "用一段自然话接住，不强行拆成“共情-整理-追问”。",
+        "brief_answer": "短一点直接回，不补流程感。",
+        "pause_then_invite": "可以停在陈述或轻邀请，不急着追问。",
+    }
+    style = f"{mode}，{descriptions.get(mode, '让回复节奏和上一轮有所变化。')}"
+    if avoid_structure == "two_beat_question":
+        return f"{style} 避免复用上一轮的两段式整理+追问。"
+    if avoid_structure:
+        return f"{style} 避免连续复用上一轮的 {avoid_structure} 结构。"
+    return f"{style} 不要把每轮都写成同一种节奏。"
 
 
 def _is_short_followup(text: str) -> bool:
@@ -210,7 +305,7 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         psychologizing_risk = "medium"
         anchor_handling = "treat_as_topic" if anchor_type != "none" else "connect_lightly_to_emotion"
         handling = "记得刚才的风险，但先回应当前话题；只保留一句低压关照，不主动安全盘问。"
-    elif anchor_type in {"literary", "philosophical", "media", "metaphor"}:
+    elif anchor_type in {"literary", "philosophical", "media", "person", "metaphor"}:
         conversation_move = "continue_thread" if _is_short_followup(text) else "respond_to_anchor"
         button_style = "topic_continue"
         psychologizing_risk = "medium"
@@ -242,6 +337,8 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     elif anchor_type not in {"none", "daily_detail"}:
         opening_mode = "echo_anchor"
 
+    structure_mode, avoid_structure = _structure_mode_for(conversation_move, text, messages)
+
     return {
         "conversation_move": conversation_move,
         "topic_anchor": anchor_type,
@@ -250,6 +347,10 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         "handling": handling,
         "style_variation": opening_mode,
         "opening_style": f"{opening_mode}，避免复用“听起来/我理解/我听见”式固定开头。",
+        "structure_mode": structure_mode,
+        "structure_style": _structure_style(structure_mode, avoid_structure),
+        "avoid_structure": avoid_structure,
+        "avoid_reused_structure": bool(avoid_structure),
         "correction_state": {
             "user_corrected_previous_reply": correction_type != "none",
             "correction_type": correction_type,

@@ -60,6 +60,7 @@ EXPERIENCE_REASON_SEVERITY = {
     "generic_buttons": "warning",
     "conversation_restart": "warning",
     "fabricated_cultural_claim": "warning",
+    "reused_reply_structure": "warning",
 }
 PSYCHOLOGIZING_TERMS = (
     "回避创伤",
@@ -230,6 +231,57 @@ def _recent_formulaic_opening_reused(text: str, state: AgentState) -> bool:
     return False
 
 
+def _reply_structure_signature(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n|\n", stripped) if part.strip()]
+    question_count = _question_count(stripped)
+    compact = "".join(stripped.split())
+    if question_count > 0 and len(paragraphs) >= 2:
+        return "two_beat_question"
+    if question_count > 0 and stripped.startswith(FORMULAIC_OPENINGS):
+        return "two_beat_question"
+    if len(compact) <= 80 and question_count == 0:
+        return "brief_answer"
+    if question_count == 0 and any(term in stripped for term in ("先停", "放在这里", "不用急着", "不推进", "停一会儿")):
+        return "pause_then_invite"
+    if len(paragraphs) <= 1:
+        return "single_paragraph"
+    return "multi_paragraph"
+
+
+def _recent_reply_structure_signatures(state: AgentState) -> list[str]:
+    recent = state.get("recent_messages")
+    if not isinstance(recent, list):
+        return []
+    signatures: list[str] = []
+    for message in recent[-6:]:
+        if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+            continue
+        signature = _reply_structure_signature(str(message.get("content") or ""))
+        if signature != "empty":
+            signatures.append(signature)
+    return signatures
+
+
+def _reused_reply_structure(text: str, state: AgentState, policy: dict) -> bool:
+    current = _reply_structure_signature(text)
+    if current not in {"two_beat_question", "single_paragraph", "brief_answer", "pause_then_invite"}:
+        return False
+
+    avoid_structure = str(policy.get("avoid_structure") or "")
+    if avoid_structure and current == avoid_structure:
+        return True
+
+    recent_signatures = _recent_reply_structure_signatures(state)
+    if not recent_signatures:
+        return False
+    if policy.get("avoid_reused_structure") and recent_signatures[-1] == current:
+        return True
+    return len(recent_signatures) >= 2 and recent_signatures[-1] == current and recent_signatures[-2] == current
+
+
 def _has_fabricated_cultural_claim(text: str, state: AgentState, policy: dict) -> bool:
     topic_anchor = _policy_topic_anchor(policy)
     if not any(anchor_type in topic_anchor for anchor_type in CULTURAL_ANCHOR_TYPES):
@@ -280,6 +332,9 @@ def _conversation_experience_reasons(text: str, actions: list[str], state: Agent
 
     if _recent_formulaic_opening_reused(text, state):
         reasons.append("reused_formulaic_opening")
+
+    if _reused_reply_structure(text, state, policy):
+        reasons.append("reused_reply_structure")
 
     if move == "continue_thread" and any(term in text for term in COUNSELING_RESTART_TERMS):
         reasons.append("conversation_restart")
@@ -382,6 +437,8 @@ def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[
         lines.append("- generic_buttons：按钮要像用户下一句会说的话，不要写内部策略词或泛化按钮。")
     if "reused_formulaic_opening" in labels:
         lines.append("- reused_formulaic_opening：换一种开头，允许直接进入内容，不复用“听起来/我理解/我听见”。")
+    if "reused_reply_structure" in labels:
+        lines.append("- reused_reply_structure：换一种回复结构，避免连续使用两段式整理+追问；可以改成自然单段、短答或陈述停顿。")
     if "conversation_restart" in labels:
         lines.append("- conversation_restart：顺着已有话题继续，不重新开启咨询流程。")
     if "too_many_questions" in labels or "unnecessary_question_ending" in labels or "question_streak" in labels:

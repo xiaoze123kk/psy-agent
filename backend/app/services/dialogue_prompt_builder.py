@@ -281,6 +281,7 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     anchor_handling = _compact_text(policy.get("anchor_handling"), limit=80)
     handling = _compact_text(policy.get("handling"), limit=160)
     opening_style = _compact_text(policy.get("opening_style") or policy.get("style_variation"), limit=120)
+    structure_style = _compact_text(policy.get("structure_style") or policy.get("structure_mode"), limit=140)
     button_style = _compact_text(policy.get("button_style"), limit=60)
     psychologizing_risk = _compact_text(policy.get("psychologizing_risk"), limit=40)
     correction = policy.get("correction_state")
@@ -302,6 +303,8 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
         lines.append(f"- 处理方式：{prefix}{detail}")
     if opening_style:
         lines.append(f"- 开头方式：{opening_style}")
+    if structure_style:
+        lines.append(f"- 结构方式：{structure_style}")
     if correction_type and correction_type != "none":
         lines.append(f"- 用户纠正：{correction_type}；下一句要体现行为改变，不要只解释或道歉。")
     if psychologizing_risk:

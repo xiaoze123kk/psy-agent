@@ -162,6 +162,47 @@ class ConversationMovePolicyTests(unittest.TestCase):
         self.assertEqual(policy["correction_state"]["correction_type"], "too_safety_focused")
         self.assertTrue(any("荣格" in action for action in actions))
 
+    def test_repeated_two_beat_question_structure_requests_single_paragraph(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "在轮下，记得吗",
+                "normalized_text": "在轮下，记得吗",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {
+                        "role": "assistant",
+                        "content": "听起来《在轮下》这个比喻很贴近你。\n\n你是不是想说那种停不下来的压力？",
+                    },
+                    {"role": "user", "content": "嗯，就是不能慢。"},
+                    {
+                        "role": "assistant",
+                        "content": "那种不能慢的感觉像是一直被推着往前。\n\n你觉得最重的是学校，还是整个社会？",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(policy["structure_mode"], "single_paragraph")
+        self.assertEqual(policy["avoid_structure"], "two_beat_question")
+        self.assertTrue(policy["avoid_reused_structure"])
+        self.assertIn("两段式整理+追问", policy["structure_style"])
+
+    def test_person_anchor_is_treated_as_cultural_topic(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "你觉得鲁迅是个什么样的人",
+                "normalized_text": "你觉得鲁迅是个什么样的人",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["conversation_move"], "respond_to_anchor")
+        self.assertEqual(policy["topic_anchor"], "person")
+        self.assertEqual(policy["anchor_value"], "鲁迅")
+        self.assertEqual(policy["button_style"], "topic_continue")
+        self.assertIn("真实话题", policy["handling"])
+
 
 if __name__ == "__main__":
     unittest.main()

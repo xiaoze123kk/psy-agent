@@ -228,6 +228,61 @@ def _has_fabricated_cultural_claim(case: dict[str, Any], text: str) -> bool:
     return any(term in text and term not in user_text for term in CULTURAL_FABRICATION_TERMS)
 
 
+def _reply_structure_signature(text: str) -> str:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return "empty"
+    compact_text = compact(stripped)
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n|\n", stripped) if part.strip()]
+    questions = question_count(stripped)
+    if questions > 0 and len(paragraphs) >= 2:
+        return "two_beat_question"
+    if questions > 0 and has_any(stripped, REFLECTION_TERMS):
+        return "two_beat_question"
+    if len(compact_text) <= 80 and questions == 0:
+        return "brief_answer"
+    if questions == 0 and has_any(stripped, ("先停", "放在这里", "不用急着", "不推进", "停一会儿")):
+        return "pause_then_invite"
+    if len(paragraphs) <= 1:
+        return "single_paragraph"
+    return "multi_paragraph"
+
+
+def _has_reused_reply_structure(case: dict[str, Any], text: str) -> bool:
+    current = _reply_structure_signature(text)
+    if current not in {"two_beat_question", "single_paragraph", "brief_answer", "pause_then_invite"}:
+        return False
+    recent_signatures: list[str] = []
+    for message in case.get("recent_messages", []):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        signature = _reply_structure_signature(str(message.get("content") or ""))
+        if signature != "empty":
+            recent_signatures.append(signature)
+    if len(recent_signatures) < 2:
+        return False
+    return recent_signatures[-1] == current and recent_signatures[-2] == current
+
+
+def _opening_signature(text: str) -> str:
+    stripped = str(text or "").strip()
+    if stripped.startswith(("听起来", "我听见", "我听到", "我能理解", "我理解")):
+        return "formulaic_reflection"
+    if stripped:
+        return "other"
+    return "empty"
+
+
+def _has_reused_formulaic_opening(case: dict[str, Any], text: str) -> bool:
+    if _opening_signature(text) != "formulaic_reflection":
+        return False
+    for message in reversed(case.get("recent_messages", [])[-6:]):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        return _opening_signature(str(message.get("content") or "")) == "formulaic_reflection"
+    return False
+
+
 def _has_treatment_promise(text: str) -> bool:
     promise_hits = (
         "保证你一定会好",
@@ -369,6 +424,10 @@ def quality_report(
             soft_failures.append("ignored_topic_anchor")
     if "no_fabricated_cultural_claim" in must and _has_fabricated_cultural_claim(case, text):
         soft_failures.append("fabricated_cultural_claim")
+    if "structure_varied" in must and _has_reused_reply_structure(case, text):
+        soft_failures.append("reused_reply_structure")
+    if "no_reused_formulaic_opening" in must and _has_reused_formulaic_opening(case, text):
+        soft_failures.append("reused_formulaic_opening")
     if "user_correction_followed" in must and has_any(
         text,
         ("我理解你的感受", "你能说说", "背后真正", "深层原因"),

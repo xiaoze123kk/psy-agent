@@ -670,5 +670,65 @@
     "anchors": ["德米安", "自我寻找"],
     "min_score": 0.85,
     "expected_negative_failures": ["fabricated_cultural_claim"]
+  },
+  {
+    "id": "repeated_two_beat_structure_varies",
+    "category": "conversation_move_policy",
+    "user_mode": "adult",
+    "intent": "other",
+    "user_text": "在轮下，记得吗",
+    "recent_messages": [
+      {
+        "role": "assistant",
+        "content": "听起来《在轮下》这个比喻很贴近你。\n\n你是不是想说那种停不下来的压力？"
+      },
+      {
+        "role": "user",
+        "content": "嗯，就是不能慢。"
+      },
+      {
+        "role": "assistant",
+        "content": "不能慢就像一直被现实往前推。\n\n你觉得最重的是学校，还是整个社会？"
+      }
+    ],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "《在轮下》这个画面先不用再拆成问题：一直被推着跑，慢下来就像会被碾过去，这已经把那种没退路的压力说得很清楚了。",
+    "negative_response": "《在轮下》还是那个核心画面：你不是单纯累，而是被一种不能慢的规则推着。\n\n你最想停下来的，是哪一段？",
+    "must": ["topic_anchor_continued", "anchor_user_words", "structure_varied"],
+    "must_not": [],
+    "anchors": ["在轮下", "慢"],
+    "min_score": 0.9,
+    "expected_negative_failures": ["reused_reply_structure"]
+  },
+  {
+    "id": "formulaic_opening_three_turn_varies",
+    "category": "conversation_move_policy",
+    "user_mode": "adult",
+    "intent": "other",
+    "user_text": "在轮下，记得吗",
+    "recent_messages": [
+      {
+        "role": "assistant",
+        "content": "听起来《在轮下》这个比喻很贴近你。"
+      },
+      {
+        "role": "user",
+        "content": "嗯，就是不能慢。"
+      },
+      {
+        "role": "assistant",
+        "content": "我理解你说的那种被推着跑的感觉。"
+      }
+    ],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "《在轮下》这个词一回来，重点就不是“我理解你”，而是那种不能慢、不能停、一直被规则推着跑的画面。",
+    "negative_response": "听起来你又回到了《在轮下》那种被推着跑的感觉。",
+    "must": ["topic_anchor_continued", "anchor_user_words", "no_reused_formulaic_opening"],
+    "must_not": [],
+    "anchors": ["在轮下", "推着跑"],
+    "min_score": 0.9,
+    "expected_negative_failures": ["reused_formulaic_opening"]
   }
 ]
