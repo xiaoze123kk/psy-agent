@@ -14,6 +14,7 @@ from app.graphs.nodes.validator_nodes import experience_validator_reasons, respo
 from app.graphs.state import AgentState
 from app.services.counseling_vector_service import CounselingExampleHit, counseling_example_is_safe
 from app.services.companion_style import DEFAULT_COMPANION_STYLE_PROMPT, build_companion_style_prompt
+from app.services.conversation_move_policy import default_actions_for_conversation_move_policy
 from app.services.dialogue_prompt_builder import select_dialogue_style
 
 
@@ -692,6 +693,92 @@ class ConversationControlRagTests(unittest.TestCase):
         )
 
         self.assertIn("generic_buttons", reasons)
+
+    def test_experience_validator_warns_when_formulaic_opening_class_repeats(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            recent_messages=[
+                {"role": "assistant", "content": "我听见你提到《在轮下》，那像是很重的比喻。"},
+                {"role": "user", "content": "嗯，就是在轮下"},
+            ],
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary",
+                "anchor_value": "在轮下",
+                "style_variation": "direct",
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "听起来你现在也很像《在轮下》里的那种被推着跑。",
+            ["先停在这句话上"],
+            state,
+        )
+
+        self.assertIn("reused_formulaic_opening", reasons)
+
+    def test_experience_validator_warns_about_internal_strategy_buttons(self) -> None:
+        state = self.make_state(
+            "在轮下，记得吗",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "literary",
+                "anchor_value": "在轮下",
+                "button_style": "topic_continue",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《在轮下》这个锚点先放在这里。",
+            ["topic_continue", "conversation_move=continue_thread", "ordinary_chat"],
+            state,
+        )
+
+        self.assertIn("generic_buttons", reasons)
+
+    def test_experience_validator_warns_about_all_internal_move_button_values(self) -> None:
+        state = self.make_state(
+            "想换个轻一点的话题",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "post_risk_return",
+                "topic_anchor": "none",
+                "button_style": "user_voice",
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "那我们先从轻一点的地方说。",
+            ["user_voice", "soft_invitation", "micro_step", "post_risk_return"],
+            state,
+        )
+
+        self.assertIn("generic_buttons", reasons)
+
+    def test_conversation_policy_fallback_buttons_do_not_trigger_generic_button_warning(self) -> None:
+        policy = {
+            "conversation_move": "respond_to_anchor",
+            "topic_anchor": "philosophical",
+            "anchor_value": "荣格",
+            "button_style": "topic_continue",
+        }
+        state = self.make_state(
+            "你觉得荣格是个什么样的人",
+            risk_level="L0",
+            conversation_move_policy=policy,
+        )
+        actions = default_actions_for_conversation_move_policy(policy)
+
+        reasons = experience_validator_reasons(
+            "荣格这个名字一出来，话题就不只是“分析一下”了，更像是在问一个人怎么和自己的阴影相处。",
+            actions,
+            state,
+        )
+
+        self.assertNotIn("generic_buttons", reasons)
 
     def test_l3_crisis_response_is_low_pressure_without_method_repetition(self) -> None:
         state = self.make_state(

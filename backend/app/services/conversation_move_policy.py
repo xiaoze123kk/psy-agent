@@ -109,14 +109,16 @@ def _correction_type(text: str) -> str:
     compact = "".join(text.split())
     if not compact:
         return "none"
+    if _has_any(compact, ("别一直问安全", "别问安全", "别盘问安全", "别继续盘问", "不想聊安全")):
+        return "too_safety_focused"
+    if "安全" in compact and _has_any(compact, ("别问", "不要问", "别一直问", "不要一直问", "别老问", "别追问", "盘问")):
+        return "too_safety_focused"
     if _has_any(compact, ("心理分析", "心理化", "别分析", "不要分析", "别心理", "不是要你分析")):
         return "too_psychological"
     if _has_any(compact, ("别一直问", "不要一直问", "别老问", "问题太多", "别追问")):
         return "too_many_questions"
     if _has_any(compact, ("太像ai", "像ai", "像机器", "像客服", "机器人", "机器了")):
         return "too_ai_like"
-    if _has_any(compact, ("别一直问安全", "别盘问安全", "别继续盘问", "不想聊安全")):
-        return "too_safety_focused"
     if _has_any(compact, ("不是这个意思", "你理解错", "跑偏了", "不是这个")):
         return "not_that_meaning"
     return "none"
@@ -146,13 +148,27 @@ def default_actions_for_conversation_move_policy(policy: Mapping[str, Any] | Non
         return []
     button_style = str(policy.get("button_style") or "")
     move = str(policy.get("conversation_move") or "")
+    topic_anchor = str(policy.get("topic_anchor") or "")
+    anchor_value = str(policy.get("anchor_value") or "").strip("《》「」“” ")
     if button_style == "topic_continue":
-        return ["这个比喻很准", "我想继续说这个", "先停在这句话上"]
+        if anchor_value and topic_anchor == "philosophical":
+            return [f"先聊{anchor_value}", f"{anchor_value}这点有意思", "沿着这个聊"]
+        if anchor_value and topic_anchor in {"literary", "media", "metaphor"}:
+            return [f"先停在{anchor_value}这里", "这个比喻很准", "沿着这个聊"]
+        if anchor_value:
+            return [f"先说{anchor_value}", f"{anchor_value}这点有意思", "沿着这个聊"]
+        return ["这个比喻很准", "沿着这个聊", "先停在这句话上"]
     if button_style == "safety_micro_reply":
         return ["我还在", "先慢一点", "别继续盘问"]
     if button_style == "user_voice":
         if move == "correction_followup":
+            if anchor_value:
+                return [f"先聊{anchor_value}", "就按这个方向来", "换个说法"]
             return ["先别分析", "就按这个意思来", "换个说法"]
+        if anchor_value and topic_anchor == "daily_detail":
+            return [f"就聊这{anchor_value}", f"这{anchor_value}挺有意思", "随便聊两句"]
+        if anchor_value:
+            return [f"就聊{anchor_value}", f"{anchor_value}挺有意思", "随便聊两句"]
         return ["就随便聊聊", "这个挺有意思", "换个轻一点的"]
     return []
 
@@ -186,6 +202,8 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         psychologizing_risk = "high" if correction_type == "too_psychological" else "medium"
         anchor_handling = "avoid_psychologizing"
         handling = "先体现行为改变，少解释道歉；按用户纠正后的方向继续。"
+        if correction_type == "too_safety_focused":
+            handling = "先切出安全盘问，承认刚才安全话题还在，但当前先跟着用户聊别的。"
     elif recent_high_risk and risk_level in {"L0", "L1"}:
         conversation_move = "post_risk_return"
         button_style = "topic_continue" if anchor_type not in {"none", "daily_detail"} else "user_voice"

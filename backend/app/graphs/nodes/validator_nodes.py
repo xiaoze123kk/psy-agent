@@ -71,7 +71,25 @@ PSYCHOLOGIZING_TERMS = (
     "病理",
     "系统治疗",
 )
-GENERIC_BUTTON_TERMS = ("继续陪我", "帮我分析", "给我建议", "继续说", "分析一下", "给建议")
+GENERIC_BUTTON_TERMS = (
+    "继续陪我",
+    "帮我分析",
+    "给我建议",
+    "继续说",
+    "分析一下",
+    "给建议",
+    "user_voice",
+    "topic_continue",
+    "ordinary_chat",
+    "soft_invitation",
+    "micro_step",
+    "post_risk_return",
+    "conversation_move",
+    "correction_followup",
+    "safety_micro_reply",
+    "respond_to_anchor",
+    "continue_thread",
+)
 FORMULAIC_OPENINGS = ("听起来", "我听见", "我听到", "我理解", "我能理解")
 COUNSELING_RESTART_TERMS = ("先了解一下", "说说最近压力最大的事情", "从什么时候开始", "发生了什么")
 OLD_CORRECTION_MODE_TERMS = ("我理解你的感受", "你能说说", "背后真正", "深层原因", "为什么会这样")
@@ -183,8 +201,8 @@ def _policy_anchor_terms(policy: dict, state: AgentState) -> list[str]:
 
 
 def _recent_formulaic_opening_reused(text: str, state: AgentState) -> bool:
-    current = next((opening for opening in FORMULAIC_OPENINGS if text.strip().startswith(opening)), "")
-    if not current:
+    current_is_formulaic = any(text.strip().startswith(opening) for opening in FORMULAIC_OPENINGS)
+    if not current_is_formulaic:
         return False
     recent = state.get("recent_messages")
     if not isinstance(recent, list):
@@ -193,7 +211,7 @@ def _recent_formulaic_opening_reused(text: str, state: AgentState) -> bool:
         if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
             continue
         previous = str(message.get("content") or "").strip()
-        return previous.startswith(current)
+        return any(previous.startswith(opening) for opening in FORMULAIC_OPENINGS)
     return False
 
 

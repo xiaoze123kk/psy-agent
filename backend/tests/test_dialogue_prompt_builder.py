@@ -330,6 +330,7 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("continue_thread", parts.user_prompt)
         self.assertIn("literary/metaphor", parts.user_prompt)
         self.assertIn("topic_continue", parts.user_prompt)
+        self.assertIn("不要把 topic_continue", parts.user_prompt)
         self.assertNotIn("style_variation", parts.user_prompt)
         self.assertNotIn("correction_state", parts.user_prompt)
 

@@ -306,6 +306,7 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
         lines.append(f"- 过度心理化风险：{psychologizing_risk}")
     if button_style:
         lines.append(f"- 按钮风格：{button_style}")
+        lines.append(f"- 不要把 {button_style}、{move or 'conversation_move'} 或 conversation_move 等内部策略词写成按钮文案。")
         if button_style == "topic_continue":
             lines.append("- 按钮要贴着当前话题，像用户下一句会说的话，避免“继续陪我/帮我分析/给我建议”。")
         elif button_style == "user_voice":
