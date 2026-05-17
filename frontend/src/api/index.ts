@@ -29,6 +29,12 @@ async function refreshAuthToken(baseUrl: string): Promise<boolean> {
     return false;
   }
 
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    tokenStore.clearTokens();
+    return false;
+  }
+
   const nextTokens = (await response.json()) as RefreshTokenResponse;
   tokenStore.setTokens({
     accessToken: nextTokens.access_token,

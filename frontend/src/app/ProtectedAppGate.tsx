@@ -20,8 +20,13 @@ interface CaptchaState {
 
 export function ProtectedAppGate({ children }: { children: ReactNode }) {
   const session = useSession();
+  const [isDebugMainEntered, setIsDebugMainEntered] = useState(false);
   const [hasEnteredAppLocally, setHasEnteredAppLocally] = useState(false);
   const [hasPlayedEntryTransition, setHasPlayedEntryTransition] = useState(false);
+
+  if (import.meta.env.DEV && isDebugMainEntered) {
+    return <>{children}</>;
+  }
 
   if (session.status === "checking") {
     return (
@@ -35,7 +40,7 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   }
 
   if (session.status !== "authenticated") {
-    return <AuthGate initialError={session.error} />;
+    return <AuthGate initialError={session.error} onDebugEnterMain={() => setIsDebugMainEntered(true)} />;
   }
 
   if (session.currentUser?.onboarding_completed === false && !hasEnteredAppLocally) {
@@ -56,7 +61,7 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AuthGate({ initialError }: { initialError: string | null }) {
+function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | null; onDebugEnterMain: () => void }) {
   const session = useSession();
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -169,6 +174,7 @@ function AuthGate({ initialError }: { initialError: string | null }) {
       onCaptchaCodeChange={setCaptchaCode}
       onRefreshCaptcha={() => void handleRefreshCaptcha()}
       onSubmit={handleSubmit}
+      onDebugEnterMain={import.meta.env.DEV ? onDebugEnterMain : undefined}
       onDebugEnterOnboarding={import.meta.env.DEV ? () => setIsDebugOnboarding(true) : undefined}
     />
   );

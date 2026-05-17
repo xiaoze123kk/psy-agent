@@ -32,6 +32,7 @@ interface LoadingAuthEntryProps {
   onCaptchaCodeChange: (value: string) => void;
   onRefreshCaptcha: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onDebugEnterMain?: () => void;
   onDebugEnterOnboarding?: () => void;
 }
 
@@ -61,6 +62,7 @@ export function LoadingAuthEntry({
   onCaptchaCodeChange,
   onRefreshCaptcha,
   onSubmit,
+  onDebugEnterMain,
   onDebugEnterOnboarding,
 }: LoadingAuthEntryProps) {
   const isLogin = authMode === "login";
@@ -179,6 +181,12 @@ export function LoadingAuthEntry({
             <button className="loading-auth__submit" type="submit" disabled={!canSubmit}>
               {isSubmitting ? "处理中..." : isLogin ? "翻开日记" : "写下第一页"}
             </button>
+
+            {onDebugEnterMain ? (
+              <button className="loading-auth__debug" type="button" onClick={onDebugEnterMain}>
+                调试进入主页面
+              </button>
+            ) : null}
 
             {onDebugEnterOnboarding ? (
               <button className="loading-auth__debug" type="button" onClick={onDebugEnterOnboarding}>

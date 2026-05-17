@@ -234,6 +234,20 @@ export type ChatStreamEventData =
   | ChatStreamFinalEvent
   | ChatStreamErrorEvent;
 
+export interface CrisisEventRequest {
+  thread_id: string;
+  message_id?: string | null;
+  risk_level: RiskLevel;
+  detected_signals?: string[];
+  action_taken?: string[];
+}
+
+export interface CrisisEventResponse {
+  event_id: string;
+  thread_id: string;
+  status: string;
+}
+
 export interface MemoryItem {
   memory_id: string;
   memory_type: string;

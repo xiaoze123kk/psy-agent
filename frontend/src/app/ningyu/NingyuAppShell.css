@@ -105,7 +105,8 @@
 .ningyu-panel-section h2,
 .ningyu-welcome h2,
 .ningyu-welcome p,
-.ningyu-message p {
+.ningyu-message p,
+.ningyu-chat-suggestions span {
   margin: 0;
 }
 
@@ -165,10 +166,14 @@
 .ningyu-round-button {
   width: 44px;
   height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.78);
   background: rgba(255, 255, 255, 0.58);
   color: #f59e0b;
+  line-height: 0;
   box-shadow: 0 2px 8px rgba(251, 191, 36, 0.2);
 }
 
@@ -296,6 +301,7 @@
   flex-direction: column;
   overflow: hidden;
   background: rgba(240, 253, 250, 0.68);
+  pointer-events: auto;
   transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out, color 1000ms ease-in-out;
 }
 
@@ -321,6 +327,11 @@
   transition: border-color 1000ms ease-in-out;
 }
 
+.ningyu-sidebar__top {
+  display: grid;
+  gap: 10px;
+}
+
 .ningyu-shell.is-night .ningyu-sidebar__top,
 .ningyu-shell.is-night .ningyu-sidebar__bottom,
 .ningyu-shell.is-night .ningyu-panel-section {
@@ -331,11 +342,14 @@
   width: 100%;
   justify-content: center;
   gap: 8px;
-  min-height: 48px;
+  min-height: 46px;
   padding: 0 16px;
   border: 1px solid rgba(153, 246, 228, 0.36);
-  border-radius: 20px;
-  background: rgba(240, 253, 250, 0.32);
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    rgba(240, 253, 250, 0.3);
+  background-size: 100% 24px, auto;
   color: #115e59;
   font-weight: 700;
 }
@@ -346,18 +360,37 @@
   color: #e2e8f0;
 }
 
+.ningyu-new-chat.is-loading,
+.ningyu-new-chat:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.ningyu-new-chat__error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-shell.is-night .ningyu-new-chat__error {
+  color: #fca5a5;
+}
+
 .ningyu-thread-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 14px;
 }
 
 .ningyu-section-label {
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px 10px;
   color: rgba(17, 94, 89, 0.62);
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .ningyu-shell.is-night .ningyu-section-label {
@@ -367,18 +400,28 @@
 .ningyu-thread {
   width: 100%;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
   min-height: auto;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 18px;
   text-align: left;
   color: inherit;
 }
 
 .ningyu-thread:hover {
-  border-color: rgba(153, 246, 228, 0.28);
-  background: rgba(240, 253, 250, 0.32);
+  border-color: rgba(153, 246, 228, 0.3);
+  background: rgba(240, 253, 250, 0.28);
+}
+
+.ningyu-thread.is-active {
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(204, 251, 241, 0.34);
+  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.5);
+}
+
+.ningyu-thread:disabled {
+  cursor: default;
 }
 
 .ningyu-shell.is-night .ningyu-thread:hover {
@@ -386,9 +429,34 @@
   background: rgba(30, 41, 59, 0.42);
 }
 
+.ningyu-shell.is-night .ningyu-thread.is-active {
+  border-color: rgba(52, 211, 153, 0.36);
+  background: rgba(20, 83, 45, 0.32);
+  box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.5);
+}
+
+.ningyu-thread-list__state {
+  margin: 6px 10px 10px;
+  color: rgba(17, 94, 89, 0.58);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-thread-list__state.is-error {
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-thread-list__state {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread-list__state.is-error {
+  color: #fca5a5;
+}
+
 .ningyu-thread__dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   flex: 0 0 auto;
   margin-top: 8px;
   border-radius: 50%;
@@ -398,7 +466,30 @@
 .ningyu-thread__content {
   min-width: 0;
   display: grid;
+  gap: 3px;
+}
+
+.ningyu-thread__meta {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
   gap: 4px;
+  margin-left: auto;
+}
+
+.ningyu-thread__meta small {
+  max-width: 62px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.42);
+  color: rgba(15, 118, 110, 0.62);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-thread__meta small {
+  background: rgba(30, 41, 59, 0.58);
+  color: #94a3b8;
 }
 
 .ningyu-thread strong,
@@ -412,17 +503,20 @@
 
 .ningyu-thread strong {
   color: rgba(19, 78, 74, 0.96);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.32;
 }
 
 .ningyu-thread span {
   color: rgba(17, 94, 89, 0.72);
   font-size: 12px;
+  line-height: 1.35;
 }
 
 .ningyu-thread small {
   color: rgba(15, 118, 110, 0.5);
   font-size: 10px;
+  line-height: 1.2;
 }
 
 .ningyu-shell.is-night .ningyu-thread strong {
@@ -444,12 +538,13 @@
 
 .ningyu-sidebar__bottom button {
   justify-content: flex-start;
-  gap: 12px;
-  min-height: 44px;
-  padding: 10px 14px;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 12px;
   border-radius: 14px;
   color: rgba(17, 94, 89, 0.82);
   font-weight: 600;
+  font-size: 13px;
 }
 
 .ningyu-sidebar__bottom button:hover {
@@ -473,6 +568,17 @@
   pointer-events: none;
 }
 
+.ningyu-sidebar__caption {
+  color: rgba(15, 118, 110, 0.48);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ningyu-shell.is-night .ningyu-sidebar__caption {
+  color: rgba(148, 163, 184, 0.58);
+}
+
 .ningyu-shell.is-night .ningyu-sidebar__mode {
   color: rgba(148, 163, 184, 0.36);
 }
@@ -482,62 +588,169 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  isolation: isolate;
+}
+
+.ningyu-chat::before {
+  content: "";
+  position: absolute;
+  inset: 22px 18px 18px;
+  z-index: -1;
+  border-inline: 1px solid rgba(255, 255, 255, 0.24);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.24), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(240, 253, 250, 0.08) 52%, transparent);
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.ningyu-shell.is-night .ningyu-chat::before {
+  border-inline-color: rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(52, 211, 153, 0.11), transparent 48%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.2), rgba(30, 41, 59, 0.1) 52%, transparent);
 }
 
 .ningyu-chat__scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 28px 32px 20px;
+  padding: 34px clamp(22px, 4vw, 56px) 22px;
 }
 
 .ningyu-chat__inner {
-  width: min(100%, 760px);
+  position: relative;
+  width: min(100%, 820px);
   min-height: 100%;
   margin: 0 auto;
   display: grid;
   align-items: center;
+  padding: clamp(22px, 3vw, 34px);
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 30px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.16) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(240, 253, 250, 0.14) 58%, rgba(255, 255, 255, 0.08));
+  background-size: 100% 34px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 18px 42px -34px rgba(15, 118, 110, 0.34);
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
+  overflow: hidden;
+}
+
+.ningyu-chat__inner::before {
+  content: "";
+  position: absolute;
+  inset: 12px auto 12px 24px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(20, 184, 166, 0.18), transparent);
+  pointer-events: none;
+}
+
+.ningyu-shell.is-night .ningyu-chat__inner {
+  border-color: rgba(71, 85, 105, 0.38);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.28), rgba(30, 41, 59, 0.18) 58%, rgba(15, 23, 42, 0.12));
+  background-size: 100% 34px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(148, 163, 184, 0.1),
+    0 18px 42px -34px rgba(15, 23, 42, 0.72);
+}
+
+.ningyu-shell.is-night .ningyu-chat__inner::before {
+  background: linear-gradient(180deg, transparent, rgba(52, 211, 153, 0.14), transparent);
 }
 
 .ningyu-chat__messages {
   align-self: start;
   display: grid;
-  gap: 12px;
+  width: 100%;
+  gap: 18px;
+  padding: 4px 0 8px;
 }
 
 .ningyu-chat__input {
-  padding: 18px 32px 26px;
+  position: relative;
+  padding: 16px clamp(22px, 4vw, 56px) 26px;
+}
+
+.ningyu-chat__input::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+  pointer-events: none;
+}
+
+.ningyu-shell.is-night .ningyu-chat__input::before {
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.18), transparent);
 }
 
 .ningyu-chat__input > * {
-  width: min(100%, 760px);
+  width: min(100%, 820px);
   margin: 0 auto;
 }
 
 .ningyu-welcome {
   position: relative;
   display: grid;
-  justify-items: center;
-  gap: 18px;
-  text-align: center;
+  justify-items: start;
+  align-content: center;
+  width: min(100%, 560px);
+  margin: 0 auto;
+  gap: 14px;
+  text-align: left;
+}
+
+.ningyu-welcome::before {
+  content: "";
+  position: absolute;
+  inset: -18px -22px;
+  z-index: -1;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.24), transparent 36%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(240, 253, 250, 0.06));
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.ningyu-shell.is-night .ningyu-welcome::before {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(52, 211, 153, 0.08), transparent 36%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.22), rgba(30, 41, 59, 0.06));
 }
 
 .ningyu-welcome > img {
-  width: 66px;
-  height: 66px;
+  width: 54px;
+  height: 54px;
+  margin-left: 2px;
   object-fit: contain;
-  filter: drop-shadow(0 3px 7px rgba(15, 118, 110, 0.24));
+  opacity: 0.92;
+  filter: drop-shadow(0 3px 7px rgba(15, 118, 110, 0.18));
 }
 
 .ningyu-welcome h2 {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   color: rgba(17, 94, 89, 0.88);
-  font-size: 22px;
+  font-size: clamp(22px, 3vw, 30px);
   font-weight: 600;
   letter-spacing: 0;
+  line-height: 1.24;
   transition: color 1000ms ease-in-out;
+}
+
+.ningyu-welcome h2 .ningyu-icon {
+  width: 17px;
+  height: 17px;
+  opacity: 0.5;
 }
 
 .ningyu-shell.is-night .ningyu-welcome h2 {
@@ -545,21 +758,22 @@
 }
 
 .ningyu-welcome p {
-  max-width: 410px;
-  padding: 18px 24px;
-  border: 1px solid rgba(255, 255, 255, 0.56);
-  border-radius: 32px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
-  box-shadow: 0 2px 10px rgba(15, 118, 110, 0.08);
+  max-width: 100%;
+  padding: 6px 0 6px 18px;
+  border-left: 2px solid rgba(20, 184, 166, 0.28);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: rgba(19, 78, 74, 0.82);
   font-size: 15px;
-  line-height: 1.8;
-  transition: background 1000ms ease-in-out, color 1000ms ease-in-out, border-color 1000ms ease-in-out;
+  line-height: 2;
+  text-wrap: pretty;
+  transition: color 1000ms ease-in-out, border-color 1000ms ease-in-out;
 }
 
 .ningyu-shell.is-night .ningyu-welcome p {
-  border-color: rgba(51, 65, 85, 0.56);
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.64), rgba(15, 23, 42, 0.44));
+  border-left-color: rgba(52, 211, 153, 0.22);
+  background: transparent;
   color: #cbd5e1;
 }
 
@@ -568,19 +782,20 @@
   align-items: center;
   gap: 8px;
   min-height: 36px;
-  padding: 6px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.46);
+  margin-top: 6px;
+  padding: 6px 14px;
+  border: 1px solid rgba(153, 246, 228, 0.34);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.24);
   color: rgba(17, 94, 89, 0.72);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   transition: background 1000ms ease-in-out, color 1000ms ease-in-out, border-color 1000ms ease-in-out;
 }
 
 .ningyu-shell.is-night .ningyu-welcome span {
-  border-color: rgba(51, 65, 85, 0.52);
-  background: rgba(30, 41, 59, 0.44);
+  border-color: rgba(51, 65, 85, 0.44);
+  background: rgba(30, 41, 59, 0.26);
   color: #cbd5e1;
 }
 
@@ -589,151 +804,622 @@
   opacity: 0.38;
   color: #14b8a6;
   animation: ningyuFloat 9s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .ningyu-welcome__leaf--one {
-  top: -28px;
-  left: 18%;
+  top: -22px;
+  left: 8%;
 }
 
 .ningyu-welcome__leaf--two {
-  right: 18%;
-  bottom: 28px;
+  right: 10%;
+  bottom: 16px;
   animation-delay: -3s;
+}
+
+.ningyu-chat-state {
+  width: min(100%, 460px);
+  margin: 0 auto;
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 18px 20px;
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.24);
+  color: rgba(17, 94, 89, 0.76);
+}
+
+.ningyu-chat-state .ningyu-icon {
+  width: 22px;
+  height: 22px;
+  opacity: 0.72;
+}
+
+.ningyu-chat-state strong,
+.ningyu-chat-state span {
+  display: block;
+}
+
+.ningyu-chat-state strong {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.ningyu-chat-state span {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ningyu-chat-state.is-error {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(254, 242, 242, 0.42);
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-chat-state {
+  border-color: rgba(51, 65, 85, 0.56);
+  background: rgba(15, 23, 42, 0.28);
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-chat-state.is-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(69, 10, 10, 0.34);
+  color: #fca5a5;
 }
 
 .ningyu-input {
   position: relative;
   display: flex;
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 32px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(204, 251, 241, 0.72));
-  box-shadow: 0 4px 20px -4px rgba(20, 184, 166, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 28px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(204, 251, 241, 0.5));
+  background-size: 100% 28px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 12px 28px -24px rgba(15, 118, 110, 0.38);
   transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out, box-shadow 300ms ease;
 }
 
 .ningyu-shell.is-night .ningyu-input {
-  border-color: rgba(51, 65, 85, 0.64);
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.84), rgba(15, 23, 42, 0.82));
+  border-color: rgba(51, 65, 85, 0.56);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(30, 41, 59, 0.74), rgba(15, 23, 42, 0.68));
+  background-size: 100% 28px, auto;
 }
 
 .ningyu-input:focus-within {
-  box-shadow: 0 4px 26px -4px rgba(20, 184, 166, 0.3);
+  border-color: rgba(45, 212, 191, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 14px 30px -22px rgba(20, 184, 166, 0.5);
 }
 
-.ningyu-input input {
+.ningyu-input textarea {
   width: 100%;
-  min-height: 58px;
+  min-height: 60px;
+  max-height: 132px;
   border: 0;
-  padding: 0 70px 0 24px;
-  border-radius: 32px;
+  padding: 18px 72px 14px 24px;
+  border-radius: 28px;
   background: transparent;
   color: rgba(19, 78, 74, 0.95);
+  font: inherit;
+  font-size: 15px;
   font-weight: 600;
+  line-height: 1.55;
   outline: none;
+  resize: vertical;
 }
 
-.ningyu-shell.is-night .ningyu-input input {
+.ningyu-shell.is-night .ningyu-input textarea {
   color: #f8fafc;
 }
 
-.ningyu-input input::placeholder {
-  color: rgba(17, 94, 89, 0.56);
+.ningyu-input textarea::placeholder {
+  color: rgba(17, 94, 89, 0.48);
 }
 
-.ningyu-shell.is-night .ningyu-input input::placeholder {
-  color: #64748b;
+.ningyu-shell.is-night .ningyu-input textarea::placeholder {
+  color: #94a3b8;
+}
+
+.ningyu-input textarea:disabled {
+  cursor: progress;
+  opacity: 0.74;
 }
 
 .ningyu-input button {
   position: absolute;
   right: 10px;
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
-  min-height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.54);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.44);
+  background: rgba(255, 255, 255, 0.34);
   color: rgba(15, 118, 110, 0.5);
+  line-height: 0;
 }
 
 .ningyu-input button.is-active {
   border-color: transparent;
-  background: linear-gradient(90deg, #2dd4bf, #34d399);
+  background: linear-gradient(135deg, #2dd4bf, #34d399);
   color: #ffffff;
-  box-shadow: 0 0 15px rgba(45, 212, 191, 0.42);
+  box-shadow:
+    0 0 0 4px rgba(45, 212, 191, 0.1),
+    0 8px 18px -10px rgba(15, 118, 110, 0.6);
+}
+
+.ningyu-input button:disabled {
+  cursor: progress;
+  opacity: 0.58;
+}
+
+.ningyu-shell.is-night .ningyu-input button {
+  border-color: rgba(71, 85, 105, 0.54);
+  background: rgba(15, 23, 42, 0.38);
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-input button.is-active {
+  background: linear-gradient(135deg, #0f766e, #22c55e);
+  color: #f8fafc;
 }
 
 .ningyu-message {
-  max-width: 75%;
+  width: fit-content;
+  max-width: min(78%, 590px);
   display: grid;
-  gap: 4px;
+  gap: 5px;
   justify-self: start;
+  align-items: start;
 }
 
 .ningyu-message.is-user {
   justify-self: end;
+  justify-items: end;
 }
 
 .ningyu-message__meta,
+.ningyu-message__footer,
 .ningyu-message time {
-  padding: 0 8px;
+  padding: 0 10px;
   color: rgba(15, 118, 110, 0.58);
   font-size: 11px;
+  line-height: 1.2;
+}
+
+.ningyu-message__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ningyu-message__meta small {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.14);
+  color: rgba(146, 64, 14, 0.76);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.ningyu-message__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.72;
+}
+
+.ningyu-message.is-user .ningyu-message__footer {
+  justify-content: flex-end;
 }
 
 .ningyu-message.is-night .ningyu-message__meta,
+.ningyu-message.is-night .ningyu-message__footer,
 .ningyu-message.is-night time {
   color: #94a3b8;
 }
 
+.ningyu-message.is-night .ningyu-message__meta small {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fcd34d;
+}
+
 .ningyu-message__bubble {
   position: relative;
-  display: grid;
-  gap: 6px;
-  padding: 14px 20px;
+  min-width: 0;
+  display: block;
+  padding: 14px 20px 16px 22px;
   border: 1px solid rgba(255, 255, 255, 0.62);
-  background: linear-gradient(135deg, rgba(232, 246, 242, 0.9), rgba(240, 253, 250, 0.72));
-  box-shadow: 0 2px 12px -4px rgba(20, 184, 166, 0.16);
-  border-radius: 6px 32px 24px 32px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(232, 246, 242, 0.78), rgba(240, 253, 250, 0.44));
+  background-size: 100% 30px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 9px 20px -18px rgba(15, 118, 110, 0.34);
+  border-radius: 8px 34px 26px 34px;
 }
 
 .ningyu-message.is-user .ningyu-message__bubble {
-  background: linear-gradient(225deg, rgba(255, 255, 255, 0.92), rgba(204, 251, 241, 0.76));
-  border-radius: 32px 6px 32px 24px;
+  padding: 15px 22px 16px 20px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.18) 1px, transparent 1px),
+    linear-gradient(225deg, rgba(255, 255, 255, 0.92), rgba(204, 251, 241, 0.7));
+  background-size: 100% 30px, auto;
+  border-radius: 34px 8px 34px 24px;
+  transform: rotate(0.35deg);
+}
+
+.ningyu-message.is-user .ningyu-message__bubble::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 42px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 3px 8px rgba(15, 118, 110, 0.06);
+  transform: translateX(-50%) rotate(-2deg);
+  pointer-events: none;
 }
 
 .ningyu-message.is-night .ningyu-message__bubble {
   border-color: rgba(51, 65, 85, 0.6);
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.8));
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.76), rgba(30, 41, 59, 0.68));
+  background-size: 100% 28px, auto;
+}
+
+.ningyu-message.is-user.is-night .ningyu-message__bubble {
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    linear-gradient(225deg, rgba(30, 41, 59, 0.76), rgba(15, 23, 42, 0.66));
+  background-size: 100% 28px, auto;
+}
+
+.ningyu-message__bubble > .ningyu-icon {
+  position: absolute;
+  top: -7px;
+  left: -8px;
+  width: 20px;
+  height: 20px;
+  color: rgba(20, 184, 166, 0.22);
+  transform: rotate(-12deg);
+  pointer-events: none;
+}
+
+.ningyu-message.is-user .ningyu-message__bubble > .ningyu-icon {
+  top: auto;
+  right: -7px;
+  bottom: -8px;
+  left: auto;
+  width: 18px;
+  height: 18px;
+  color: rgba(15, 118, 110, 0.2);
+  transform: rotate(14deg);
+}
+
+.ningyu-message.is-night .ningyu-message__bubble > .ningyu-icon {
+  color: rgba(52, 211, 153, 0.2);
 }
 
 .ningyu-message p {
   color: rgba(19, 78, 74, 0.86);
   font-size: 15px;
-  line-height: 1.7;
+  line-height: 1.92;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ningyu-message.is-night p {
   color: #e2e8f0;
 }
 
+.ningyu-message.is-user p {
+  color: rgba(19, 78, 74, 0.9);
+}
+
+.ningyu-message.is-user.is-night p {
+  color: #f8fafc;
+}
+
+.ningyu-message-feedback {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.ningyu-message:hover .ningyu-message-feedback,
+.ningyu-message-feedback:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ningyu-message-feedback button {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid rgba(153, 246, 228, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(15, 118, 110, 0.62);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ningyu-message-feedback button:hover,
+.ningyu-message-feedback button.is-selected {
+  border-color: rgba(45, 212, 191, 0.38);
+  background: rgba(204, 251, 241, 0.42);
+  color: rgba(15, 118, 110, 0.9);
+}
+
+.ningyu-message-feedback span {
+  color: rgba(15, 118, 110, 0.42);
+  font-size: 10px;
+}
+
+.ningyu-shell.is-night .ningyu-message-feedback button {
+  border-color: rgba(51, 65, 85, 0.52);
+  background: rgba(15, 23, 42, 0.24);
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-message-feedback button:hover,
+.ningyu-shell.is-night .ningyu-message-feedback button.is-selected {
+  border-color: rgba(52, 211, 153, 0.36);
+  background: rgba(20, 83, 45, 0.32);
+  color: #bbf7d0;
+}
+
+.ningyu-shell.is-night .ningyu-message-feedback span {
+  color: #64748b;
+}
+
+.ningyu-chat-suggestions {
+  width: min(100%, 620px);
+  display: grid;
+  justify-self: start;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.ningyu-chat-suggestions > span {
+  color: rgba(15, 118, 110, 0.52);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ningyu-chat-suggestions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ningyu-chat-suggestions button {
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  color: rgba(17, 94, 89, 0.76);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 18px -18px rgba(15, 118, 110, 0.34);
+}
+
+.ningyu-chat-suggestions button:hover {
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(204, 251, 241, 0.38);
+  transform: translateY(-1px);
+}
+
+.ningyu-shell.is-night .ningyu-chat-suggestions > span {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-chat-suggestions button {
+  border-color: rgba(51, 65, 85, 0.54);
+  background: rgba(15, 23, 42, 0.3);
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-chat-suggestions button:hover {
+  border-color: rgba(52, 211, 153, 0.34);
+  background: rgba(20, 83, 45, 0.28);
+}
+
+.ningyu-graph-trail {
+  width: min(100%, 660px);
+  display: grid;
+  justify-self: start;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 12px 14px;
+  border: 1px solid rgba(153, 246, 228, 0.24);
+  border-radius: 20px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    rgba(240, 253, 250, 0.18);
+  background-size: 100% 26px, auto;
+  color: rgba(17, 94, 89, 0.72);
+}
+
+.ningyu-graph-trail.is-streaming {
+  border-color: rgba(45, 212, 191, 0.34);
+}
+
+.ningyu-graph-trail.is-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(254, 242, 242, 0.28);
+  color: #b91c1c;
+}
+
+.ningyu-graph-trail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ningyu-graph-trail__header span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ningyu-graph-trail__header small {
+  min-width: 0;
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.68;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ningyu-graph-trail__error,
+.ningyu-graph-trail__empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ningyu-graph-trail__items {
+  display: grid;
+  gap: 8px;
+}
+
+.ningyu-graph-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.ningyu-graph-step__dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #2dd4bf;
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.12);
+}
+
+.ningyu-graph-step span:not(.ningyu-graph-step__dot) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ningyu-graph-step strong,
+.ningyu-graph-step small,
+.ningyu-graph-step em {
+  display: block;
+}
+
+.ningyu-graph-step strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ningyu-graph-step small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.62;
+}
+
+.ningyu-graph-step em {
+  color: inherit;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+}
+
+.ningyu-shell.is-night .ningyu-graph-trail {
+  border-color: rgba(51, 65, 85, 0.5);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+    rgba(15, 23, 42, 0.24);
+  background-size: 100% 26px, auto;
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-graph-trail.is-streaming {
+  border-color: rgba(52, 211, 153, 0.34);
+}
+
+.ningyu-shell.is-night .ningyu-graph-trail.is-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(69, 10, 10, 0.28);
+  color: #fca5a5;
+}
+
+.ningyu-shell.is-night .ningyu-graph-step__dot {
+  background: #34d399;
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.12);
+}
+
 .ningyu-panel-section {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .ningyu-panel-section--safety {
   position: sticky;
   top: 0;
-  z-index: 1;
-  background: linear-gradient(180deg, rgba(240, 253, 250, 0.88), rgba(240, 253, 250, 0.62));
+  z-index: 3;
+  border-bottom-color: rgba(45, 212, 191, 0.38);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(240, 253, 250, 0.92), rgba(240, 253, 250, 0.68));
+  background-size: 100% 26px, auto;
+  box-shadow: 0 12px 24px -24px rgba(15, 118, 110, 0.48);
+}
+
+.ningyu-panel-section--safety.is-high-risk {
+  border-bottom-color: rgba(248, 113, 113, 0.42);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 247, 237, 0.94), rgba(254, 242, 242, 0.78));
+  box-shadow: 0 16px 28px -24px rgba(185, 28, 28, 0.5);
 }
 
 .ningyu-shell.is-night .ningyu-panel-section--safety {
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.68));
+  border-bottom-color: rgba(52, 211, 153, 0.22);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.72));
+  background-size: 100% 26px, auto;
+}
+
+.ningyu-shell.is-night .ningyu-panel-section--safety.is-high-risk {
+  border-bottom-color: rgba(248, 113, 113, 0.32);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(69, 10, 10, 0.86), rgba(15, 23, 42, 0.78));
+  background-size: 100% 26px, auto;
 }
 
 .ningyu-panel-section h2 {
@@ -747,19 +1433,503 @@
   color: #cbd5e1;
 }
 
+.ningyu-panel-section__caption {
+  color: rgba(15, 118, 110, 0.48);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ningyu-shell.is-night .ningyu-panel-section__caption {
+  color: rgba(148, 163, 184, 0.58);
+}
+
+.ningyu-panel-section--suggestions {
+  opacity: 0.86;
+}
+
+.ningyu-panel-section--mood {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ningyu-shell.is-night .ningyu-panel-section--mood {
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.ningyu-mood-checkin {
+  display: grid;
+  gap: 12px;
+}
+
+.ningyu-mood-score {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ningyu-mood-score button,
+.ningyu-mood-tags button,
+.ningyu-mood-checkin__footer button {
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  background: rgba(240, 253, 250, 0.24);
+  color: rgba(19, 78, 74, 0.86);
+  transition:
+    transform 220ms ease,
+    background 300ms ease,
+    border-color 300ms ease,
+    color 300ms ease,
+    box-shadow 300ms ease;
+}
+
+.ningyu-shell.is-night .ningyu-mood-score button,
+.ningyu-shell.is-night .ningyu-mood-tags button,
+.ningyu-shell.is-night .ningyu-mood-checkin__footer button {
+  border-color: rgba(51, 65, 85, 0.56);
+  background: rgba(30, 41, 59, 0.34);
+  color: #e2e8f0;
+}
+
+.ningyu-mood-score button {
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border-radius: 16px;
+}
+
+.ningyu-mood-score button strong,
+.ningyu-mood-score button span {
+  display: block;
+  line-height: 1.1;
+}
+
+.ningyu-mood-score button strong {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.ningyu-mood-score button span {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ningyu-mood-score button:hover,
+.ningyu-mood-tags button:hover,
+.ningyu-mood-checkin__footer button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ningyu-mood-score button.is-active,
+.ningyu-mood-tags button.is-active {
+  border-color: rgba(45, 212, 191, 0.56);
+  background: rgba(204, 251, 241, 0.58);
+  color: #0f766e;
+  box-shadow: 0 8px 18px -14px rgba(15, 118, 110, 0.52);
+}
+
+.ningyu-shell.is-night .ningyu-mood-score button.is-active,
+.ningyu-shell.is-night .ningyu-mood-tags button.is-active {
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(20, 83, 45, 0.54);
+  color: #bbf7d0;
+}
+
+.ningyu-mood-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ningyu-mood-tags button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ningyu-mood-checkin textarea {
+  width: 100%;
+  min-height: 62px;
+  resize: vertical;
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.3);
+  color: rgba(19, 78, 74, 0.9);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.ningyu-mood-checkin textarea:focus {
+  border-color: rgba(45, 212, 191, 0.54);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin textarea {
+  border-color: rgba(51, 65, 85, 0.56);
+  background: rgba(15, 23, 42, 0.38);
+  color: #e2e8f0;
+}
+
+.ningyu-mood-checkin textarea::placeholder {
+  color: rgba(17, 94, 89, 0.48);
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin textarea::placeholder {
+  color: #94a3b8;
+}
+
+.ningyu-mood-checkin__footer {
+  display: grid;
+  gap: 10px;
+}
+
+.ningyu-mood-checkin__summary {
+  margin: 0;
+  color: rgba(17, 94, 89, 0.68);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__summary {
+  color: #94a3b8;
+}
+
+.ningyu-mood-checkin__summary.is-success {
+  color: #047857;
+}
+
+.ningyu-mood-checkin__summary.is-error {
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__summary.is-success {
+  color: #86efac;
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__summary.is-error {
+  color: #fca5a5;
+}
+
+.ningyu-mood-checkin__footer button {
+  min-height: 40px;
+  border-radius: 15px;
+  font-weight: 800;
+}
+
+.ningyu-mood-checkin__footer button:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, #2dd4bf, #34d399);
+  color: #ffffff;
+}
+
+.ningyu-mood-checkin__footer button:disabled {
+  cursor: progress;
+  opacity: 0.68;
+}
+
+.ningyu-mood-trend {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(153, 246, 228, 0.28);
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend {
+  border-top-color: rgba(51, 65, 85, 0.5);
+}
+
+.ningyu-mood-trend__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ningyu-mood-trend__header > span {
+  color: rgba(17, 94, 89, 0.76);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__header > span {
+  color: #cbd5e1;
+}
+
+.ningyu-mood-trend__range {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.22);
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__range {
+  border-color: rgba(51, 65, 85, 0.52);
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.ningyu-mood-trend__range button {
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(17, 94, 89, 0.68);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__range button {
+  color: #94a3b8;
+}
+
+.ningyu-mood-trend__range button.is-active {
+  background: rgba(204, 251, 241, 0.7);
+  color: #0f766e;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__range button.is-active {
+  background: rgba(20, 83, 45, 0.66);
+  color: #bbf7d0;
+}
+
+.ningyu-mood-trend__state {
+  margin: 0;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-mood-trend__state.is-error {
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__state {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__state.is-error {
+  color: #fca5a5;
+}
+
+.ningyu-mood-trend__summary {
+  display: grid;
+  gap: 4px;
+}
+
+.ningyu-mood-trend__summary strong {
+  color: rgba(15, 118, 110, 0.88);
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.ningyu-mood-trend__summary span {
+  color: rgba(17, 94, 89, 0.66);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__summary strong {
+  color: #86efac;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__summary span {
+  color: #94a3b8;
+}
+
+.ningyu-mood-trend__bars {
+  height: 58px;
+  display: flex;
+  align-items: end;
+  gap: 3px;
+  padding: 8px 6px 4px;
+  border: 1px solid rgba(153, 246, 228, 0.24);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__bars {
+  border-color: rgba(51, 65, 85, 0.46);
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.ningyu-mood-trend__bar {
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 100%;
+  display: flex;
+  align-items: end;
+  border-radius: 999px;
+  background: rgba(204, 251, 241, 0.36);
+  overflow: hidden;
+}
+
+.ningyu-mood-trend__bar i {
+  width: 100%;
+  min-height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #5eead4, #34d399);
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__bar {
+  background: rgba(30, 41, 59, 0.7);
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__bar i {
+  background: linear-gradient(180deg, #2dd4bf, #22c55e);
+}
+
+.ningyu-mood-trend__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ningyu-mood-trend__tags span {
+  padding: 5px 9px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 999px;
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-mood-trend__tags span {
+  border-color: rgba(51, 65, 85, 0.5);
+  color: #cbd5e1;
+}
+
+.ningyu-weekly-summary {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(153, 246, 228, 0.28);
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    rgba(240, 253, 250, 0.2);
+  background-size: 100% 24px, auto;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary {
+  border-color: rgba(51, 65, 85, 0.5);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+    rgba(15, 23, 42, 0.28);
+  background-size: 100% 24px, auto;
+}
+
+.ningyu-weekly-summary__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ningyu-weekly-summary__header span {
+  color: rgba(17, 94, 89, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ningyu-weekly-summary__header small,
+.ningyu-weekly-summary__range {
+  color: rgba(17, 94, 89, 0.46);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__header span {
+  color: #cbd5e1;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__header small,
+.ningyu-shell.is-night .ningyu-weekly-summary__range {
+  color: #64748b;
+}
+
+.ningyu-weekly-summary__state,
+.ningyu-weekly-summary__text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.ningyu-weekly-summary__state,
+.ningyu-weekly-summary__text {
+  color: rgba(17, 94, 89, 0.68);
+}
+
+.ningyu-weekly-summary__state.is-error {
+  color: #b91c1c;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__state,
+.ningyu-shell.is-night .ningyu-weekly-summary__text {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__state.is-error {
+  color: #fca5a5;
+}
+
+.ningyu-weekly-summary__tags,
+.ningyu-weekly-summary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ningyu-weekly-summary__tags span {
+  padding: 5px 9px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 999px;
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__tags span {
+  border-color: rgba(51, 65, 85, 0.5);
+  color: #cbd5e1;
+}
+
+.ningyu-weekly-summary__actions button {
+  min-height: 30px;
+  padding: 6px 9px;
+  border: 1px solid rgba(153, 246, 228, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(19, 78, 74, 0.82);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.ningyu-shell.is-night .ningyu-weekly-summary__actions button {
+  border-color: rgba(51, 65, 85, 0.5);
+  background: rgba(30, 41, 59, 0.28);
+  color: #e2e8f0;
+}
+
 .ningyu-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 7px;
 }
 
 .ningyu-tags span {
-  padding: 7px 14px;
+  padding: 6px 11px;
   border: 1px solid rgba(153, 246, 228, 0.38);
   border-radius: 999px;
   background: rgba(240, 253, 250, 0.32);
   color: rgba(17, 94, 89, 0.88);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -779,6 +1949,7 @@
   color: rgba(19, 78, 74, 0.92);
   text-align: left;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .ningyu-safety-entry:hover {
@@ -872,23 +2043,154 @@
 .ningyu-safety-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .ningyu-safety-actions button {
-  min-height: 40px;
-  padding: 10px 12px;
+  min-height: 38px;
+  padding: 9px 10px;
   border: 1px solid rgba(153, 246, 228, 0.34);
   border-radius: 14px;
   background: rgba(240, 253, 250, 0.32);
   color: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .ningyu-shell.is-night .ningyu-safety-actions button {
   border-color: rgba(51, 65, 85, 0.52);
   background: rgba(30, 41, 59, 0.44);
+}
+
+.ningyu-safety-guidance {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.38);
+  color: rgba(19, 78, 74, 0.9);
+}
+
+.ningyu-safety-guidance.is-high-risk {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(255, 247, 237, 0.72);
+  color: rgba(127, 29, 29, 0.9);
+}
+
+.ningyu-safety-guidance__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ningyu-safety-guidance__header > span {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(204, 251, 241, 0.72);
+}
+
+.ningyu-safety-guidance.is-high-risk .ningyu-safety-guidance__header > span {
+  background: rgba(254, 226, 226, 0.88);
+}
+
+.ningyu-safety-guidance__header div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ningyu-safety-guidance__header strong,
+.ningyu-safety-guidance__header small {
+  display: block;
+}
+
+.ningyu-safety-guidance__header strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.ningyu-safety-guidance__header small {
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.72;
+}
+
+.ningyu-safety-guidance__steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ningyu-safety-guidance__steps li::marker {
+  font-weight: 800;
+}
+
+.ningyu-trusted-adult {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(45, 212, 191, 0.26);
+  border-radius: 16px;
+  background: rgba(240, 253, 250, 0.3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-safety-guidance.is-high-risk .ningyu-trusted-adult {
+  border-color: rgba(251, 146, 60, 0.28);
+  background: rgba(255, 237, 213, 0.48);
+}
+
+.ningyu-trusted-adult strong,
+.ningyu-trusted-adult span {
+  display: block;
+}
+
+.ningyu-trusted-adult strong {
+  font-size: 12px;
+}
+
+.ningyu-trusted-adult span {
+  opacity: 0.78;
+}
+
+.ningyu-shell.is-night .ningyu-safety-guidance {
+  border-color: rgba(51, 65, 85, 0.58);
+  background: rgba(15, 23, 42, 0.44);
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-safety-guidance.is-high-risk {
+  border-color: rgba(248, 113, 113, 0.36);
+  background: rgba(69, 10, 10, 0.5);
+  color: #fee2e2;
+}
+
+.ningyu-shell.is-night .ningyu-safety-guidance__header > span {
+  background: rgba(15, 23, 42, 0.74);
+}
+
+.ningyu-shell.is-night .ningyu-safety-guidance.is-high-risk .ningyu-safety-guidance__header > span {
+  background: rgba(127, 29, 29, 0.58);
+}
+
+.ningyu-shell.is-night .ningyu-trusted-adult {
+  border-color: rgba(51, 65, 85, 0.54);
+  background: rgba(30, 41, 59, 0.34);
+}
+
+.ningyu-shell.is-night .ningyu-safety-guidance.is-high-risk .ningyu-trusted-adult {
+  border-color: rgba(248, 113, 113, 0.28);
+  background: rgba(127, 29, 29, 0.26);
 }
 
 .ningyu-panel-section.is-open {
@@ -898,13 +2200,14 @@
 
 .ningyu-support-card {
   width: 100%;
-  gap: 12px;
-  min-height: 64px;
-  padding: 12px;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 18px;
   text-align: left;
   color: inherit;
+  pointer-events: auto;
 }
 
 .ningyu-support-card:hover {
@@ -918,9 +2221,9 @@
 }
 
 .ningyu-support-card > .ningyu-icon {
-  width: 34px;
-  height: 34px;
-  padding: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 7px;
   border-radius: 50%;
   background: rgba(224, 242, 254, 0.56);
   color: rgba(2, 132, 199, 0.82);
@@ -930,7 +2233,7 @@
   display: grid;
   gap: 3px;
   color: rgba(19, 78, 74, 0.92);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -950,19 +2253,25 @@
 
 .ningyu-suggestions {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .ningyu-suggestions button {
   width: 100%;
   min-height: auto;
-  padding: 14px;
+  padding: 11px 12px;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 16px;
   background: rgba(240, 253, 250, 0.24);
   color: rgba(19, 78, 74, 0.88);
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.ningyu-suggestions button.is-loading,
+.ningyu-suggestions button:disabled {
+  cursor: progress;
+  opacity: 0.68;
 }
 
 .ningyu-shell.is-night .ningyu-suggestions button {
@@ -970,9 +2279,71 @@
   color: #e2e8f0;
 }
 
+.ningyu-quick-action-feedback {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.26);
+  border-radius: 14px;
+  background: rgba(240, 253, 250, 0.22);
+  color: rgba(17, 94, 89, 0.68);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-quick-action-feedback.is-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(254, 242, 242, 0.42);
+  color: #b91c1c;
+}
+
+.ningyu-quick-action-feedback.is-success {
+  display: grid;
+  gap: 4px;
+  border-color: rgba(52, 211, 153, 0.34);
+  background: rgba(236, 253, 245, 0.38);
+  color: rgba(17, 94, 89, 0.76);
+}
+
+.ningyu-quick-action-feedback strong,
+.ningyu-quick-action-feedback span,
+.ningyu-quick-action-feedback small {
+  display: block;
+}
+
+.ningyu-quick-action-feedback strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ningyu-quick-action-feedback small {
+  color: inherit;
+  opacity: 0.58;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.ningyu-shell.is-night .ningyu-quick-action-feedback {
+  border-color: rgba(51, 65, 85, 0.48);
+  background: rgba(15, 23, 42, 0.26);
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-quick-action-feedback.is-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(69, 10, 10, 0.34);
+  color: #fca5a5;
+}
+
+.ningyu-shell.is-night .ningyu-quick-action-feedback.is-success {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(20, 83, 45, 0.3);
+  color: #bbf7d0;
+}
+
 .ningyu-icon {
   width: 18px;
   height: 18px;
+  display: block;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -1198,5 +2569,46 @@
   .ningyu-chat__input {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .ningyu-chat::before {
+    inset: 14px 10px 10px;
+  }
+
+  .ningyu-chat__inner {
+    padding: 20px 16px;
+    border-radius: 24px;
+  }
+
+  .ningyu-chat__inner::before {
+    left: 14px;
+  }
+
+  .ningyu-welcome {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .ningyu-welcome::before {
+    inset: -12px -10px;
+  }
+
+  .ningyu-welcome p {
+    padding-left: 0;
+    border-left: 0;
+    font-size: 14px;
+    line-height: 1.85;
+  }
+
+  .ningyu-message {
+    max-width: 88%;
+  }
+
+  .ningyu-message__bubble {
+    padding: 13px 16px 14px 18px;
+  }
+
+  .ningyu-message.is-user .ningyu-message__bubble {
+    padding: 13px 18px 14px 16px;
   }
 }

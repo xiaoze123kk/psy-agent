@@ -14,6 +14,8 @@ import type {
   KnowledgeQuizResultResponse,
   KnowledgeQuizSessionResponse,
   KnowledgeSearchResponse,
+  CrisisEventRequest,
+  CrisisEventResponse,
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
@@ -101,6 +103,10 @@ export class CounselingApi {
 
   streamMessage(threadId: string, payload: SendMessageRequest, onEvent: SseEventHandler): Promise<void> {
     return this.client.streamPost<SendMessageRequest>(`/api/v1/chat/threads/${threadId}/stream`, payload, onEvent);
+  }
+
+  createCrisisEvent(payload: CrisisEventRequest): Promise<CrisisEventResponse> {
+    return this.client.post<CrisisEventResponse, CrisisEventRequest>("/api/v1/safety/crisis-events", payload);
   }
 
   listMemories(): Promise<ListMemoriesResponse> {
