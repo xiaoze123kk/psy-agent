@@ -120,7 +120,7 @@ def test_existing_validator_private_severity_helper_remains_stable() -> None:
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py -q
 ```
 
 Expected: FAIL at `test_refactor_helper_modules_are_importable` with an import error for one of the new helper modules.
@@ -240,15 +240,15 @@ Do not delete `_derive_title`, `_derive_tags`, `_freshness_warning`, `_memory_do
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_memory_service.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py::test_existing_memory_similarity_patch_path_remains_stable tests/test_memory_service.py -q
 ```
 
-Expected: PASS. The contract test must prove `app.services.memory_service._content_similarity` is still patchable.
+Expected: PASS. The memory-specific contract test must prove `app.services.memory_service._content_similarity` is still patchable. Do not run the full `test_backend_refactor_contract.py` in this task because it intentionally remains red until all future helper modules exist.
 
 - [ ] **Step 5: Commit memory extraction**
 
 ```powershell
-git add backend/app/services/memory_scoring.py backend/app/services/memory_service.py backend/tests/test_backend_refactor_contract.py
+git add backend/app/services/memory_scoring.py backend/app/services/memory_service.py
 git commit -m "refactor: 拆分记忆评分辅助函数"
 ```
 
@@ -426,15 +426,15 @@ Do not move `graph_runtime = GraphRuntime()` or `settings`. Existing tests patch
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_chat_idempotency.py tests/test_memory.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py::test_existing_chat_service_patch_points_remain_stable tests/test_chat_idempotency.py tests/test_memory.py -q
 ```
 
-Expected: PASS. The contract test must prove `chat_service.graph_runtime` and `chat_service.settings` are still patchable.
+Expected: PASS. The chat-specific contract test must prove `chat_service.graph_runtime` and `chat_service.settings` are still patchable. Do not run the full `test_backend_refactor_contract.py` in this task because it intentionally remains red until all future helper modules exist.
 
 - [ ] **Step 5: Commit chat extraction**
 
 ```powershell
-git add backend/app/services/chat_service.py backend/app/services/chat_streaming.py backend/app/services/chat_turn_lifecycle.py backend/tests/test_backend_refactor_contract.py
+git add backend/app/services/chat_service.py backend/app/services/chat_streaming.py backend/app/services/chat_turn_lifecycle.py
 git commit -m "refactor: 拆分聊天轮次生命周期"
 ```
 
@@ -603,15 +603,15 @@ Delete the moved constants and definitions from `conversation_move_policy.py` af
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_conversation_move_policy.py tests/test_dialogue_prompt_builder.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_conversation_move_policy.py tests/test_dialogue_prompt_builder.py -q
 ```
 
-Expected: PASS. `build_conversation_move_policy` and `default_actions_for_conversation_move_policy` must keep returning the same policy fields and actions as before.
+Expected: PASS. `build_conversation_move_policy` and `default_actions_for_conversation_move_policy` must keep returning the same policy fields and actions as before. Do not run the full `test_backend_refactor_contract.py` in this task because `validator_experience.py` is created in Task 5.
 
 - [ ] **Step 6: Commit conversation policy extraction**
 
 ```powershell
-git add backend/app/services/conversation_move_policy.py backend/app/services/conversation_policy_anchors.py backend/app/services/conversation_policy_adaptation.py backend/app/services/conversation_policy_structure.py backend/tests/test_backend_refactor_contract.py
+git add backend/app/services/conversation_move_policy.py backend/app/services/conversation_policy_anchors.py backend/app/services/conversation_policy_adaptation.py backend/app/services/conversation_policy_structure.py
 git commit -m "refactor: 拆分对话走向策略辅助逻辑"
 ```
 
@@ -733,7 +733,7 @@ Delete the moved constants and definitions from `validator_nodes.py`. Keep `vali
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_conversation_control_rag.py tests/evals/test_conversation_quality.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py tests/test_conversation_control_rag.py tests/evals/test_conversation_quality.py -q
 ```
 
 Expected: PASS. Existing patches targeting `app.graphs.nodes.validator_nodes.deepseek_client.chat` must still work because `deepseek_client` remains in `validator_nodes.py`.
@@ -741,7 +741,7 @@ Expected: PASS. Existing patches targeting `app.graphs.nodes.validator_nodes.dee
 - [ ] **Step 4: Commit validator extraction**
 
 ```powershell
-git add backend/app/graphs/nodes/validator_nodes.py backend/app/graphs/nodes/validator_experience.py backend/tests/test_backend_refactor_contract.py
+git add backend/app/graphs/nodes/validator_nodes.py backend/app/graphs/nodes/validator_experience.py
 git commit -m "refactor: 拆分响应体验校验规则"
 ```
 
@@ -756,7 +756,7 @@ git commit -m "refactor: 拆分响应体验校验规则"
 Run from `backend/`:
 
 ```powershell
-python -m compileall app
+.\.venv\Scripts\python.exe -m compileall app
 ```
 
 Expected: exits with code 0.
@@ -766,13 +766,13 @@ Expected: exits with code 0.
 Run from `backend/`:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_memory_service.py tests/test_memory.py tests/test_chat_idempotency.py tests/test_conversation_move_policy.py tests/test_conversation_control_rag.py tests/test_dialogue_prompt_builder.py tests/test_graph_runtime_streaming.py tests/test_response_memory_continuity.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py tests/test_memory_service.py tests/test_memory.py tests/test_chat_idempotency.py tests/test_conversation_move_policy.py tests/test_conversation_control_rag.py tests/test_dialogue_prompt_builder.py tests/test_graph_runtime_streaming.py tests/test_response_memory_continuity.py -q
 ```
 
 Expected: PASS. If tests requiring local database or external services fail, record the exact failing test names and error messages, then run the pure unit subset:
 
 ```powershell
-python -m pytest tests/test_backend_refactor_contract.py tests/test_memory_service.py tests/test_conversation_move_policy.py tests/test_conversation_control_rag.py tests/test_dialogue_prompt_builder.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_refactor_contract.py tests/test_memory_service.py tests/test_conversation_move_policy.py tests/test_conversation_control_rag.py tests/test_dialogue_prompt_builder.py -q
 ```
 
 Expected: PASS.
