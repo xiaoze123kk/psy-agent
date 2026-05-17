@@ -47,12 +47,16 @@ def test_existing_chat_service_patch_points_remain_stable() -> None:
     class FakeRuntime:
         pass
 
+    class FakeSettings:
+        pass
+
     try:
         fake_runtime = FakeRuntime()
+        fake_settings = FakeSettings()
         chat_service.graph_runtime = fake_runtime
-        chat_service.settings = original_settings
+        chat_service.settings = fake_settings
         assert chat_service.graph_runtime is fake_runtime
-        assert chat_service.settings is original_settings
+        assert chat_service.settings is fake_settings
     finally:
         chat_service.graph_runtime = original_graph_runtime
         chat_service.settings = original_settings
