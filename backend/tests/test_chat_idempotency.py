@@ -382,6 +382,24 @@ class ChatIdempotencyTests(unittest.TestCase):
 
         self.assertEqual(state["user_context_pack"], pack)
 
+    def test_graph_runtime_input_state_includes_temporal_context(self) -> None:
+        runtime = object.__new__(GraphRuntime)
+
+        state = runtime._build_input_state(
+            thread_id="thread-1",
+            user_id="user-1",
+            content="你知道现在几点吗",
+        )
+
+        temporal_context = state["temporal_context"]
+        self.assertEqual(temporal_context["timezone"], "Asia/Wuhan")
+        self.assertRegex(temporal_context["local_date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(temporal_context["local_time"], r"^\d{2}:\d{2}$")
+        self.assertIn(
+            temporal_context["day_period"],
+            {"清晨", "早上", "上午", "中午", "下午", "傍晚", "晚上", "深夜"},
+        )
+
     def test_recent_message_candidates_include_larger_context_window(self) -> None:
         user = self.create_user()
         thread = self.create_thread(user)

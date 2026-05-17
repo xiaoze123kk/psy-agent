@@ -1,5 +1,6 @@
 from app.graphs.main_graph import build_main_graph
 from app.services.graph_trace_service import GraphTraceCollector
+from app.services.temporal_context_service import build_temporal_context
 
 
 def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
@@ -205,6 +206,7 @@ class GraphRuntime:
             "user_profile_digest": user_profile_digest or {},
             "goal_state": goal_state or {},
             "user_context_pack": user_context_pack or {},
+            "temporal_context": build_temporal_context(),
             "memory_mode": memory_mode,
             "crisis_resource_region": crisis_resource_region or "CN",
             "tooling_enabled": True,

@@ -368,6 +368,8 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     structure_style = _compact_text(policy.get("structure_style") or policy.get("structure_mode"), limit=140)
     button_style = _compact_text(policy.get("button_style"), limit=60)
     psychologizing_risk = _compact_text(policy.get("psychologizing_risk"), limit=40)
+    suppressed_recent_anchors = _compact_list(policy.get("suppressed_recent_anchors"), limit=3)
+    stale_anchor_handling = _compact_text(policy.get("stale_anchor_handling"), limit=140)
     correction = policy.get("correction_state")
     correction_type = ""
     if isinstance(correction, dict):
@@ -384,6 +386,12 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     evidence = policy.get("anchor_evidence")
     if isinstance(evidence, dict) and evidence:
         _append_anchor_evidence_lines(lines, evidence)
+    if suppressed_recent_anchors:
+        lines.append(
+            f"- 旧锚点提醒：最近出现过 {'、'.join(suppressed_recent_anchors)}，但用户本轮没有主动提；不要主动带回，除非用户再次提到。"
+        )
+        if stale_anchor_handling:
+            lines.append(f"- 旧锚点处理：{stale_anchor_handling}")
     if anchor_handling or handling:
         detail = handling or anchor_handling
         prefix = f"{anchor_handling}；" if anchor_handling and handling else ""
@@ -405,6 +413,32 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
             lines.append("- 按钮要像用户自己的口吻，可轻松、可纠偏，不要像流程选项。")
         elif button_style == "safety_micro_reply":
             lines.append("- 按钮保持低压安全微回应，不扩展成流程清单。")
+    return "\n".join(lines) + "\n"
+
+
+def _temporal_context_prompt_block(state: AgentState) -> str:
+    context = state.get("temporal_context")
+    if not isinstance(context, dict) or not context:
+        return ""
+
+    local_date = _compact_text(context.get("local_date"), limit=20)
+    local_time = _compact_text(context.get("local_time"), limit=20)
+    timezone_name = _compact_text(context.get("timezone"), limit=40)
+    weekday = _compact_text(context.get("weekday"), limit=20)
+    day_period = _compact_text(context.get("day_period"), limit=20)
+    companion_hint = _compact_text(context.get("companion_hint"), limit=120)
+    if not local_time:
+        return ""
+
+    date_label = f"{local_date} {local_time}".strip()
+    lines = [
+        "当前时间上下文（内部使用，不要暴露字段名）：",
+        f"- 当前本地时间：{date_label}（{timezone_name}，{weekday}，{day_period}）",
+        "- 用户问现在几点或提到早晚时，直接使用这个时间；不要猜时间，不要反问用户在哪。",
+        "- 时间感只轻轻服务陪伴感，不要每轮都问候、报时或养生提醒。",
+    ]
+    if companion_hint:
+        lines.append(f"- 轻陪伴提示：{companion_hint}")
     return "\n".join(lines) + "\n"
 
 
@@ -689,6 +723,7 @@ def build_dialogue_prompt_parts(
     risk_semantic_text = _risk_semantic_prompt_block(state)
     response_ending_text = _response_ending_prompt_block(state)
     conversation_move_text = _conversation_move_policy_prompt_block(state)
+    temporal_context_text = _temporal_context_prompt_block(state)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -707,6 +742,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{temporal_context_text}"
         f"{conversation_move_text}"
         f"{risk_semantic_text}"
         f"{response_ending_text}"

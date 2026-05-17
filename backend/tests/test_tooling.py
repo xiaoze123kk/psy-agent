@@ -421,7 +421,8 @@ class GetCurrentTimeToolTests(unittest.TestCase):
         self.assertIn("timezone", result)
         self.assertIn("weekday", result)
         self.assertIn("session_elapsed_seconds", result)
-        self.assertEqual(result["timezone"], "Asia/Shanghai")
+        self.assertEqual(result["timezone"], "Asia/Wuhan")
+        self.assertIn("day_period", result)
         self.assertIn(result["weekday"], {"星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"})
 
     def test_get_current_time_session_elapsed_starts_at_zero(self) -> None:

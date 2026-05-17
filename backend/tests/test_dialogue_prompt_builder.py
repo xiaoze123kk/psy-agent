@@ -64,6 +64,34 @@ class DialoguePromptBuilderTests(unittest.TestCase):
 
         self.assertNotIn("会话全景", parts.user_prompt)
 
+    def test_prompt_includes_temporal_context_without_guessing_time(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                normalized_text="你知道现在几点了吗",
+                user_text="你知道现在几点了吗",
+                temporal_context={
+                    "local_date": "2026-05-17",
+                    "local_time": "12:30",
+                    "timezone": "Asia/Wuhan",
+                    "weekday": "星期日",
+                    "day_period": "中午",
+                    "companion_hint": "中午可以轻轻提醒吃点东西或歇一下。",
+                },
+            ),
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("当前时间上下文", parts.user_prompt)
+        self.assertIn("2026-05-17 12:30", parts.user_prompt)
+        self.assertIn("Asia/Wuhan", parts.user_prompt)
+        self.assertIn("星期日", parts.user_prompt)
+        self.assertIn("中午", parts.user_prompt)
+        self.assertIn("不要猜时间", parts.user_prompt)
+        self.assertIn("不要反问用户在哪", parts.user_prompt)
+
     def test_prompt_includes_user_profile_digest_block(self) -> None:
         state = self.make_state(
             user_profile_digest={
@@ -406,6 +434,36 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("禁止声称", parts.user_prompt)
         self.assertNotIn("anchor_evidence", parts.user_prompt)
         self.assertNotIn("user_clues", parts.user_prompt)
+
+    def test_prompt_warns_not_to_revive_stale_recent_anchor(self) -> None:
+        state = self.make_state(
+            normalized_text="我感到很生气",
+            user_text="我感到很生气",
+            conversation_move_policy={
+                "conversation_move": "ordinary_chat",
+                "topic_anchor": "none",
+                "anchor_value": "",
+                "anchor_handling": "avoid_psychologizing",
+                "handling": "先回应用户当前说的生气，不把旧锚点带回来。",
+                "suppressed_recent_anchors": ["在轮下"],
+                "stale_anchor_handling": "最近出现过这些锚点，但用户本轮没有主动提；不要主动带回。",
+                "button_style": "user_voice",
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("旧锚点提醒", parts.user_prompt)
+        self.assertIn("在轮下", parts.user_prompt)
+        self.assertIn("用户本轮没有主动提", parts.user_prompt)
+        self.assertIn("不要主动带回", parts.user_prompt)
+        self.assertNotIn("suppressed_recent_anchors", parts.user_prompt)
 
     def test_prompt_renders_light_common_sense_allowed_basis(self) -> None:
         state = self.make_state(

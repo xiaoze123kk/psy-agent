@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
@@ -17,6 +17,7 @@ from app.services.deepseek_client import (
     deepseek_client,
 )
 from app.services.safety_service import build_safety_resources
+from app.services.temporal_context_service import build_temporal_context
 
 
 LOW_RISK_LEVELS = frozenset({"L0", "L1"})
@@ -734,26 +735,18 @@ def _build_safe_web_search_handler(state: Mapping[str, Any], capture: ToolAuditC
 
 
 def _build_get_current_time_handler(capture: ToolAuditCapture) -> ToolHandler:
-    tz_cn = timezone(timedelta(hours=8))
-    _WEEKDAY_NAMES = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
     _session_start: datetime | None = None
 
     def get_current_time(_arguments: dict[str, Any]) -> dict[str, Any]:
         nonlocal _session_start
         now = datetime.now(timezone.utc)
-        local = now.astimezone(tz_cn)
         if _session_start is None:
             _session_start = now
             elapsed = 0.0
         else:
             elapsed = (now - _session_start).total_seconds()
-        result = {
-            "utc_iso": now.isoformat(),
-            "local_iso": local.strftime("%Y-%m-%d %H:%M:%S"),
-            "timezone": "Asia/Shanghai",
-            "weekday": _WEEKDAY_NAMES[local.weekday()],
-            "session_elapsed_seconds": round(elapsed, 1),
-        }
+        result = build_temporal_context(now=now)
+        result["session_elapsed_seconds"] = round(elapsed, 1)
         capture.record_preview(
             "get_current_time",
             status="completed",

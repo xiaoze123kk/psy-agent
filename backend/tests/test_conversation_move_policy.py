@@ -67,6 +67,20 @@ class ConversationMovePolicyTests(unittest.TestCase):
         self.assertEqual(policy["psychologizing_risk"], "high")
         self.assertEqual(policy["button_style"], "user_voice")
 
+    def test_current_anger_is_treated_as_current_feeling_not_ordinary_chat(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我感到很生气",
+                "normalized_text": "我感到很生气",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["topic_anchor"], "none")
+        self.assertNotEqual(policy["conversation_move"], "ordinary_chat")
+        self.assertIn("当下内容", policy["handling"])
+
     def test_post_l2_return_to_jung_topic_does_not_use_safety_micro_reply(self) -> None:
         policy = build_conversation_move_policy(
             {
@@ -219,6 +233,30 @@ class ConversationMovePolicyTests(unittest.TestCase):
         self.assertEqual(policy["topic_anchor"], "literary")
         self.assertEqual(policy["anchor_value"], "在轮下")
         self.assertEqual(policy["button_style"], "topic_continue")
+
+    def test_recent_literary_anchor_is_suppressed_when_user_moves_to_new_feeling(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我感到很生气",
+                "normalized_text": "我感到很生气",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {"role": "user", "content": "在轮下，记得吗"},
+                    {"role": "assistant", "content": "记得，《在轮下》那个锚点很准。"},
+                    {"role": "user", "content": "情绪最近不是很好其实"},
+                    {
+                        "role": "assistant",
+                        "content": "你刚才提到《在轮下》，又说到情绪不好。",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(policy["topic_anchor"], "none")
+        self.assertEqual(policy["anchor_value"], "")
+        self.assertEqual(policy["button_style"], "user_voice")
+        self.assertEqual(policy["suppressed_recent_anchors"], ["在轮下"])
+        self.assertIn("不要主动带回", policy["stale_anchor_handling"])
 
     def test_correction_fallback_buttons_include_nonlisted_person_anchor(self) -> None:
         policy = build_conversation_move_policy(

@@ -22,6 +22,12 @@ DISTRESS_TERMS = (
     "害怕",
     "失眠",
     "压力",
+    "情绪不好",
+    "心情不好",
+    "生气",
+    "愤怒",
+    "火大",
+    "委屈",
     "不想活",
     "想死",
 )
@@ -134,6 +140,18 @@ def _recent_title_mentioned(text: str, messages: Sequence[Mapping[str, Any]]) ->
         if title and title in compact:
             return title
     return ""
+
+
+def _suppressed_recent_anchors(text: str, anchor_type: str, anchor_value: str, messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    if anchor_type != "none" or anchor_value or _is_short_followup(text):
+        return []
+    titles: list[str] = []
+    for title in reversed(_recent_quoted_titles(messages)):
+        if title and title not in titles:
+            titles.append(title)
+        if len(titles) >= 3:
+            break
+    return titles
 
 
 def _common_cultural_anchor(text: str) -> tuple[str, str]:
@@ -495,6 +513,7 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     anchor_evidence = _anchor_evidence(text, anchor_type, anchor_value, messages)
     if anchor_type == "none" and anchor_evidence:
         anchor_type = str(anchor_evidence.get("anchor_type") or anchor_type)
+    suppressed_recent_anchors = _suppressed_recent_anchors(text, anchor_type, anchor_value, messages)
     recent_high_risk = _recent_high_risk_seen(messages)
 
     conversation_move = "soft_invitation"
@@ -564,6 +583,12 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         "anchor_handling": anchor_handling,
         "anchor_evidence": anchor_evidence,
         "cultural_response_mode": anchor_evidence.get("response_mode", ""),
+        "suppressed_recent_anchors": suppressed_recent_anchors,
+        "stale_anchor_handling": (
+            "最近出现过这些锚点，但用户本轮没有主动提；不要主动带回，除非用户再次提到。"
+            if suppressed_recent_anchors
+            else ""
+        ),
         "handling": handling,
         "style_variation": opening_mode,
         "opening_style": f"{opening_mode}，避免复用“听起来/我理解/我听见”式固定开头。",
