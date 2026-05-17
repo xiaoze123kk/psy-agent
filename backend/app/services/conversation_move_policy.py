@@ -90,6 +90,36 @@ COMMON_CULTURAL_ANCHORS = {
     "黑塞": "person",
     "卡夫卡": "person",
 }
+SELF_REFERENCE_TERMS = ("找自己", "自我寻找", "有点像我", "像我", "跟我很像", "和我很像")
+ANALYSIS_BOUNDARY_TERMS = (
+    "别又开始分析我",
+    "别分析我",
+    "别分析",
+    "不要分析我",
+    "不要分析",
+    "别心理分析",
+    "不要心理分析",
+    "别心理化",
+    "不要心理化",
+)
+QUESTION_BOUNDARY_TERMS = (
+    "别一直问",
+    "不要一直问",
+    "别老问",
+    "不要老问",
+    "别追问",
+    "不要追问",
+    "问题太多",
+)
+SAFETY_BOUNDARY_TERMS = ("别问安全", "别一直问安全", "别盘问安全", "不要问安全")
+PAUSE_REQUEST_TERMS = ("就停在这儿", "就停在这里", "停在这儿吧", "停在这里吧", "先停在这", "到这儿吧", "到这里吧")
+ADAPTATION_COUNT_KEYS = (
+    "avoid_analysis_turns",
+    "avoid_questions_turns",
+    "avoid_safety_check_turns",
+    "prefer_direct_anchor_response_turns",
+)
+NEGATIVE_EXPLICIT_FEEDBACK = {"missed", "too_analytic", "too_generic", "too_many_questions"}
 
 
 def _text(state: Mapping[str, Any]) -> str:
@@ -361,6 +391,339 @@ def _correction_type(text: str) -> str:
     return "none"
 
 
+def _matched_terms(text: str, terms: Sequence[str]) -> list[str]:
+    compact = "".join(text.split())
+    result: list[str] = []
+    for term in terms:
+        if not term or term not in compact or any(term in existing for existing in result):
+            continue
+        result = [existing for existing in result if existing not in term]
+        result.append(term)
+    return result
+
+
+def _is_pause_request(text: str) -> bool:
+    return bool(_matched_terms(text, PAUSE_REQUEST_TERMS))
+
+
+def _wants_to_keep_anchor_light(text: str) -> bool:
+    compact = "".join(text.split())
+    return (
+        ("不是想聊" in compact or "不想聊" in compact or "不是要聊" in compact)
+        and ("本身" in compact or "作品" in compact or "情节" in compact)
+    )
+
+
+def _is_cultural_lane_anchor(anchor_type: str) -> bool:
+    return anchor_type in CULTURAL_ANCHOR_TYPES or anchor_type == "metaphor"
+
+
+def _latest_assistant_policy(messages: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+    for message in reversed(messages):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        metadata = message.get("metadata")
+        if isinstance(metadata, Mapping):
+            policy = metadata.get("conversation_move_policy")
+            if isinstance(policy, Mapping):
+                return policy
+        policy = message.get("conversation_move_policy")
+        if isinstance(policy, Mapping):
+            return policy
+    return {}
+
+
+def _quality_user_signal(payload: object) -> Mapping[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    quality_trace = payload.get("conversation_quality_trace")
+    if isinstance(quality_trace, Mapping):
+        user_signal = quality_trace.get("user_signal")
+        if isinstance(user_signal, Mapping):
+            return user_signal
+    trace_summary = payload.get("trace_summary")
+    if isinstance(trace_summary, Mapping):
+        conversation_quality = trace_summary.get("conversation_quality")
+        if isinstance(conversation_quality, Mapping):
+            user_signal = conversation_quality.get("user_signal")
+            if isinstance(user_signal, Mapping):
+                return user_signal
+    return {}
+
+
+def _latest_assistant_explicit_feedback(messages: Sequence[Mapping[str, Any]]) -> str:
+    for message in reversed(messages):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        candidates: list[object] = [message]
+        metadata = message.get("metadata")
+        if isinstance(metadata, Mapping):
+            candidates.insert(0, metadata)
+        for candidate in candidates:
+            feedback = str(_quality_user_signal(candidate).get("explicit_feedback") or "").strip()
+            if feedback:
+                return feedback
+    return "none"
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _adaptation_state_from_recent(
+    messages: Sequence[Mapping[str, Any]],
+    correction_type: str,
+    text: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    previous_policy = _latest_assistant_policy(messages)
+    explicit_feedback = _latest_assistant_explicit_feedback(messages)
+    previous_raw = previous_policy.get("adaptation_state") if isinstance(previous_policy, Mapping) else None
+    previous = previous_raw if isinstance(previous_raw, Mapping) else {}
+    decayed: dict[str, Any] = {
+        key: max(0, _nonnegative_int(previous.get(key)) - 1)
+        for key in ADAPTATION_COUNT_KEYS
+    }
+    decayed["last_correction_type"] = str(previous.get("last_correction_type") or "none")
+
+    notes: list[str] = []
+    source = "recent_assistant_metadata" if previous else "none"
+    if decayed["avoid_questions_turns"] > 0:
+        notes.append("减少问句")
+    if decayed["avoid_analysis_turns"] > 0:
+        notes.append("降低分析深度")
+    if decayed["avoid_safety_check_turns"] > 0:
+        notes.append("减少安全盘问")
+    if decayed["prefer_direct_anchor_response_turns"] > 0:
+        notes.append("优先直接回应用户线索")
+
+    if explicit_feedback in NEGATIVE_EXPLICIT_FEEDBACK:
+        source = "explicit_feedback" if source == "none" else f"{source}+explicit_feedback"
+        decayed["last_correction_type"] = f"feedback_{explicit_feedback}"
+        if explicit_feedback == "too_analytic":
+            decayed["avoid_analysis_turns"] = max(decayed["avoid_analysis_turns"], 3)
+            decayed["prefer_direct_anchor_response_turns"] = max(
+                decayed["prefer_direct_anchor_response_turns"],
+                2,
+            )
+            notes.extend(["根据用户反馈降低分析深度", "优先直接回应用户线索"])
+        elif explicit_feedback == "too_many_questions":
+            decayed["avoid_questions_turns"] = max(decayed["avoid_questions_turns"], 3)
+            notes.append("根据用户反馈减少问句")
+        elif explicit_feedback == "too_generic":
+            decayed["prefer_direct_anchor_response_turns"] = max(
+                decayed["prefer_direct_anchor_response_turns"],
+                2,
+            )
+            notes.append("根据用户反馈更具体地接住本轮线索")
+        elif explicit_feedback == "missed":
+            decayed["prefer_direct_anchor_response_turns"] = max(
+                decayed["prefer_direct_anchor_response_turns"],
+                3,
+            )
+            decayed["avoid_analysis_turns"] = max(decayed["avoid_analysis_turns"], 1)
+            notes.extend(["根据用户反馈重新选择主线", "优先直接回应用户线索"])
+
+    if correction_type == "too_psychological":
+        decayed["avoid_analysis_turns"] = max(decayed["avoid_analysis_turns"], 3)
+        decayed["prefer_direct_anchor_response_turns"] = max(decayed["prefer_direct_anchor_response_turns"], 3)
+        decayed["last_correction_type"] = correction_type
+        notes.extend(["降低分析深度", "优先直接回应用户线索"])
+    elif correction_type == "too_many_questions":
+        decayed["avoid_questions_turns"] = max(decayed["avoid_questions_turns"], 3)
+        decayed["last_correction_type"] = correction_type
+        notes.append("减少问句")
+    elif correction_type == "too_safety_focused":
+        decayed["avoid_safety_check_turns"] = max(decayed["avoid_safety_check_turns"], 2)
+        decayed["avoid_questions_turns"] = max(decayed["avoid_questions_turns"], 1)
+        decayed["last_correction_type"] = correction_type
+        notes.extend(["减少安全盘问", "减少问句"])
+    elif correction_type == "not_that_meaning":
+        decayed["prefer_direct_anchor_response_turns"] = max(decayed["prefer_direct_anchor_response_turns"], 3)
+        decayed["avoid_analysis_turns"] = max(decayed["avoid_analysis_turns"], 1)
+        decayed["last_correction_type"] = correction_type
+        notes.extend(["重新选择主线", "降低分析深度"])
+
+    compact = "".join(text.split())
+    if (
+        _has_any(compact, ("可以分析", "帮我分析", "分析一下", "展开分析"))
+        and not _matched_terms(compact, ANALYSIS_BOUNDARY_TERMS)
+    ):
+        decayed["avoid_analysis_turns"] = 0
+        notes.append("用户允许本轮分析")
+
+    deduped_notes = list(dict.fromkeys(note for note in notes if note))
+    delta = {
+        "source": source,
+        "applied_correction": correction_type if correction_type != "none" else "none",
+        "notes": "；".join(deduped_notes),
+    }
+    return decayed, delta
+
+
+def _intent_lanes_for(
+    text: str,
+    anchor_type: str,
+    anchor_value: str,
+    correction_type: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    lanes: list[dict[str, Any]] = []
+    self_clues = _matched_terms(text, SELF_REFERENCE_TERMS)
+    analysis_boundary_clues = _matched_terms(text, ANALYSIS_BOUNDARY_TERMS)
+    question_boundary_clues = _matched_terms(text, QUESTION_BOUNDARY_TERMS)
+    safety_boundary_clues = _matched_terms(text, SAFETY_BOUNDARY_TERMS)
+    keep_anchor_light = _wants_to_keep_anchor_light(text)
+
+    if _is_cultural_lane_anchor(anchor_type) and anchor_value:
+        priority = "secondary" if self_clues or keep_anchor_light else "primary"
+        handling = "do_not_expand_work_detail" if keep_anchor_light or self_clues else "respond_to_anchor"
+        lanes.append(
+            {
+                "id": f"lane_{len(lanes) + 1}",
+                "kind": "cultural_anchor",
+                "anchor_type": anchor_type,
+                "anchor_value": anchor_value,
+                "priority": priority,
+                "handling": handling,
+            }
+        )
+
+    if self_clues:
+        lanes.append(
+            {
+                "id": f"lane_{len(lanes) + 1}",
+                "kind": "self_reference",
+                "user_clues": self_clues,
+                "priority": "primary",
+                "handling": "respond_to_user_clue",
+            }
+        )
+
+    if analysis_boundary_clues or correction_type == "too_psychological":
+        lanes.append(
+            {
+                "id": f"lane_{len(lanes) + 1}",
+                "kind": "boundary",
+                "user_clues": analysis_boundary_clues,
+                "priority": "blocking_style_constraint",
+                "handling": "lower_analysis_depth",
+            }
+        )
+    if question_boundary_clues or correction_type == "too_many_questions":
+        lanes.append(
+            {
+                "id": f"lane_{len(lanes) + 1}",
+                "kind": "boundary",
+                "user_clues": question_boundary_clues,
+                "priority": "blocking_style_constraint",
+                "handling": "reduce_questions",
+            }
+        )
+    if safety_boundary_clues or correction_type == "too_safety_focused":
+        lanes.append(
+            {
+                "id": f"lane_{len(lanes) + 1}",
+                "kind": "boundary",
+                "user_clues": safety_boundary_clues,
+                "priority": "blocking_style_constraint",
+                "handling": "avoid_safety_check",
+            }
+        )
+
+    primary_lane = "quiet_presence" if _is_pause_request(text) else ""
+    for lane in lanes:
+        if lane.get("priority") == "primary":
+            primary_lane = str(lane.get("kind") or primary_lane)
+            break
+    if not primary_lane:
+        if correction_type != "none":
+            primary_lane = "correction"
+        elif lanes:
+            primary_lane = str(lanes[0].get("kind") or "current_turn")
+        else:
+            primary_lane = "current_turn"
+    return primary_lane, lanes
+
+
+def _voice_contract_for(
+    *,
+    text: str,
+    risk_level: str,
+    conversation_move: str,
+    correction_type: str,
+    anchor_type: str,
+    primary_lane: str,
+    intent_lanes: Sequence[Mapping[str, Any]],
+    adaptation_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    has_blocking_boundary = any(
+        str(lane.get("priority") or "") == "blocking_style_constraint" for lane in intent_lanes
+    )
+    if risk_level in HIGH_RISK_LEVELS:
+        voice_mode = "safety_gentle"
+    elif _is_pause_request(text):
+        voice_mode = "quiet_presence"
+    elif correction_type != "none":
+        voice_mode = "correction_repair"
+    elif primary_lane == "self_reference" or _is_cultural_lane_anchor(anchor_type):
+        voice_mode = "anchored_companion"
+    elif conversation_move == "ordinary_chat":
+        voice_mode = "ordinary_chat"
+    else:
+        voice_mode = "quiet_presence" if len("".join(text.split())) <= 12 else "anchored_companion"
+
+    analysis_depth = "light"
+    if voice_mode in {"quiet_presence", "safety_gentle"}:
+        analysis_depth = "none"
+    elif voice_mode == "ordinary_chat":
+        analysis_depth = "none"
+    elif correction_type == "too_psychological" or adaptation_state.get("avoid_analysis_turns", 0) > 0:
+        analysis_depth = "none"
+    elif has_blocking_boundary:
+        analysis_depth = "none"
+
+    question_budget = 1
+    if voice_mode == "quiet_presence" or has_blocking_boundary:
+        question_budget = 0
+    if adaptation_state.get("avoid_questions_turns", 0) > 0:
+        question_budget = 0
+    if correction_type in {"too_many_questions", "too_psychological"}:
+        question_budget = 0
+    if risk_level in HIGH_RISK_LEVELS:
+        question_budget = 1
+
+    sentence_budget = "2-4"
+    if voice_mode == "quiet_presence":
+        sentence_budget = "1-2"
+    elif voice_mode == "safety_gentle":
+        sentence_budget = "1-3"
+    elif conversation_move == "ordinary_chat":
+        sentence_budget = "1-3"
+
+    opening_preference = "direct"
+    if voice_mode in {"ordinary_chat", "quiet_presence", "correction_repair"}:
+        opening_preference = "no_preface"
+    elif primary_lane in {"self_reference", "cultural_anchor"}:
+        opening_preference = "echo_user_words"
+
+    closing_preference = "soft_invitation" if question_budget > 0 else "pause"
+    if voice_mode == "safety_gentle":
+        closing_preference = "micro_action"
+
+    return {
+        "voice_mode": voice_mode,
+        "analysis_depth": analysis_depth,
+        "question_budget": question_budget,
+        "sentence_budget": sentence_budget,
+        "opening_preference": opening_preference,
+        "closing_preference": closing_preference,
+        "humor_allowed": voice_mode == "ordinary_chat",
+        "avoid_patterns": ["听起来你", "这说明你", "你可能是在"],
+    }
+
+
 def _recent_assistant_opening_mode(messages: Sequence[Mapping[str, Any]]) -> str:
     for message in reversed(messages):
         if str(message.get("role") or "") != "assistant":
@@ -515,6 +878,8 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         anchor_type = str(anchor_evidence.get("anchor_type") or anchor_type)
     suppressed_recent_anchors = _suppressed_recent_anchors(text, anchor_type, anchor_value, messages)
     recent_high_risk = _recent_high_risk_seen(messages)
+    adaptation_state, adaptation_state_delta = _adaptation_state_from_recent(messages, correction_type, text)
+    primary_lane, intent_lanes = _intent_lanes_for(text, anchor_type, anchor_value, correction_type)
 
     conversation_move = "soft_invitation"
     button_style = "user_voice"
@@ -528,6 +893,12 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         psychologizing_risk = "low"
         anchor_handling = "treat_as_topic"
         handling = "安全策略优先；只做一个低压小动作，不展开深层分析。"
+    elif _is_pause_request(text):
+        conversation_move = "soft_invitation"
+        button_style = "user_voice"
+        psychologizing_risk = "low"
+        anchor_handling = "avoid_psychologizing"
+        handling = "尊重用户想停在这里的边界，安静收住；不总结、不分析、不追问。"
     elif correction_type != "none":
         conversation_move = "correction_followup"
         button_style = "user_voice"
@@ -575,9 +946,24 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         opening_mode = "echo_anchor"
 
     structure_mode, avoid_structure = _structure_mode_for(conversation_move, text, messages)
+    voice_contract = _voice_contract_for(
+        text=text,
+        risk_level=risk_level,
+        conversation_move=conversation_move,
+        correction_type=correction_type,
+        anchor_type=anchor_type,
+        primary_lane=primary_lane,
+        intent_lanes=intent_lanes,
+        adaptation_state=adaptation_state,
+    )
 
     return {
         "conversation_move": conversation_move,
+        "intent_lanes": intent_lanes,
+        "primary_lane": primary_lane,
+        "ningyu_voice_contract": voice_contract,
+        "adaptation_state": adaptation_state,
+        "adaptation_state_delta": adaptation_state_delta,
         "topic_anchor": anchor_type,
         "anchor_value": anchor_value,
         "anchor_handling": anchor_handling,

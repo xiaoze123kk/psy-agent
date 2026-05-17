@@ -20,6 +20,7 @@ from app.graphs.nodes import classify_risk_text, control_plane
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
+from app.services.conversation_quality_service import infer_next_turn_signal
 from app.services.memory_job_service import build_memory_job_payload, enqueue_memory_job, notify_memory_jobs
 from app.services.memory_service import (
     build_memory_index,
@@ -320,6 +321,65 @@ def _request_hash(payload: SendMessageRequest) -> str:
 
 def _json_safe(value: object) -> object:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _dict_copy(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _set_quality_next_turn_signal(payload: dict | None, signal: str) -> dict:
+    updated = _dict_copy(payload)
+
+    quality_trace = _dict_copy(updated.get("conversation_quality_trace"))
+    quality_user_signal = _dict_copy(quality_trace.get("user_signal"))
+    quality_user_signal["next_turn_signal"] = signal
+    quality_trace["user_signal"] = quality_user_signal
+    updated["conversation_quality_trace"] = quality_trace
+
+    trace_summary = _dict_copy(updated.get("trace_summary"))
+    summary_quality = _dict_copy(trace_summary.get("conversation_quality"))
+    summary_user_signal = _dict_copy(summary_quality.get("user_signal"))
+    summary_user_signal["next_turn_signal"] = signal
+    summary_quality["user_signal"] = summary_user_signal
+    trace_summary["conversation_quality"] = summary_quality
+    updated["trace_summary"] = trace_summary
+
+    return updated
+
+
+def _backfill_previous_turn_next_signal(
+    db: Session,
+    *,
+    user: User,
+    thread: ConversationThread,
+    current_turn: ConversationTurn,
+    current_user_text: str,
+) -> None:
+    signal = infer_next_turn_signal(current_user_text)
+    if signal == "unknown":
+        return
+
+    previous_turn = db.scalar(
+        select(ConversationTurn)
+        .where(
+            ConversationTurn.user_id == user.id,
+            ConversationTurn.thread_id == thread.id,
+            ConversationTurn.id != current_turn.id,
+            ConversationTurn.turn_status == "completed",
+        )
+        .order_by(desc(ConversationTurn.created_at))
+        .limit(1)
+    )
+    if previous_turn is None:
+        return
+
+    previous_turn.response_snapshot = _set_quality_next_turn_signal(previous_turn.response_snapshot, signal)
+    previous_turn.updated_at = utcnow()
+
+    if previous_turn.assistant_message_id:
+        assistant_message = db.get(Message, previous_turn.assistant_message_id)
+        if assistant_message is not None and assistant_message.user_id == user.id and assistant_message.thread_id == thread.id:
+            assistant_message.meta = _set_quality_next_turn_signal(assistant_message.meta, signal)
 
 
 def _pop_graph_trace(assistant_result: dict[str, object]) -> list[dict[str, object]]:
@@ -669,6 +729,7 @@ async def _persist_turn_result(
         "risk_phase": assistant_result.get("risk_phase", ""),
         "risk_response_policy": assistant_result.get("risk_response_policy", {}),
         "conversation_move_policy": assistant_result.get("conversation_move_policy", {}),
+        "conversation_quality_trace": assistant_result.get("conversation_quality_trace", {}),
         "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
         "safety_context_summary": assistant_result.get("safety_context_pack", {}),
         "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),
@@ -811,6 +872,13 @@ async def process_message_turn(
             return _replay_turn_result(db, claim.turn)
 
         user_message = _create_user_message(db, user=user, thread=thread, payload=payload, turn=claim.turn)
+        _backfill_previous_turn_next_signal(
+            db,
+            user=user,
+            thread=thread,
+            current_turn=claim.turn,
+            current_user_text=payload.content,
+        )
         context = await _prepare_turn_context(
             db,
             user=user,
@@ -880,6 +948,13 @@ async def process_message_turn_stream(
             return
 
         user_message = _create_user_message(db, user=user, thread=thread, payload=payload, turn=claim.turn)
+        _backfill_previous_turn_next_signal(
+            db,
+            user=user,
+            thread=thread,
+            current_turn=claim.turn,
+            current_user_text=payload.content,
+        )
         context = await _prepare_turn_context(
             db,
             user=user,

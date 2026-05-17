@@ -258,6 +258,150 @@ class ConversationMovePolicyTests(unittest.TestCase):
         self.assertEqual(policy["suppressed_recent_anchors"], ["在轮下"])
         self.assertIn("不要主动带回", policy["stale_anchor_handling"])
 
+    def test_multilane_input_marks_primary_secondary_and_blocking_boundary(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+                "normalized_text": "我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["primary_lane"], "self_reference")
+        lanes = policy["intent_lanes"]
+        self.assertTrue(
+            any(
+                lane["kind"] == "cultural_anchor"
+                and lane["anchor_value"] == "德米安"
+                and lane["priority"] == "secondary"
+                and lane["handling"] == "do_not_expand_work_detail"
+                for lane in lanes
+            )
+        )
+        self.assertTrue(
+            any(
+                lane["kind"] == "self_reference"
+                and lane["priority"] == "primary"
+                and "找自己" in lane["user_clues"]
+                for lane in lanes
+            )
+        )
+        self.assertTrue(
+            any(
+                lane["kind"] == "boundary"
+                and lane["priority"] == "blocking_style_constraint"
+                and lane["handling"] == "lower_analysis_depth"
+                for lane in lanes
+            )
+        )
+
+    def test_voice_contract_quiet_presence_stops_without_question(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "嗯，就停在这儿吧。",
+                "normalized_text": "嗯，就停在这儿吧。",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        contract = policy["ningyu_voice_contract"]
+
+        self.assertEqual(contract["voice_mode"], "quiet_presence")
+        self.assertEqual(contract["question_budget"], 0)
+        self.assertEqual(contract["sentence_budget"], "1-2")
+        self.assertEqual(contract["closing_preference"], "pause")
+
+    def test_recent_question_correction_decays_into_short_term_adaptation(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我只是觉得今天有点空。",
+                "normalized_text": "我只是觉得今天有点空。",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {"role": "user", "content": "别一直问我问题。"},
+                    {
+                        "role": "assistant",
+                        "content": "行，我先不追问。",
+                        "metadata": {
+                            "conversation_move_policy": {
+                                "adaptation_state": {
+                                    "avoid_questions_turns": 2,
+                                    "avoid_analysis_turns": 0,
+                                    "avoid_safety_check_turns": 0,
+                                    "prefer_direct_anchor_response_turns": 0,
+                                    "last_correction_type": "too_many_questions",
+                                }
+                            }
+                        },
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(policy["adaptation_state"]["avoid_questions_turns"], 1)
+        self.assertEqual(policy["ningyu_voice_contract"]["question_budget"], 0)
+        self.assertIn("减少问句", policy["adaptation_state_delta"]["notes"])
+
+    def test_negative_explicit_feedback_applies_short_term_adaptation(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "just stay with this a bit",
+                "normalized_text": "just stay with this a bit",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {
+                        "role": "assistant",
+                        "content": "previous assistant reply",
+                        "metadata": {
+                            "conversation_quality_trace": {
+                                "user_signal": {
+                                    "explicit_feedback": "too_analytic",
+                                    "next_turn_signal": "unknown",
+                                }
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(policy["adaptation_state"]["avoid_analysis_turns"], 3)
+        self.assertEqual(policy["adaptation_state"]["prefer_direct_anchor_response_turns"], 2)
+        self.assertEqual(policy["adaptation_state"]["last_correction_type"], "feedback_too_analytic")
+        self.assertEqual(policy["ningyu_voice_contract"]["analysis_depth"], "none")
+        self.assertEqual(policy["adaptation_state_delta"]["source"], "explicit_feedback")
+
+    def test_too_many_questions_feedback_reduces_next_turn_question_budget(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "I felt empty today",
+                "normalized_text": "I felt empty today",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {
+                        "role": "assistant",
+                        "content": "previous assistant reply?",
+                        "metadata": {
+                            "trace_summary": {
+                                "conversation_quality": {
+                                    "user_signal": {
+                                        "explicit_feedback": "too_many_questions",
+                                        "next_turn_signal": "unknown",
+                                    }
+                                }
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(policy["adaptation_state"]["avoid_questions_turns"], 3)
+        self.assertEqual(policy["ningyu_voice_contract"]["question_budget"], 0)
+        self.assertEqual(policy["adaptation_state"]["last_correction_type"], "feedback_too_many_questions")
+
     def test_correction_fallback_buttons_include_nonlisted_person_anchor(self) -> None:
         policy = build_conversation_move_policy(
             {

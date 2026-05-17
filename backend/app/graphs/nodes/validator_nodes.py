@@ -4,6 +4,7 @@ import logging
 import re
 
 from app.graphs.nodes.common import AgentState, memory_context, parse_actions_reply
+from app.services.conversation_quality_service import build_conversation_quality_trace
 from app.services.deepseek_client import deepseek_client
 from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 
@@ -64,6 +65,10 @@ EXPERIENCE_REASON_SEVERITY = {
     "shallow_anchor_echo": "warning",
     "missed_user_cultural_clue": "warning",
     "reused_reply_structure": "warning",
+    "missed_primary_lane": "warning",
+    "expanded_forbidden_lane": "warning",
+    "violated_voice_contract": "warning",
+    "failed_short_term_adaptation": "block",
 }
 PSYCHOLOGIZING_TERMS = (
     "回避创伤",
@@ -185,6 +190,16 @@ def _contains_safety_question(text: str) -> bool:
 def _conversation_policy(state: AgentState) -> dict:
     policy = state.get("conversation_move_policy")
     return dict(policy) if isinstance(policy, dict) else {}
+
+
+def _policy_voice_contract(policy: dict) -> dict:
+    contract = policy.get("ningyu_voice_contract")
+    return dict(contract) if isinstance(contract, dict) else {}
+
+
+def _policy_adaptation_state(policy: dict) -> dict:
+    adaptation = policy.get("adaptation_state")
+    return dict(adaptation) if isinstance(adaptation, dict) else {}
 
 
 def _policy_topic_anchor(policy: dict) -> str:
@@ -372,6 +387,113 @@ def _cultural_clue_in_text(clue: str, text: str) -> bool:
     return any(alias and alias in text for alias in aliases)
 
 
+def _lane_user_clues(lane: dict) -> list[str]:
+    clues = lane.get("user_clues")
+    if not isinstance(clues, list):
+        return []
+    return [str(clue).strip() for clue in clues if str(clue or "").strip()]
+
+
+def _lane_anchor_terms(lane: dict) -> list[str]:
+    terms: list[str] = []
+    for key in ("anchor_value", "topic_anchor_value"):
+        value = str(lane.get(key) or "").strip()
+        if value:
+            terms.append(value)
+    return terms
+
+
+def _primary_lane_missed(text: str, policy: dict) -> bool:
+    lanes = policy.get("intent_lanes")
+    if not isinstance(lanes, list):
+        return False
+    primary_lanes = [lane for lane in lanes if isinstance(lane, dict) and str(lane.get("priority") or "") == "primary"]
+    for lane in primary_lanes:
+        clues = _lane_user_clues(lane)
+        if clues and not any(_cultural_clue_in_text(clue, text) for clue in clues):
+            return True
+        anchor_terms = _lane_anchor_terms(lane)
+        if anchor_terms and not any(term in text for term in anchor_terms):
+            return True
+    return False
+
+
+def _expanded_forbidden_lane(text: str, state: AgentState, policy: dict) -> bool:
+    lanes = policy.get("intent_lanes")
+    if not isinstance(lanes, list):
+        return False
+    user_text = str(state.get("normalized_text") or state.get("user_text") or "")
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        handling = str(lane.get("handling") or "")
+        priority = str(lane.get("priority") or "")
+        if not handling.startswith("do_not_") and priority != "blocking_style_constraint":
+            continue
+        if handling == "do_not_expand_work_detail":
+            forbidden_terms = tuple(
+                dict.fromkeys(term for terms in CULTURAL_FORBIDDEN_CLAIM_TERMS.values() for term in terms)
+            )
+            if any(term in text and term not in user_text for term in forbidden_terms):
+                return True
+        if handling in {"lower_analysis_depth", "do_not_analyze_user"} and any(
+            term in text for term in PSYCHOLOGIZING_TERMS
+        ):
+            return True
+    return False
+
+
+def _sentence_count(text: str) -> int:
+    parts = [part.strip() for part in re.split(r"[。！？!?；;\n]+", text) if part.strip()]
+    return len(parts)
+
+
+def _sentence_budget_max(value: object) -> int | None:
+    match = re.search(r"(\d+)\s*-\s*(\d+)", str(value or ""))
+    if match:
+        return int(match.group(2))
+    if str(value or "").isdigit():
+        return int(str(value))
+    return None
+
+
+def _violated_voice_contract(text: str, policy: dict) -> bool:
+    contract = _policy_voice_contract(policy)
+    if not contract:
+        return False
+    question_count = _question_count(text)
+    question_budget = contract.get("question_budget")
+    if question_budget is not None and question_count > _int_or_default(question_budget, 1):
+        return True
+    if str(contract.get("closing_preference") or "") == "no_question" and _ends_with_question(text):
+        return True
+    sentence_max = _sentence_budget_max(contract.get("sentence_budget"))
+    if sentence_max is not None and _sentence_count(text) > sentence_max:
+        return True
+    analysis_depth = str(contract.get("analysis_depth") or "")
+    if analysis_depth == "none" and any(term in text for term in PSYCHOLOGIZING_TERMS):
+        return True
+    return False
+
+
+def _failed_short_term_adaptation(text: str, policy: dict) -> bool:
+    adaptation = _policy_adaptation_state(policy)
+    if not adaptation:
+        return False
+    if _int_or_default(adaptation.get("avoid_questions_turns"), 0) > 0 and _question_count(text) > 0:
+        return True
+    if _int_or_default(adaptation.get("avoid_analysis_turns"), 0) > 0:
+        analysis_terms = PSYCHOLOGIZING_TERMS + ("分析", "解释你", "说明你")
+        if any(term in text for term in analysis_terms):
+            return True
+    if _int_or_default(adaptation.get("avoid_safety_check_turns"), 0) > 0 and _contains_safety_question(text):
+        return True
+    if _int_or_default(adaptation.get("prefer_direct_anchor_response_turns"), 0) > 0:
+        if any(text.strip().startswith(opening) for opening in FORMULAIC_OPENINGS):
+            return True
+    return False
+
+
 def _missed_user_cultural_clue(text: str, evidence: dict) -> bool:
     clues = _evidence_user_clues(evidence)
     return bool(clues) and not any(_cultural_clue_in_text(clue, text) for clue in clues)
@@ -442,6 +564,14 @@ def _conversation_experience_reasons(text: str, actions: list[str], state: Agent
         reasons.append("missed_user_cultural_clue")
     if _shallow_anchor_echo(text, evidence):
         reasons.append("shallow_anchor_echo")
+    if _primary_lane_missed(text, policy):
+        reasons.append("missed_primary_lane")
+    if _expanded_forbidden_lane(text, state, policy):
+        reasons.append("expanded_forbidden_lane")
+    if _violated_voice_contract(text, policy):
+        reasons.append("violated_voice_contract")
+    if _failed_short_term_adaptation(text, policy):
+        reasons.append("failed_short_term_adaptation")
 
     return sorted(set(reasons))
 
@@ -517,6 +647,30 @@ def _validator_severity(*, delivery_status: str, blocked: bool, experience_reaso
     return "passed"
 
 
+def _quality_trace_for_result(state: AgentState, result: AgentState) -> dict[str, object]:
+    audit_tags = [str(tag) for tag in result.get("audit_tags", []) if str(tag or "").strip()]
+    severity = str(result.get("validator_severity") or "passed")
+    regeneration_attempted = bool(result.get("validator_blocked")) or severity == "repaired"
+    return build_conversation_quality_trace(
+        assistant_text=str(result.get("assistant_text", state.get("assistant_text", "")) or ""),
+        suggested_actions=[
+            str(action) for action in result.get("suggested_actions", state.get("suggested_actions", []))
+        ],
+        conversation_move_policy=_conversation_policy(state),
+        risk_level=str(result.get("risk_level", state.get("risk_level", "L0")) or "L0"),
+        validator_severity=severity,
+        validator_reasons=[str(reason) for reason in result.get("validator_reasons", [])],
+        experience_validator_reasons=[str(reason) for reason in result.get("experience_validator_reasons", [])],
+        regeneration_attempted=regeneration_attempted,
+        audit_tags=audit_tags,
+    )
+
+
+def _with_quality_trace(state: AgentState, result: AgentState) -> AgentState:
+    result["conversation_quality_trace"] = _quality_trace_for_result(state, result)
+    return result
+
+
 def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[str]) -> str:
     labels = set(blocked_reasons) | set(experience_reasons)
     lines: list[str] = []
@@ -540,6 +694,14 @@ def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[
         lines.append("- shallow_anchor_echo：不要只复读锚点名，要回应用户给出的主题或画面。")
     if "missed_user_cultural_clue" in labels:
         lines.append("- missed_user_cultural_clue：回复里要出现用户给出的文化线索，而不只是作品名或人物名。")
+    if "missed_primary_lane" in labels:
+        lines.append("- missed_primary_lane：先回应本轮主线，不要被次要锚点或泛化解释带走。")
+    if "expanded_forbidden_lane" in labels:
+        lines.append("- expanded_forbidden_lane：用户标成不要展开的线只轻触，不补作品细节、心理解释或额外分析。")
+    if "violated_voice_contract" in labels:
+        lines.append("- violated_voice_contract：按本轮声线契约控制问句数、句数和分析深度。")
+    if "failed_short_term_adaptation" in labels:
+        lines.append("- failed_short_term_adaptation：用户近期已经纠正过同类问题，本轮必须改变，不继续追问、分析或安全盘问。")
     if "generic_buttons" in labels:
         lines.append("- generic_buttons：按钮要像用户下一句会说的话，不要写内部策略词或泛化按钮。")
     if "reused_formulaic_opening" in labels:
@@ -630,7 +792,7 @@ async def _regenerate_reply_with_model(
         )
 
     audit_tag = "validator_regenerated" if blocked else "empty_safety_regenerated"
-    return {
+    result: AgentState = {
         "assistant_text": assistant_text,
         "suggested_actions": actions,
         "validator_blocked": blocked,
@@ -647,6 +809,7 @@ async def _regenerate_reply_with_model(
         "retryable": False,
         "audit_tags": (state.get("audit_tags", []) or []) + [audit_tag],
     }
+    return _with_quality_trace(state, result)
 
 
 def is_safety_delivery_path(state: AgentState) -> bool:
@@ -680,7 +843,7 @@ def failed_no_reply_validation_result(
     reasons: list[str],
     experience_reasons: list[str] | None = None,
 ) -> AgentState:
-    return {
+    result: AgentState = {
         "assistant_text": "",
         "suggested_actions": [],
         "session_summary": "",
@@ -702,6 +865,7 @@ def failed_no_reply_validation_result(
         "retryable": True,
         "audit_tags": (state.get("audit_tags", []) or []) + ["failed_no_reply"],
     }
+    return _with_quality_trace(state, result)
 
 
 async def response_validator(state: AgentState) -> AgentState:
@@ -738,7 +902,7 @@ async def response_validator(state: AgentState) -> AgentState:
 
     if not reasons:
         audit_tag = "validator_passed_with_warnings" if experience_reasons else "validator_passed"
-        return {
+        result: AgentState = {
             "validator_blocked": False,
             "validator_reasons": [],
             "experience_validator_reasons": experience_reasons,
@@ -754,6 +918,7 @@ async def response_validator(state: AgentState) -> AgentState:
             "retryable": False,
             "audit_tags": (state.get("audit_tags", []) or []) + [audit_tag],
         }
+        return _with_quality_trace(state, result)
 
     reason = "validator_blocked:" + ",".join(reasons)
     if not is_safety_delivery_path(state):

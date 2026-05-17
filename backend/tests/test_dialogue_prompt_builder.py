@@ -465,6 +465,82 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("不要主动带回", parts.user_prompt)
         self.assertNotIn("suppressed_recent_anchors", parts.user_prompt)
 
+    def test_prompt_renders_intent_lanes_voice_contract_and_adaptation_naturally(self) -> None:
+        state = self.make_state(
+            normalized_text="我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+            user_text="我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "primary_lane": "self_reference",
+                "intent_lanes": [
+                    {
+                        "id": "lane_1",
+                        "kind": "cultural_anchor",
+                        "anchor_type": "literary",
+                        "anchor_value": "德米安",
+                        "priority": "secondary",
+                        "handling": "do_not_expand_work_detail",
+                    },
+                    {
+                        "id": "lane_2",
+                        "kind": "self_reference",
+                        "user_clues": ["找自己", "有点像我"],
+                        "priority": "primary",
+                        "handling": "respond_to_user_clue",
+                    },
+                    {
+                        "id": "lane_3",
+                        "kind": "boundary",
+                        "user_clues": ["别又开始分析我"],
+                        "priority": "blocking_style_constraint",
+                        "handling": "lower_analysis_depth",
+                    },
+                ],
+                "ningyu_voice_contract": {
+                    "voice_mode": "anchored_companion",
+                    "analysis_depth": "none",
+                    "question_budget": 0,
+                    "sentence_budget": "2-4",
+                    "opening_preference": "echo_user_words",
+                    "closing_preference": "pause",
+                    "humor_allowed": False,
+                    "avoid_patterns": ["听起来你", "这说明你", "你可能是在"],
+                },
+                "adaptation_state": {
+                    "avoid_analysis_turns": 2,
+                    "avoid_questions_turns": 0,
+                    "avoid_safety_check_turns": 0,
+                    "prefer_direct_anchor_response_turns": 2,
+                    "last_correction_type": "too_psychological",
+                },
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("本轮主线", parts.user_prompt)
+        self.assertIn("找自己", parts.user_prompt)
+        self.assertIn("可轻触的线", parts.user_prompt)
+        self.assertIn("德米安", parts.user_prompt)
+        self.assertIn("不要展开", parts.user_prompt)
+        self.assertIn("不要补作品情节", parts.user_prompt)
+        self.assertIn("宁语声线", parts.user_prompt)
+        self.assertIn("2-4 句", parts.user_prompt)
+        self.assertIn("最多 0 个问题", parts.user_prompt)
+        self.assertIn("短期适配", parts.user_prompt)
+        self.assertIn("降低分析深度", parts.user_prompt)
+        self.assertNotIn("intent_lanes", parts.user_prompt)
+        self.assertNotIn("ningyu_voice_contract", parts.user_prompt)
+        self.assertNotIn("adaptation_state", parts.user_prompt)
+
     def test_prompt_renders_light_common_sense_allowed_basis(self) -> None:
         state = self.make_state(
             normalized_text="荣格",

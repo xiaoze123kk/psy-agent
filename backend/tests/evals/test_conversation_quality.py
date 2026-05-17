@@ -96,6 +96,16 @@ ADVICE_TERMS = (
 )
 GENTLE_NEXT_STEP_TERMS = ("可以", "先", "试试", "慢慢", "一起", "缓", "呼气", "踩稳", "整理")
 TRIVIAL_PATHOLOGIZING_TERMS = ("深层创伤", "原生家庭", "系统治疗", "症状", "治疗", "障碍", "病理", "回避创伤")
+DIRECT_PSYCHOLOGIZING_TERMS = (
+    "心理防御",
+    "投射",
+    "压抑",
+    "逃避",
+    "创伤",
+    "病理",
+    "潜意识",
+    "深层原因",
+)
 GENERIC_BUTTON_TERMS = ("继续陪我", "帮我分析", "给我建议", "继续说", "分析一下", "给建议")
 CULTURAL_FABRICATION_TERMS = (
     "哈里·哈勒",
@@ -447,6 +457,15 @@ def quality_report(
             soft_failures.append("missing_anchor")
     if "no_premature_advice" in must and _advice_before_reflection(case, text):
         soft_failures.append("premature_advice")
+    if "no_questions" in must and question_count(text) > 0:
+        soft_failures.append("too_many_questions")
+    if "quiet_presence_stop" in must:
+        if question_count(text) > 0 or len(compact(text)) > 90 or has_any(text, ADVICE_TERMS):
+            soft_failures.append("violated_voice_contract")
+    if "no_direct_psych_analysis" in must and has_any(text, DIRECT_PSYCHOLOGIZING_TERMS):
+        soft_failures.append("over_psychologizing")
+    if "no_forbidden_lane_expansion" in must and has_any(text, CULTURAL_FABRICATION_TERMS):
+        soft_failures.append("expanded_forbidden_lane")
     if "gentle_next_step" in must and not has_any(text, GENTLE_NEXT_STEP_TERMS):
         soft_failures.append("missing_gentle_next_step")
     if "trivial_lightness" in must and has_any(text, TRIVIAL_PATHOLOGIZING_TERMS):

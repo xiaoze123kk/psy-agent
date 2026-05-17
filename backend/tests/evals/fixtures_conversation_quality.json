@@ -47,6 +47,78 @@
     "expected_negative_failures": ["unnecessary_question_ending"]
   },
   {
+    "id": "multi_lane_demian_self_reference_no_analysis",
+    "category": "multi_lane_input",
+    "user_mode": "adult",
+    "intent": "vent",
+    "user_text": "我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+    "recent_messages": [],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "“找自己”这几个字放到你这里，好像重点不是《德米安》本身，而是那种“有点像我”的辨认感。我先不分析你，也不展开书，只停在这个线索上：你是在碰到某个更像自己的声音。",
+    "negative_response": "《德米安》的主角和剧情体现了心理投射，你可能是在压抑真实自我、逃避成长，所以才会觉得它像你。",
+    "must": [
+      "anchor_user_words",
+      "cultural_user_clue_used",
+      "no_fabricated_cultural_claim",
+      "no_forbidden_lane_expansion",
+      "no_direct_psych_analysis",
+      "no_questions"
+    ],
+    "must_not": ["主角", "剧情", "心理投射", "压抑", "逃避"],
+    "anchors": ["找自己", "像我"],
+    "min_score": 0.85,
+    "expected_negative_failures": [
+      "must_not_term",
+      "fabricated_cultural_claim",
+      "expanded_forbidden_lane",
+      "over_psychologizing"
+    ]
+  },
+  {
+    "id": "quiet_presence_stop_without_question",
+    "category": "voice_contract",
+    "user_mode": "adult",
+    "intent": "other",
+    "user_text": "嗯，就停在这儿吧。",
+    "recent_messages": [],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "好，就停在这里。你不用再往下解释了。",
+    "negative_response": "我来总结一下，你现在可能在回避继续探索这件事的深层原因。你愿意说说为什么想停在这里吗？",
+    "must": ["quiet_presence_stop", "no_questions", "no_direct_psych_analysis"],
+    "must_not": ["深层原因", "为什么想停"],
+    "anchors": ["停在这儿"],
+    "min_score": 0.85,
+    "expected_negative_failures": ["must_not_term", "too_many_questions", "violated_voice_contract", "over_psychologizing"]
+  },
+  {
+    "id": "question_correction_cooldown_no_followup_question",
+    "category": "short_term_adaptation",
+    "user_mode": "adult",
+    "intent": "vent",
+    "user_text": "我只是觉得今天有点空。",
+    "recent_messages": [
+      {
+        "role": "user",
+        "content": "别一直问我问题。"
+      },
+      {
+        "role": "assistant",
+        "content": "好，我先不追问，就陪你停一下。"
+      }
+    ],
+    "retrieved_memories": [],
+    "retrieved_counseling_examples": [],
+    "positive_response": "今天这个“空”听上去像是心里一下安静下来，也有点没着落。我先不追问，就陪你把这点空放在这里。",
+    "negative_response": "这种空是从什么时候开始的？它更像孤独还是迷茫？你愿意具体说说发生了什么吗？",
+    "must": ["anchor_user_words", "no_questions", "no_direct_psych_analysis"],
+    "must_not": ["从什么时候开始", "具体说说"],
+    "anchors": ["空"],
+    "min_score": 0.85,
+    "expected_negative_failures": ["must_not_term", "too_many_questions"]
+  },
+  {
     "id": "soothe_anxiety_without_medicalizing",
     "category": "soothing",
     "user_mode": "adult",

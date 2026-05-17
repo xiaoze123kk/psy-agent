@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.graphs.nodes import rag_nodes
+from app.graphs.nodes import rag_nodes, validator_nodes
 from app.graphs.nodes.control_nodes import control_plane
 from app.graphs.nodes.rag_nodes import example_retriever
 from app.graphs.nodes.response_nodes import _model_reply_with_actions, boundary_response, clarification_response, clinical_red_flag_response, crisis_response
@@ -565,6 +565,28 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["experience_validator_warnings"], ["too_many_questions"])
         self.assertEqual(result["experience_validator_blocking_reasons"], [])
 
+    def test_validator_returns_conversation_quality_trace(self) -> None:
+        state = self.make_state(
+            "我今天有点空。",
+            risk_level="L0",
+            assistant_text="这个空像是房间突然安静下来，先停在这里也可以。",
+            suggested_actions=["先停一下"],
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "none",
+                "ningyu_voice_contract": {"voice_mode": "quiet_presence"},
+            },
+        )
+
+        result = _run(response_validator(state))
+
+        trace = result["conversation_quality_trace"]
+        self.assertEqual(trace["policy_snapshot"]["conversation_move"], "continue_thread")
+        self.assertEqual(trace["policy_snapshot"]["voice_mode"], "quiet_presence")
+        self.assertEqual(trace["validator_snapshot"]["severity"], "passed")
+        self.assertNotIn("我今天有点空", str(trace))
+        self.assertNotIn("这个空像是房间", str(trace))
+
     def test_validator_warns_when_question_budget_zero_ends_with_question(self) -> None:
         state = self.make_state(
             "在轮下，记得吗",
@@ -710,6 +732,69 @@ class ConversationControlRagTests(unittest.TestCase):
         )
 
         self.assertIn("over_psychologizing", reasons)
+
+    def test_experience_validator_warns_for_missed_primary_lane_and_forbidden_lane_expansion(self) -> None:
+        state = self.make_state(
+            "我不是想聊《德米安》本身，就是觉得那个“找自己”的说法有点像我，但你别又开始分析我。",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "intent_lanes": [
+                    {
+                        "kind": "cultural_anchor",
+                        "anchor_type": "literary",
+                        "anchor_value": "德米安",
+                        "priority": "secondary",
+                        "handling": "do_not_expand_work_detail",
+                    },
+                    {
+                        "kind": "self_reference",
+                        "user_clues": ["找自己", "有点像我"],
+                        "priority": "primary",
+                        "handling": "respond_to_user_clue",
+                    },
+                    {
+                        "kind": "boundary",
+                        "user_clues": ["别又开始分析我"],
+                        "priority": "blocking_style_constraint",
+                        "handling": "lower_analysis_depth",
+                    },
+                ],
+            },
+        )
+
+        reasons = experience_validator_reasons("《德米安》这本小说的剧情和主角很值得展开讲。", [], state)
+
+        self.assertIn("missed_primary_lane", reasons)
+        self.assertIn("expanded_forbidden_lane", reasons)
+
+    def test_experience_validator_blocks_short_term_question_adaptation_failure(self) -> None:
+        state = self.make_state(
+            "我只是觉得今天有点空。",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "continue_thread",
+                "topic_anchor": "none",
+                "adaptation_state": {
+                    "avoid_questions_turns": 2,
+                    "avoid_analysis_turns": 0,
+                },
+                "ningyu_voice_contract": {
+                    "voice_mode": "quiet_presence",
+                    "analysis_depth": "light",
+                    "question_budget": 0,
+                    "sentence_budget": "1-2",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons("这个空好像很安静。它是从什么时候开始的？", [], state)
+
+        self.assertIn("violated_voice_contract", reasons)
+        self.assertIn("failed_short_term_adaptation", reasons)
+        self.assertIn("failed_short_term_adaptation", validator_nodes._blocking_experience_reasons(reasons))
 
     def test_experience_validator_warns_when_literary_anchor_is_ignored(self) -> None:
         state = self.make_state(

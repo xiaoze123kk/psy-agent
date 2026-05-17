@@ -354,6 +354,126 @@ def _append_anchor_evidence_lines(lines: list[str], evidence: dict) -> None:
         lines.append("- 写法：不要追出处，不要硬猜作者或原句；只回应用户给出的画面或主题。")
 
 
+def _as_positive_int(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _lane_clues(lane: dict) -> list[str]:
+    clues = _compact_list(lane.get("user_clues"), limit=4)
+    anchor_value = _compact_text(lane.get("anchor_value"), limit=60)
+    return clues or ([anchor_value] if anchor_value else [])
+
+
+def _append_intent_lane_lines(lines: list[str], policy: dict) -> None:
+    raw_lanes = policy.get("intent_lanes")
+    if not isinstance(raw_lanes, list):
+        return
+    lanes = [lane for lane in raw_lanes if isinstance(lane, dict)]
+    if not lanes:
+        return
+
+    for lane in lanes:
+        priority = str(lane.get("priority") or "")
+        kind = str(lane.get("kind") or "")
+        handling = str(lane.get("handling") or "")
+        clues = _lane_clues(lane)
+        clue_text = "、".join(clues)
+
+        if priority == "primary":
+            if kind == "self_reference" and clue_text:
+                lines.append(f"- 本轮主线：回应用户给出的“{clue_text}”这条自我线索，先贴近他说的像，不急着解释他。")
+            elif kind == "cultural_anchor" and clue_text:
+                lines.append(f"- 本轮主线：顺着用户提到的“{clue_text}”聊，但只贴本轮语境。")
+            elif clue_text:
+                lines.append(f"- 本轮主线：先回应“{clue_text}”。")
+
+        if priority == "secondary":
+            if kind == "cultural_anchor" and clue_text:
+                line = f"- 可轻触的线：用户提到{clue_text}，但它只是借来的锚点，不能抢过用户自己的感受。"
+                if handling == "do_not_expand_work_detail":
+                    line += " 不要展开作品本身；不要补作品情节、人物细节或作者意图。"
+                lines.append(line)
+            elif clue_text:
+                lines.append(f"- 可轻触的线：{clue_text}，只轻轻带过。")
+
+        if priority == "blocking_style_constraint":
+            line = "- 不要展开："
+            if clue_text:
+                line += f"用户已经限定“{clue_text}”。"
+            if handling == "lower_analysis_depth":
+                line += " 降低分析深度，不把用户直接心理分析。"
+            elif handling == "reduce_questions":
+                line += " 减少问句，不用追问维持对话。"
+            elif handling == "avoid_safety_check":
+                line += " 除非本轮出现明确新风险，否则不要主动安全盘问。"
+            else:
+                line += " 把它当成表达边界来遵守。"
+            lines.append(line)
+
+
+def _append_voice_contract_lines(lines: list[str], policy: dict) -> None:
+    contract = policy.get("ningyu_voice_contract")
+    if not isinstance(contract, dict):
+        return
+
+    voice_mode = _compact_text(contract.get("voice_mode"), limit=40)
+    analysis_depth = _compact_text(contract.get("analysis_depth"), limit=40)
+    sentence_budget = _compact_text(contract.get("sentence_budget"), limit=20)
+    question_budget = contract.get("question_budget")
+    opening = _compact_text(contract.get("opening_preference"), limit=40)
+    closing = _compact_text(contract.get("closing_preference"), limit=40)
+    avoid_patterns = _compact_list(contract.get("avoid_patterns"), limit=4)
+
+    parts: list[str] = []
+    if voice_mode:
+        parts.append(voice_mode)
+    if sentence_budget:
+        parts.append(f"{sentence_budget} 句")
+    if question_budget is not None:
+        parts.append(f"最多 {question_budget} 个问题")
+    if opening == "echo_user_words":
+        parts.append("开头贴用户词")
+    elif opening == "no_preface":
+        parts.append("不开固定前言")
+    elif opening == "direct":
+        parts.append("直接进入")
+    if closing == "pause":
+        parts.append("结尾留白")
+    elif closing == "soft_invitation":
+        parts.append("结尾可轻邀请")
+    elif closing == "micro_action":
+        parts.append("结尾只放一个小动作")
+    if parts:
+        lines.append(f"- 宁语声线：{'；'.join(parts)}。")
+    if analysis_depth == "none":
+        lines.append("- 声线边界：不做心理解释、人格判断或咨询腔总结。")
+    elif analysis_depth == "light":
+        lines.append("- 声线边界：只做轻量整理，不往深层原因推。")
+    if avoid_patterns:
+        lines.append(f"- 避免套话：少用 {'、'.join(avoid_patterns)} 这类开头或判断句。")
+
+
+def _append_adaptation_lines(lines: list[str], policy: dict) -> None:
+    adaptation = policy.get("adaptation_state")
+    if not isinstance(adaptation, dict):
+        return
+
+    notes: list[str] = []
+    if _as_positive_int(adaptation.get("avoid_analysis_turns")) > 0:
+        notes.append("降低分析深度")
+    if _as_positive_int(adaptation.get("avoid_questions_turns")) > 0:
+        notes.append("减少问句")
+    if _as_positive_int(adaptation.get("avoid_safety_check_turns")) > 0:
+        notes.append("减少安全盘问")
+    if _as_positive_int(adaptation.get("prefer_direct_anchor_response_turns")) > 0:
+        notes.append("优先直接回应用户给出的线索")
+    if notes:
+        lines.append(f"- 短期适配：{'；'.join(dict.fromkeys(notes))}。")
+
+
 def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     policy = state.get("conversation_move_policy")
     if not isinstance(policy, dict) or not policy:
@@ -378,6 +498,7 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     lines = ["对话动作策略（内部使用，不要暴露字段名）："]
     if move:
         lines.append(f"- 本轮对话动作：{move}")
+    _append_intent_lane_lines(lines, policy)
     if topic_anchor:
         anchor_suffix = f" / {anchor_value}" if anchor_value else ""
         lines.append(f"- 用户锚点：{topic_anchor}{anchor_suffix}")
@@ -386,6 +507,8 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     evidence = policy.get("anchor_evidence")
     if isinstance(evidence, dict) and evidence:
         _append_anchor_evidence_lines(lines, evidence)
+    _append_voice_contract_lines(lines, policy)
+    _append_adaptation_lines(lines, policy)
     if suppressed_recent_anchors:
         lines.append(
             f"- 旧锚点提醒：最近出现过 {'、'.join(suppressed_recent_anchors)}，但用户本轮没有主动提；不要主动带回，除非用户再次提到。"

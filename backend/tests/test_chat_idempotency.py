@@ -62,6 +62,12 @@ class FakeGraphRuntime:
             "referenced_counseling_examples": [],
             "rag_used": True,
             "rag_skipped_reason": "",
+            "conversation_quality_trace": {
+                "turn_shape": {"assistant_length_bucket": "short", "question_count": 0},
+                "policy_snapshot": {"conversation_move": "continue_thread", "risk_level": "L0"},
+                "validator_snapshot": {"severity": "passed", "experience_reasons": []},
+                "user_signal": {"explicit_feedback": "none", "next_turn_signal": "unknown"},
+            },
             "graph_trace": [
                 {
                     "sequence": 0,
@@ -495,5 +501,48 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertTrue(response_trace["rag"]["used"])
         self.assertFalse(response_trace["validator"]["blocked"])
         self.assertEqual(response_trace["steps"][1]["node_name"], "response_validator")
+        self.assertEqual(response_trace["conversation_quality"]["user_signal"]["explicit_feedback"], "none")
         self.assertEqual(assistant_message.meta["trace_summary"]["node_count"], 2)
+        self.assertIn("conversation_quality_trace", assistant_message.meta)
         self.assertEqual(turn.response_snapshot["trace_summary"]["node_count"], 2)
+        self.assertEqual(
+            turn.response_snapshot["conversation_quality_trace"]["policy_snapshot"]["conversation_move"],
+            "continue_thread",
+        )
+
+    def test_new_user_message_backfills_previous_turn_next_signal(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        chat_service.graph_runtime = FakeGraphRuntime()
+
+        first = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-quality-signal-1", "content": "private first turn"},
+        )
+        second = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-quality-signal-2", "content": "\u4e0d\u662f\u8fd9\u4e2a\u610f\u601d"},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        first_turn = self.db.scalar(
+            select(ConversationTurn).where(ConversationTurn.client_message_id == "client-quality-signal-1")
+        )
+        self.assertIsNotNone(first_turn)
+        first_assistant = self.db.get(Message, first_turn.assistant_message_id)
+
+        self.assertEqual(
+            first_turn.response_snapshot["conversation_quality_trace"]["user_signal"]["next_turn_signal"],
+            "corrected",
+        )
+        self.assertEqual(
+            first_turn.response_snapshot["trace_summary"]["conversation_quality"]["user_signal"]["next_turn_signal"],
+            "corrected",
+        )
+        self.assertEqual(
+            first_assistant.meta["conversation_quality_trace"]["user_signal"]["next_turn_signal"],
+            "corrected",
+        )

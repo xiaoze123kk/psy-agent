@@ -1,5 +1,5 @@
 from app.graphs.main_graph import build_main_graph
-from app.services.graph_trace_service import GraphTraceCollector
+from app.services.graph_trace_service import GraphTraceCollector, summarize_conversation_move_policy
 from app.services.temporal_context_service import build_temporal_context
 
 
@@ -90,6 +90,7 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
         "route_priority",
         "control_category",
         "conversation_move_policy",
+        "conversation_quality_trace",
         "memory_policy",
         "memory_policy_reason",
         "rag_used",
@@ -112,6 +113,10 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
             continue
         if value == "" or value == [] or value == {}:
             continue
+        if key == "conversation_move_policy":
+            value = summarize_conversation_move_policy(value)
+            if not value:
+                continue
         event[key] = value
 
     if node == "response_validator" and isinstance(node_update, dict):
@@ -266,6 +271,7 @@ class GraphRuntime:
             "risk_phase": result.get("risk_phase", ""),
             "risk_response_policy": result.get("risk_response_policy", {}),
             "conversation_move_policy": result.get("conversation_move_policy", {}),
+            "conversation_quality_trace": result.get("conversation_quality_trace", {}),
             "tool_gate_mode": result.get("tool_gate_mode", ""),
             "safety_context_pack": result.get("safety_context_pack", {}),
             "intent": result.get("intent", "other"),
