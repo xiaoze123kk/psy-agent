@@ -118,7 +118,7 @@ export class ApiClient {
       return {} as T;
     }
 
-    return (await response.json()) as T;
+    return await this.parseJsonResponse<T>(response);
   }
 
   private async requestText(path: string, init: RequestInit, allowAuthRefresh = true): Promise<string> {
@@ -141,6 +141,30 @@ export class ApiClient {
     }
 
     return await response.text();
+  }
+
+  private async parseJsonResponse<T>(response: Response): Promise<T> {
+    const contentType = response.headers.get("Content-Type") ?? "";
+    const responseText = await response.text();
+
+    if (!responseText.trim()) {
+      return {} as T;
+    }
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      const preview = responseText.trim().slice(0, 80);
+      throw new Error(
+        preview.toLowerCase().startsWith("<!doctype") || preview.startsWith("<")
+          ? "API returned HTML instead of JSON. Check VITE_API_BASE_URL or the Vite /api proxy target."
+          : `API returned non-JSON response: ${preview}`,
+      );
+    }
+
+    try {
+      return JSON.parse(responseText) as T;
+    } catch (error) {
+      throw new Error(error instanceof Error ? `API returned invalid JSON: ${error.message}` : "API returned invalid JSON.");
+    }
   }
 
   private async tryRefreshAuth(): Promise<boolean> {
