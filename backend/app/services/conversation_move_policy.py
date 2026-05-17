@@ -7,28 +7,9 @@ from typing import Any
 
 HIGH_RISK_LEVELS = {"L2", "L3"}
 
-LITERARY_TERMS = (
-    "在轮下",
-    "德米安",
-    "悉达多",
-    "荒原狼",
-    "黑塞",
-    "卡夫卡",
-    "局外人",
-    "人间失格",
-)
-PHILOSOPHICAL_TERMS = (
-    "荣格",
-    "弗洛伊德",
-    "尼采",
-    "加缪",
-    "萨特",
-    "存在主义",
-    "原型",
-    "阴影",
-)
+LITERARY_CONTEXT_TERMS = ("文学", "小说", "书", "作品", "诗", "作者", "文本")
+PHILOSOPHICAL_CONTEXT_TERMS = ("哲学", "哲学家", "存在主义", "原型", "阴影", "潜意识")
 MEDIA_TERMS = ("电影", "电视剧", "动漫", "角色", "剧里", "片子")
-PERSON_TERMS = ("鲁迅", "海子", "余华", "村上春树", "马尔克斯", "博尔赫斯", "伍尔夫")
 DAILY_DETAIL_TERMS = ("花", "包子", "天气", "猫", "饭", "路上", "咖啡", "奶茶")
 METAPHOR_TERMS = ("像", "好像", "隐喻", "比喻", "奔跑", "碾死", "轮下", "推着走")
 LIGHT_CHAT_TERMS = ("哈哈", "呵呵", "嘿嘿", "笑死", "随便聊", "就聊聊")
@@ -45,6 +26,64 @@ DISTRESS_TERMS = (
     "想死",
 )
 SHORT_FOLLOWUP_TERMS = ("记得", "嗯", "嗯嗯", "是这个", "对", "就是", "继续", "然后呢")
+GENERIC_PERSON_ANCHORS = {
+    "点别的",
+    "别的",
+    "这个",
+    "这件事",
+    "这事",
+    "一下",
+    "安全",
+    "自己",
+    "我",
+    "你",
+    "他",
+    "她",
+}
+CULTURAL_ANCHOR_TYPES = {
+    "literary",
+    "philosophical",
+    "media",
+    "person",
+    "quote",
+    "concept",
+    "unknown_cultural",
+}
+KNOWLEDGE_BOUNDARY_TERMS = (
+    "没读过",
+    "没看过",
+    "只是听说",
+    "听别人说",
+    "不确定",
+    "记不清",
+    "不知道准不准",
+)
+THEME_CLUE_TERMS = (
+    "自我寻找",
+    "找自己",
+    "阴影",
+    "梦",
+    "象征",
+    "意义",
+    "被规训",
+    "被推着走",
+    "慢半拍",
+)
+COMMON_CULTURAL_ANCHORS = {
+    "在轮下": "literary",
+    "德米安": "literary",
+    "悉达多": "literary",
+    "荒原狼": "literary",
+    "局外人": "literary",
+    "人间失格": "literary",
+    "荣格": "philosophical",
+    "弗洛伊德": "philosophical",
+    "尼采": "philosophical",
+    "加缪": "philosophical",
+    "萨特": "philosophical",
+    "黑塞": "person",
+    "卡夫卡": "person",
+}
 
 
 def _text(state: Mapping[str, Any]) -> str:
@@ -78,11 +117,114 @@ def _extract_book_title(text: str) -> str:
     return ""
 
 
-def _anchor_value(text: str, anchor_type: str) -> str:
+def _recent_quoted_titles(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    titles: list[str] = []
+    for message in messages[-8:]:
+        content = str(message.get("content") or "")
+        for title in re.findall(r"《([^》]{1,32})》", content):
+            cleaned = title.strip()
+            if cleaned and cleaned not in titles:
+                titles.append(cleaned)
+    return titles
+
+
+def _recent_title_mentioned(text: str, messages: Sequence[Mapping[str, Any]]) -> str:
+    compact = "".join(text.split())
+    for title in reversed(_recent_quoted_titles(messages)):
+        if title and title in compact:
+            return title
+    return ""
+
+
+def _common_cultural_anchor(text: str) -> tuple[str, str]:
+    compact = "".join(text.split()).strip("，。！？?；;：:")
+    anchor_type = COMMON_CULTURAL_ANCHORS.get(compact, "")
+    return (anchor_type, compact) if anchor_type else ("", "")
+
+
+def _anchor_clue(text: str, kind: str, source: str = "current_user") -> dict[str, str]:
+    return {"text": text, "kind": kind, "source": source}
+
+
+def _dedupe_clues(clues: Sequence[Mapping[str, str]]) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for clue in clues:
+        text = str(clue.get("text") or "").strip()
+        kind = str(clue.get("kind") or "").strip()
+        source = str(clue.get("source") or "current_user").strip()
+        key = (text, kind)
+        if not text or not kind or key in seen:
+            continue
+        seen.add(key)
+        result.append({"text": text, "kind": kind, "source": source})
+    return result
+
+
+def _user_clues_for_anchor(text: str) -> list[dict[str, str]]:
+    clues: list[dict[str, str]] = []
+    compact = "".join(text.split())
+    for term in KNOWLEDGE_BOUNDARY_TERMS:
+        if term in text:
+            clues.append(_anchor_clue(term, "knowledge_boundary"))
+    for term in THEME_CLUE_TERMS:
+        if term in text:
+            clues.append(_anchor_clue(term, "theme"))
+    if "记不清原句" in compact or "原句记不清" in compact:
+        clues.append(_anchor_clue("记不清原句", "knowledge_boundary"))
+        if "被什么东西推着走" in compact:
+            clues.append(_anchor_clue("被什么东西推着走", "image"))
+        elif "推着走" in compact:
+            clues.append(_anchor_clue("推着走", "image"))
+    return _dedupe_clues(clues)
+
+
+def _clean_person_candidate(value: str) -> str:
+    candidate = value.strip(" 　，。！？?：:；;、“”‘’《》")
+    candidate = re.sub(r"(这个人|这个角色|这个作者|这位|是谁|吗|呢)$", "", candidate).strip()
+    if (
+        not candidate
+        or candidate in GENERIC_PERSON_ANCHORS
+        or len(candidate) > 12
+        or any(mark in candidate for mark in "，。！？?；;：:、")
+        or _has_any(candidate, ("安全", "分析", "建议", "感觉", "话题", "事情", "问题", "压力"))
+    ):
+        return ""
+    return candidate
+
+
+def _person_anchor_value(text: str) -> str:
+    patterns = (
+        r"你觉得(?P<name>[^，。！？?；;：:\s]{2,12})是(?:个|一个|一位)?什么样的人",
+        r"(?P<name>[^，。！？?；;：:\s]{2,12})是(?:个|一个|一位)?什么样的人",
+        r"(?:我想聊|想聊聊|想聊|聊聊|先聊|说说|谈谈)(?P<name>[^，。！？?；;：:\s]{2,12})",
+        r"关于(?P<name>[^，。！？?；;：:\s]{2,12})这个人",
+        r"(?P<name>[^，。！？?；;：:\s]{2,12})这个人",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        candidate = _clean_person_candidate(match.group("name"))
+        if candidate:
+            return candidate
+    return ""
+
+
+def _anchor_value(text: str, anchor_type: str, messages: Sequence[Mapping[str, Any]]) -> str:
     book_title = _extract_book_title(text)
     if book_title:
         return book_title
-    for terms in (LITERARY_TERMS, PHILOSOPHICAL_TERMS, MEDIA_TERMS, PERSON_TERMS, DAILY_DETAIL_TERMS):
+    recent_title = _recent_title_mentioned(text, messages)
+    if recent_title:
+        return recent_title
+    _, common_anchor = _common_cultural_anchor(text)
+    if common_anchor:
+        return common_anchor
+    person_anchor = _person_anchor_value(text)
+    if person_anchor:
+        return person_anchor
+    for terms in (LITERARY_CONTEXT_TERMS, PHILOSOPHICAL_CONTEXT_TERMS, MEDIA_TERMS, DAILY_DETAIL_TERMS):
         for term in terms:
             if term and term in text:
                 return term
@@ -93,20 +235,93 @@ def _anchor_value(text: str, anchor_type: str) -> str:
     return ""
 
 
-def _topic_anchor_type(text: str) -> str:
-    if _extract_book_title(text) or _has_any(text, LITERARY_TERMS):
+def _topic_anchor_type(text: str, messages: Sequence[Mapping[str, Any]]) -> str:
+    if _extract_book_title(text) or _recent_title_mentioned(text, messages):
         return "literary"
-    if _has_any(text, PHILOSOPHICAL_TERMS):
+    common_anchor_type, _ = _common_cultural_anchor(text)
+    if common_anchor_type:
+        return common_anchor_type
+    if _has_any(text, PHILOSOPHICAL_CONTEXT_TERMS):
         return "philosophical"
     if _has_any(text, MEDIA_TERMS):
         return "media"
-    if _has_any(text, PERSON_TERMS):
+    if _person_anchor_value(text):
         return "person"
+    if _has_any(text, LITERARY_CONTEXT_TERMS):
+        return "literary"
     if _has_any(text, DAILY_DETAIL_TERMS):
         return "daily_detail"
     if _has_any(text, METAPHOR_TERMS):
         return "metaphor"
     return "none"
+
+
+def _cultural_response_mode(
+    anchor_type: str,
+    anchor_value: str,
+    clues: Sequence[Mapping[str, str]],
+    text: str,
+) -> str:
+    if anchor_type not in CULTURAL_ANCHOR_TYPES:
+        return ""
+    clue_kinds = {str(clue.get("kind") or "") for clue in clues}
+    if "knowledge_boundary" in clue_kinds and anchor_type in {"quote", "unknown_cultural"}:
+        return "no_knowledge_claim"
+    if "knowledge_boundary" in clue_kinds or "theme" in clue_kinds or "image" in clue_kinds:
+        return "echo_user_clue"
+    if anchor_value in COMMON_CULTURAL_ANCHORS:
+        return "light_context_only"
+    if anchor_type in {"person", "concept"} and anchor_value:
+        return "ask_user_association"
+    if anchor_type in {"philosophical", "literary", "media"} and anchor_value:
+        return "light_context_only"
+    return "ask_user_association"
+
+
+def _anchor_evidence(
+    text: str,
+    anchor_type: str,
+    anchor_value: str,
+    messages: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    effective_type = anchor_type
+    compact = "".join(text.split())
+    if "记不清原句" in compact or "原句记不清" in compact:
+        effective_type = "quote"
+    elif effective_type == "none" and _has_any(text, KNOWLEDGE_BOUNDARY_TERMS):
+        effective_type = "unknown_cultural"
+
+    if effective_type == "none" and not anchor_value:
+        return {}
+
+    clues = _user_clues_for_anchor(text)
+    recent_context_clues = [
+        _anchor_clue(title, "recent_title", "recent_context")
+        for title in _recent_quoted_titles(messages)
+        if title and title != anchor_value
+    ][:3]
+    confidence = "explicit" if anchor_value or clues else "weak"
+    mode = _cultural_response_mode(effective_type, anchor_value, clues, text)
+    allowed_basis = ["user_clues", "recent_context"]
+    if mode == "light_context_only":
+        allowed_basis.append("light_common_sense")
+
+    return {
+        "anchor_type": effective_type,
+        "anchor_value": anchor_value,
+        "confidence": confidence,
+        "user_clues": clues,
+        "recent_context_clues": recent_context_clues,
+        "allowed_basis": allowed_basis,
+        "forbidden_claims": [
+            "plot_detail",
+            "character_detail",
+            "author_intent",
+            "ending",
+            "quote_attribution",
+        ],
+        "response_mode": mode,
+    }
 
 
 def _correction_type(text: str) -> str:
@@ -135,7 +350,7 @@ def _recent_assistant_opening_mode(messages: Sequence[Mapping[str, Any]]) -> str
         content = str(message.get("content") or "").strip()
         if content.startswith(("听起来", "我听见", "我听到", "我能理解", "我理解")):
             return "formulaic_reflection"
-        if content.startswith(("《", "荣格", "黑塞")):
+        if content.startswith("《"):
             return "direct"
         if content:
             return "other"
@@ -275,8 +490,11 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     risk_policy = state.get("risk_response_policy")
     risk_phase = str(risk_policy.get("risk_phase") if isinstance(risk_policy, Mapping) else state.get("risk_phase") or "")
     correction_type = _correction_type(text)
-    anchor_type = _topic_anchor_type(text)
-    anchor_value = _anchor_value(text, anchor_type)
+    anchor_type = _topic_anchor_type(text, messages)
+    anchor_value = _anchor_value(text, anchor_type, messages)
+    anchor_evidence = _anchor_evidence(text, anchor_type, anchor_value, messages)
+    if anchor_type == "none" and anchor_evidence:
+        anchor_type = str(anchor_evidence.get("anchor_type") or anchor_type)
     recent_high_risk = _recent_high_risk_seen(messages)
 
     conversation_move = "soft_invitation"
@@ -305,7 +523,7 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         psychologizing_risk = "medium"
         anchor_handling = "treat_as_topic" if anchor_type != "none" else "connect_lightly_to_emotion"
         handling = "记得刚才的风险，但先回应当前话题；只保留一句低压关照，不主动安全盘问。"
-    elif anchor_type in {"literary", "philosophical", "media", "person", "metaphor"}:
+    elif anchor_type in {"literary", "philosophical", "media", "person", "metaphor", "quote", "concept", "unknown_cultural"}:
         conversation_move = "continue_thread" if _is_short_followup(text) else "respond_to_anchor"
         button_style = "topic_continue"
         psychologizing_risk = "medium"
@@ -344,6 +562,8 @@ def build_conversation_move_policy(state: Mapping[str, Any]) -> dict[str, Any]:
         "topic_anchor": anchor_type,
         "anchor_value": anchor_value,
         "anchor_handling": anchor_handling,
+        "anchor_evidence": anchor_evidence,
+        "cultural_response_mode": anchor_evidence.get("response_mode", ""),
         "handling": handling,
         "style_variation": opening_mode,
         "opening_style": f"{opening_mode}，避免复用“听起来/我理解/我听见”式固定开头。",

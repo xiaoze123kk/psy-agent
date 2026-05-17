@@ -187,11 +187,11 @@ class ConversationMovePolicyTests(unittest.TestCase):
         self.assertTrue(policy["avoid_reused_structure"])
         self.assertIn("两段式整理+追问", policy["structure_style"])
 
-    def test_person_anchor_is_treated_as_cultural_topic(self) -> None:
+    def test_person_anchor_is_detected_from_sentence_shape_without_name_list(self) -> None:
         policy = build_conversation_move_policy(
             {
-                "user_text": "你觉得鲁迅是个什么样的人",
-                "normalized_text": "你觉得鲁迅是个什么样的人",
+                "user_text": "你觉得林秋白是个什么样的人",
+                "normalized_text": "你觉得林秋白是个什么样的人",
                 "risk_level": "L0",
                 "recent_messages": [],
             }
@@ -199,9 +199,168 @@ class ConversationMovePolicyTests(unittest.TestCase):
 
         self.assertEqual(policy["conversation_move"], "respond_to_anchor")
         self.assertEqual(policy["topic_anchor"], "person")
-        self.assertEqual(policy["anchor_value"], "鲁迅")
+        self.assertEqual(policy["anchor_value"], "林秋白")
         self.assertEqual(policy["button_style"], "topic_continue")
         self.assertIn("真实话题", policy["handling"])
+
+    def test_unquoted_recent_book_title_continues_from_context_without_title_list(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "在轮下，记得吗",
+                "normalized_text": "在轮下，记得吗",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {"role": "assistant", "content": "你刚才提到《在轮下》，那个画面很重。"},
+                    {"role": "user", "content": "嗯，就是不能慢。"},
+                ],
+            }
+        )
+
+        self.assertEqual(policy["topic_anchor"], "literary")
+        self.assertEqual(policy["anchor_value"], "在轮下")
+        self.assertEqual(policy["button_style"], "topic_continue")
+
+    def test_correction_fallback_buttons_include_nonlisted_person_anchor(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "别问安全了，我想聊阿伦特",
+                "normalized_text": "别问安全了，我想聊阿伦特",
+                "risk_level": "L0",
+                "recent_messages": [
+                    {"role": "user", "content": "有点想死", "risk_level": "L2"},
+                    {"role": "assistant", "content": "你现在安全吗？", "risk_level": "L2"},
+                ],
+            }
+        )
+
+        actions = default_actions_for_conversation_move_policy(policy)
+
+        self.assertEqual(policy["correction_state"]["correction_type"], "too_safety_focused")
+        self.assertEqual(policy["topic_anchor"], "person")
+        self.assertEqual(policy["anchor_value"], "阿伦特")
+        self.assertTrue(any("阿伦特" in action for action in actions))
+
+    def test_cultural_anchor_evidence_tracks_user_clues_and_forbidden_claims(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我没读过《德米安》，只是听别人说它和自我寻找有关",
+                "normalized_text": "我没读过《德米安》，只是听别人说它和自我寻找有关",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        evidence = policy["anchor_evidence"]
+
+        self.assertEqual(policy["topic_anchor"], "literary")
+        self.assertEqual(policy["anchor_value"], "德米安")
+        self.assertEqual(evidence["anchor_type"], "literary")
+        self.assertEqual(evidence["anchor_value"], "德米安")
+        self.assertEqual(evidence["confidence"], "explicit")
+        self.assertIn("user_clues", evidence)
+        self.assertTrue(
+            any(
+                clue["text"] == "没读过" and clue["kind"] == "knowledge_boundary"
+                for clue in evidence["user_clues"]
+            )
+        )
+        self.assertTrue(
+            any(
+                clue["text"] == "自我寻找" and clue["kind"] == "theme"
+                for clue in evidence["user_clues"]
+            )
+        )
+        self.assertEqual(evidence["response_mode"], "echo_user_clue")
+        self.assertIn("plot_detail", evidence["forbidden_claims"])
+        self.assertIn("author_intent", evidence["forbidden_claims"])
+        self.assertEqual(policy["cultural_response_mode"], "echo_user_clue")
+
+    def test_cultural_anchor_evidence_uses_no_knowledge_claim_for_uncertain_reference(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我记不清原句了，大概是说人一直被什么东西推着走",
+                "normalized_text": "我记不清原句了，大概是说人一直被什么东西推着走",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        evidence = policy["anchor_evidence"]
+
+        self.assertEqual(evidence["anchor_type"], "quote")
+        self.assertEqual(evidence["response_mode"], "no_knowledge_claim")
+        self.assertTrue(any(clue["text"] == "记不清原句" for clue in evidence["user_clues"]))
+        self.assertTrue(any(clue["text"] == "被什么东西推着走" for clue in evidence["user_clues"]))
+        self.assertEqual(policy["cultural_response_mode"], "no_knowledge_claim")
+
+    def test_person_anchor_without_clues_asks_user_association(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "你觉得林秋白是个什么样的人",
+                "normalized_text": "你觉得林秋白是个什么样的人",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        evidence = policy["anchor_evidence"]
+
+        self.assertEqual(policy["topic_anchor"], "person")
+        self.assertEqual(evidence["anchor_value"], "林秋白")
+        self.assertEqual(evidence["response_mode"], "ask_user_association")
+        self.assertIn("user_clues", evidence)
+
+    def test_anchor_evidence_omits_surface_text_to_avoid_metadata_duplication(self) -> None:
+        long_text = "我没读过《德米安》，只是听别人说它和自我寻找有关。" + "这部分私人背景很长" * 20
+        policy = build_conversation_move_policy(
+            {
+                "user_text": long_text,
+                "normalized_text": long_text,
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        evidence = policy["anchor_evidence"]
+
+        self.assertNotIn("surface_text", evidence)
+
+    def test_common_bare_cultural_anchors_still_route_as_cultural_topics(self) -> None:
+        cases = [
+            ("荣格", "philosophical", "荣格"),
+            ("德米安", "literary", "德米安"),
+            ("黑塞", "person", "黑塞"),
+        ]
+
+        for text, anchor_type, anchor_value in cases:
+            with self.subTest(text=text):
+                policy = build_conversation_move_policy(
+                    {
+                        "user_text": text,
+                        "normalized_text": text,
+                        "risk_level": "L0",
+                        "recent_messages": [],
+                    }
+                )
+
+                self.assertEqual(policy["conversation_move"], "respond_to_anchor")
+                self.assertEqual(policy["topic_anchor"], anchor_type)
+                self.assertEqual(policy["anchor_value"], anchor_value)
+                self.assertEqual(policy["anchor_evidence"]["response_mode"], "light_context_only")
+
+    def test_uncertain_quote_without_metaphor_still_routes_as_cultural_anchor(self) -> None:
+        policy = build_conversation_move_policy(
+            {
+                "user_text": "我记不清原句了，大概是关于孤独",
+                "normalized_text": "我记不清原句了，大概是关于孤独",
+                "risk_level": "L0",
+                "recent_messages": [],
+            }
+        )
+
+        self.assertEqual(policy["conversation_move"], "respond_to_anchor")
+        self.assertEqual(policy["topic_anchor"], "quote")
+        self.assertEqual(policy["anchor_evidence"]["response_mode"], "no_knowledge_claim")
 
 
 if __name__ == "__main__":

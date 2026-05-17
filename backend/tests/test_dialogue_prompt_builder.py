@@ -365,6 +365,115 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("只回应用户给出的线索", parts.user_prompt)
         self.assertIn("不要虚构", parts.user_prompt)
 
+    def test_prompt_includes_anchor_evidence_without_raw_json(self) -> None:
+        state = self.make_state(
+            normalized_text="我没读过《德米安》，只是听别人说它和自我寻找有关",
+            user_text="我没读过《德米安》，只是听别人说它和自我寻找有关",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "surface_text": "我没读过《德米安》，只是听别人说它和自我寻找有关",
+                    "confidence": "explicit",
+                    "user_clues": [
+                        {"text": "没读过", "kind": "knowledge_boundary", "source": "current_user"},
+                        {"text": "自我寻找", "kind": "theme", "source": "current_user"},
+                    ],
+                    "allowed_basis": ["user_clues", "recent_context"],
+                    "forbidden_claims": ["plot_detail", "character_detail", "author_intent", "ending"],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("文化锚点证据", parts.user_prompt)
+        self.assertIn("德米安", parts.user_prompt)
+        self.assertIn("没读过", parts.user_prompt)
+        self.assertIn("自我寻找", parts.user_prompt)
+        self.assertIn("不要百科介绍", parts.user_prompt)
+        self.assertIn("允许依据", parts.user_prompt)
+        self.assertIn("禁止声称", parts.user_prompt)
+        self.assertNotIn("anchor_evidence", parts.user_prompt)
+        self.assertNotIn("user_clues", parts.user_prompt)
+
+    def test_prompt_renders_light_common_sense_allowed_basis(self) -> None:
+        state = self.make_state(
+            normalized_text="荣格",
+            user_text="荣格",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "philosophical",
+                "anchor_value": "荣格",
+                "anchor_evidence": {
+                    "anchor_type": "philosophical",
+                    "anchor_value": "荣格",
+                    "confidence": "explicit",
+                    "user_clues": [],
+                    "allowed_basis": ["user_clues", "recent_context", "light_common_sense"],
+                    "forbidden_claims": ["plot_detail", "author_intent"],
+                    "response_mode": "light_context_only",
+                },
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("允许依据", parts.user_prompt)
+        self.assertIn("轻常识", parts.user_prompt)
+        self.assertIn("不展开讲座", parts.user_prompt)
+
+    def test_prompt_guides_no_knowledge_claim_for_uncertain_quote(self) -> None:
+        state = self.make_state(
+            normalized_text="我记不清原句了，大概是说人一直被什么东西推着走",
+            user_text="我记不清原句了，大概是说人一直被什么东西推着走",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "quote",
+                "anchor_value": "",
+                "anchor_evidence": {
+                    "anchor_type": "quote",
+                    "anchor_value": "",
+                    "surface_text": "我记不清原句了，大概是说人一直被什么东西推着走",
+                    "confidence": "weak",
+                    "user_clues": [
+                        {"text": "记不清原句", "kind": "knowledge_boundary", "source": "current_user"},
+                        {"text": "被什么东西推着走", "kind": "image", "source": "current_user"},
+                    ],
+                    "allowed_basis": ["user_clues", "recent_context"],
+                    "forbidden_claims": ["quote_attribution", "author_intent"],
+                    "response_mode": "no_knowledge_claim",
+                },
+            },
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("不要追出处", parts.user_prompt)
+        self.assertIn("不要硬猜作者或原句", parts.user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

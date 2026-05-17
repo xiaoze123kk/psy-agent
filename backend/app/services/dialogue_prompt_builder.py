@@ -270,6 +270,90 @@ def _response_ending_prompt_block(state: AgentState) -> str:
     return "\n".join(lines) + "\n"
 
 
+_FORBIDDEN_CLAIM_LABELS = {
+    "plot_detail": "具体情节",
+    "character_detail": "角色细节",
+    "author_intent": "作者意图",
+    "ending": "结局",
+    "quote_attribution": "原文出处",
+}
+_ALLOWED_BASIS_LABELS = {
+    "user_clues": "用户给出的线索",
+    "recent_context": "最近上下文",
+    "light_common_sense": "轻常识",
+}
+
+
+def _compact_anchor_clues(raw_clues: object) -> list[str]:
+    if not isinstance(raw_clues, list):
+        return []
+    clues: list[str] = []
+    for clue in raw_clues[:5]:
+        if not isinstance(clue, dict):
+            continue
+        text = _compact_text(clue.get("text"), limit=32)
+        kind = _compact_text(clue.get("kind"), limit=32)
+        if text and kind:
+            clues.append(f"{text}（{kind}）")
+    return clues
+
+
+def _forbidden_claim_labels(raw_claims: object) -> list[str]:
+    if not isinstance(raw_claims, list):
+        return []
+    labels: list[str] = []
+    for claim in raw_claims[:6]:
+        key = str(claim or "")
+        label = _FORBIDDEN_CLAIM_LABELS.get(key, key)
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _allowed_basis_labels(raw_basis: object) -> list[str]:
+    if not isinstance(raw_basis, list):
+        return []
+    labels: list[str] = []
+    for basis in raw_basis[:5]:
+        key = str(basis or "")
+        label = _ALLOWED_BASIS_LABELS.get(key, key)
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _append_anchor_evidence_lines(lines: list[str], evidence: dict) -> None:
+    evidence_anchor_type = _compact_text(evidence.get("anchor_type"), limit=40)
+    evidence_anchor_value = _compact_text(evidence.get("anchor_value"), limit=60)
+    response_mode = _compact_text(evidence.get("response_mode"), limit=40)
+    clues = _compact_anchor_clues(evidence.get("user_clues"))
+    allowed_basis = _allowed_basis_labels(evidence.get("allowed_basis"))
+    forbidden_claims = _forbidden_claim_labels(evidence.get("forbidden_claims"))
+    anchor_label = evidence_anchor_type
+    if evidence_anchor_value:
+        anchor_label = f"{anchor_label} / {evidence_anchor_value}" if anchor_label else evidence_anchor_value
+    if anchor_label or clues or response_mode:
+        lines.append("文化锚点证据：")
+    if anchor_label:
+        lines.append(f"- 锚点：{anchor_label}")
+    if clues:
+        lines.append(f"- 用户给出的线索：{'、'.join(clues)}")
+    if response_mode:
+        lines.append(f"- 回应模式：{response_mode}")
+    if allowed_basis:
+        lines.append(f"- 允许依据：{'、'.join(allowed_basis)}")
+    if forbidden_claims:
+        lines.append(f"- 禁止声称：{'、'.join(forbidden_claims)}")
+    if response_mode == "echo_user_clue":
+        lines.append("- 写法：不要百科介绍；先顺着用户给出的线索聊，不补作品情节或作者观点。")
+    elif response_mode == "ask_user_association":
+        lines.append("- 写法：不要先做人物或作品简介；轻轻问用户为什么此刻想到这个锚点。")
+    elif response_mode == "light_context_only":
+        lines.append("- 写法：只给轻常识，马上回到用户为什么想聊它，不展开讲座。")
+    elif response_mode == "no_knowledge_claim":
+        lines.append("- 写法：不要追出处，不要硬猜作者或原句；只回应用户给出的画面或主题。")
+
+
 def _conversation_move_policy_prompt_block(state: AgentState) -> str:
     policy = state.get("conversation_move_policy")
     if not isinstance(policy, dict) or not policy:
@@ -297,6 +381,9 @@ def _conversation_move_policy_prompt_block(state: AgentState) -> str:
         lines.append(f"- 用户锚点：{topic_anchor}{anchor_suffix}")
         if any(kind in topic_anchor for kind in ("literary", "philosophical", "media", "person")):
             lines.append("- 文化锚点知识边界：不确定作品、人物或典故细节时，只回应用户给出的线索，不要虚构情节、角色、作者观点或出处。")
+    evidence = policy.get("anchor_evidence")
+    if isinstance(evidence, dict) and evidence:
+        _append_anchor_evidence_lines(lines, evidence)
     if anchor_handling or handling:
         detail = handling or anchor_handling
         prefix = f"{anchor_handling}；" if anchor_handling and handling else ""

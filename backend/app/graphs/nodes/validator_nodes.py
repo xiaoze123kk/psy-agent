@@ -60,6 +60,9 @@ EXPERIENCE_REASON_SEVERITY = {
     "generic_buttons": "warning",
     "conversation_restart": "warning",
     "fabricated_cultural_claim": "warning",
+    "overconfident_cultural_claim": "warning",
+    "shallow_anchor_echo": "warning",
+    "missed_user_cultural_clue": "warning",
     "reused_reply_structure": "warning",
 }
 PSYCHOLOGIZING_TERMS = (
@@ -95,18 +98,8 @@ GENERIC_BUTTON_TERMS = (
 FORMULAIC_OPENINGS = ("听起来", "我听见", "我听到", "我理解", "我能理解")
 COUNSELING_RESTART_TERMS = ("先了解一下", "说说最近压力最大的事情", "从什么时候开始", "发生了什么")
 OLD_CORRECTION_MODE_TERMS = ("我理解你的感受", "你能说说", "背后真正", "深层原因", "为什么会这样")
-ANCHOR_HINT_TERMS = (
-    "在轮下",
-    "德米安",
-    "荣格",
-    "黑塞",
-    "花",
-    "包子",
-    "猫",
-    "碾死",
-    "奔跑",
-)
-CULTURAL_ANCHOR_TYPES = ("literary", "philosophical", "media", "person")
+DAILY_OR_METAPHOR_ANCHOR_HINT_TERMS = ("花", "包子", "猫", "碾死", "奔跑")
+CULTURAL_ANCHOR_TYPES = ("literary", "philosophical", "media", "person", "quote", "concept", "unknown_cultural")
 CULTURAL_FABRICATION_TERMS = (
     "哈里·哈勒",
     "魔剧院",
@@ -118,8 +111,23 @@ CULTURAL_FABRICATION_TERMS = (
     "小说里",
     "作者写",
     "作者在",
+    "最后明白",
 )
 CULTURAL_UNCERTAINTY_TERMS = ("不确定", "不假装", "只抓住你给出的线索", "只回应你给出的线索", "如果我没把握", "我没把握")
+CULTURAL_FORBIDDEN_CLAIM_TERMS = {
+    "plot_detail": ("主角", "剧情", "情节", "书里", "小说里", "原著里"),
+    "character_detail": ("主角", "角色", "人物", "哈里·哈勒", "魔剧院"),
+    "author_intent": ("作者写", "作者在", "作者想", "作者要表达", "想表达"),
+    "ending": ("结局", "最后明白", "最后"),
+    "quote_attribution": ("原句", "出自", "作者", "诗人", "出处"),
+}
+CULTURAL_CLUE_ALIASES = {
+    "自我寻找": ("自我寻找", "寻找自己", "找自己", "自己的声音", "辨认自己的声音"),
+    "找自己": ("自我寻找", "寻找自己", "找自己", "自己的声音", "辨认自己的声音"),
+    "被推着走": ("被推着走", "推着走", "被推着", "一直被推"),
+    "推着走": ("被推着走", "推着走", "被推着", "一直被推"),
+    "慢半拍": ("慢半拍", "慢了一拍", "跟不上"),
+}
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -199,11 +207,23 @@ def _policy_anchor_terms(policy: dict, state: AgentState) -> list[str]:
             if value:
                 raw_terms.append(value)
     user_text = str(state.get("normalized_text") or state.get("user_text") or "")
-    for term in ANCHOR_HINT_TERMS:
+    for term in DAILY_OR_METAPHOR_ANCHOR_HINT_TERMS:
         if term in user_text:
             raw_terms.append(term)
     book_titles = re.findall(r"《([^》]{1,32})》", user_text)
     raw_terms.extend(book_titles)
+    if _policy_topic_anchor(policy) not in {"", "none"}:
+        compact_user_text = "".join(user_text.split())
+        if len(compact_user_text) <= 18:
+            fallback = re.sub(r"(记得吗|吗|呢|吧)$", "", compact_user_text).strip("，。！？?；;：:")
+            if len(fallback) >= 2:
+                raw_terms.append(fallback)
+        person_match = re.search(
+            r"(?:你觉得|我想聊|想聊聊|想聊|聊聊|先聊|说说|谈谈)(?P<name>[^，。！？?；;：:\s]{2,12})",
+            user_text,
+        )
+        if person_match:
+            raw_terms.append(person_match.group("name").strip("，。！？?；;：:"))
 
     terms: list[str] = []
     seen: set[str] = set()
@@ -282,15 +302,86 @@ def _reused_reply_structure(text: str, state: AgentState, policy: dict) -> bool:
     return len(recent_signatures) >= 2 and recent_signatures[-1] == current and recent_signatures[-2] == current
 
 
+def _anchor_evidence(policy: dict) -> dict:
+    evidence = policy.get("anchor_evidence")
+    return dict(evidence) if isinstance(evidence, dict) else {}
+
+
+def _evidence_user_clues(evidence: dict) -> list[str]:
+    clues = evidence.get("user_clues")
+    if not isinstance(clues, list):
+        return []
+    values: list[str] = []
+    for clue in clues:
+        if not isinstance(clue, dict):
+            continue
+        text = str(clue.get("text") or "").strip()
+        kind = str(clue.get("kind") or "").strip()
+        if text and kind != "knowledge_boundary":
+            values.append(text)
+    return values
+
+
+def _evidence_has_knowledge_boundary(evidence: dict) -> bool:
+    clues = evidence.get("user_clues")
+    if not isinstance(clues, list):
+        return False
+    return any(isinstance(clue, dict) and str(clue.get("kind") or "") == "knowledge_boundary" for clue in clues)
+
+
+def _forbidden_claim_terms(evidence: dict) -> tuple[str, ...]:
+    claims = evidence.get("forbidden_claims")
+    if not isinstance(claims, list):
+        return CULTURAL_FABRICATION_TERMS
+    terms: list[str] = []
+    for claim in claims:
+        terms.extend(CULTURAL_FORBIDDEN_CLAIM_TERMS.get(str(claim or ""), ()))
+    return tuple(dict.fromkeys(terms)) or CULTURAL_FABRICATION_TERMS
+
+
+def _has_forbidden_cultural_claim(text: str, user_text: str, evidence: dict) -> bool:
+    return any(term in text and term not in user_text for term in _forbidden_claim_terms(evidence))
+
+
 def _has_fabricated_cultural_claim(text: str, state: AgentState, policy: dict) -> bool:
     topic_anchor = _policy_topic_anchor(policy)
-    if not any(anchor_type in topic_anchor for anchor_type in CULTURAL_ANCHOR_TYPES):
-        return False
-    if any(term in text for term in CULTURAL_UNCERTAINTY_TERMS):
+    evidence = _anchor_evidence(policy)
+    evidence_anchor_type = str(evidence.get("anchor_type") or "")
+    response_mode = str(evidence.get("response_mode") or "")
+    has_cultural_evidence = any(anchor_type in evidence_anchor_type for anchor_type in CULTURAL_ANCHOR_TYPES)
+    has_cultural_topic = any(anchor_type in topic_anchor for anchor_type in CULTURAL_ANCHOR_TYPES)
+    if not has_cultural_topic and not has_cultural_evidence and not response_mode:
         return False
 
     user_text = str(state.get("normalized_text") or state.get("user_text") or "")
-    return any(term in text and term not in user_text for term in CULTURAL_FABRICATION_TERMS)
+    return _has_forbidden_cultural_claim(text, user_text, evidence)
+
+
+def _has_overconfident_cultural_claim(text: str, state: AgentState, evidence: dict) -> bool:
+    if not evidence:
+        return False
+    response_mode = str(evidence.get("response_mode") or "")
+    if not _evidence_has_knowledge_boundary(evidence) and response_mode != "no_knowledge_claim":
+        return False
+    user_text = str(state.get("normalized_text") or state.get("user_text") or "")
+    return _has_forbidden_cultural_claim(text, user_text, evidence)
+
+
+def _cultural_clue_in_text(clue: str, text: str) -> bool:
+    aliases = CULTURAL_CLUE_ALIASES.get(clue, (clue,))
+    return any(alias and alias in text for alias in aliases)
+
+
+def _missed_user_cultural_clue(text: str, evidence: dict) -> bool:
+    clues = _evidence_user_clues(evidence)
+    return bool(clues) and not any(_cultural_clue_in_text(clue, text) for clue in clues)
+
+
+def _shallow_anchor_echo(text: str, evidence: dict) -> bool:
+    anchor_value = str(evidence.get("anchor_value") or "").strip()
+    if not anchor_value or anchor_value not in text:
+        return False
+    return _missed_user_cultural_clue(text, evidence)
 
 
 def _conversation_experience_reasons(text: str, actions: list[str], state: AgentState) -> list[str]:
@@ -306,7 +397,10 @@ def _conversation_experience_reasons(text: str, actions: list[str], state: Agent
     correction = policy.get("correction_state")
     correction_type = str(correction.get("correction_type") if isinstance(correction, dict) else "")
 
-    if psychologizing_risk == "high" or move in {"ordinary_chat", "correction_followup"}:
+    evidence = _anchor_evidence(policy)
+    is_cultural_anchor = any(anchor_type in topic_anchor for anchor_type in CULTURAL_ANCHOR_TYPES) or bool(evidence)
+
+    if psychologizing_risk == "high" or move in {"ordinary_chat", "correction_followup"} or is_cultural_anchor:
         if any(term in text for term in PSYCHOLOGIZING_TERMS):
             reasons.append("over_psychologizing")
 
@@ -341,6 +435,13 @@ def _conversation_experience_reasons(text: str, actions: list[str], state: Agent
 
     if _has_fabricated_cultural_claim(text, state, policy):
         reasons.append("fabricated_cultural_claim")
+
+    if _has_overconfident_cultural_claim(text, state, evidence):
+        reasons.append("overconfident_cultural_claim")
+    if _missed_user_cultural_clue(text, evidence):
+        reasons.append("missed_user_cultural_clue")
+    if _shallow_anchor_echo(text, evidence):
+        reasons.append("shallow_anchor_echo")
 
     return sorted(set(reasons))
 
@@ -433,6 +534,12 @@ def _repair_focus_block(*, blocked_reasons: list[str], experience_reasons: list[
         lines.append("- ignored_topic_anchor：回复里要看见用户给出的具体锚点，不要泛化成普通情绪。")
     if "fabricated_cultural_claim" in labels:
         lines.append("- fabricated_cultural_claim：不确定作品、人物或典故细节时，只回应用户给出的线索，不要虚构情节、角色或作者观点。")
+    if "overconfident_cultural_claim" in labels:
+        lines.append("- overconfident_cultural_claim：用户没有给出的作品细节不要说成事实；只抓住用户给出的线索。")
+    if "shallow_anchor_echo" in labels:
+        lines.append("- shallow_anchor_echo：不要只复读锚点名，要回应用户给出的主题或画面。")
+    if "missed_user_cultural_clue" in labels:
+        lines.append("- missed_user_cultural_clue：回复里要出现用户给出的文化线索，而不只是作品名或人物名。")
     if "generic_buttons" in labels:
         lines.append("- generic_buttons：按钮要像用户下一句会说的话，不要写内部策略词或泛化按钮。")
     if "reused_formulaic_opening" in labels:

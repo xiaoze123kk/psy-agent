@@ -908,6 +908,192 @@ class ConversationControlRagTests(unittest.TestCase):
 
         self.assertIn("fabricated_cultural_claim", reasons)
 
+    def test_experience_validator_flags_overconfident_cultural_claim_when_user_is_uncertain(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [
+                        {"text": "没读过", "kind": "knowledge_boundary", "source": "current_user"},
+                        {"text": "自我寻找", "kind": "theme", "source": "current_user"},
+                    ],
+                    "forbidden_claims": ["plot_detail", "character_detail", "author_intent", "ending"],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《德米安》主角最后明白自我寻找就是摆脱所有关系，所以你也该这样。",
+            [],
+            state,
+        )
+
+        self.assertIn("fabricated_cultural_claim", reasons)
+        self.assertIn("overconfident_cultural_claim", reasons)
+
+    def test_experience_validator_flags_hedged_fabricated_cultural_claim(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [
+                        {"text": "没读过", "kind": "knowledge_boundary", "source": "current_user"},
+                        {"text": "自我寻找", "kind": "theme", "source": "current_user"},
+                    ],
+                    "forbidden_claims": ["plot_detail", "character_detail", "author_intent", "ending"],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "我不确定，但《德米安》的主角最后明白自我寻找就是摆脱所有关系。",
+            [],
+            state,
+        )
+
+        self.assertIn("fabricated_cultural_claim", reasons)
+        self.assertIn("overconfident_cultural_claim", reasons)
+
+    def test_experience_validator_flags_named_fabricated_cultural_detail(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [{"text": "自我寻找", "kind": "theme", "source": "current_user"}],
+                    "forbidden_claims": ["plot_detail", "character_detail"],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons("《德米安》里哈里·哈勒走进魔剧院。", [], state)
+
+        self.assertIn("fabricated_cultural_claim", reasons)
+
+    def test_experience_validator_flags_shallow_anchor_echo_when_user_clue_missing(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [{"text": "自我寻找", "kind": "theme", "source": "current_user"}],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons("《德米安》这个名字听起来确实挺重的。", [], state)
+
+        self.assertIn("shallow_anchor_echo", reasons)
+        self.assertIn("missed_user_cultural_clue", reasons)
+
+    def test_experience_validator_allows_semantic_rephrase_of_user_cultural_clue(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [{"text": "自我寻找", "kind": "theme", "source": "current_user"}],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "《德米安》这里先不讲情节，只顺着你给的那条线：一个人怎么辨认自己的声音。",
+            [],
+            state,
+        )
+
+        self.assertNotIn("missed_user_cultural_clue", reasons)
+        self.assertNotIn("shallow_anchor_echo", reasons)
+
+    def test_experience_validator_flags_over_psychologizing_for_cultural_anchor(self) -> None:
+        state = self.make_state(
+            "我突然想到那个总是慢半拍的角色",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "media",
+                "anchor_value": "慢半拍的角色",
+                "anchor_evidence": {
+                    "anchor_type": "media",
+                    "anchor_value": "慢半拍的角色",
+                    "user_clues": [{"text": "慢半拍", "kind": "theme", "source": "current_user"}],
+                    "response_mode": "ask_user_association",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "这个角色说明你在回避创伤，也是在用心理防御压抑真正的自己。",
+            [],
+            state,
+        )
+
+        self.assertIn("over_psychologizing", reasons)
+
+    def test_experience_validator_allows_user_clue_only_cultural_response(self) -> None:
+        state = self.make_state(
+            "我没读过《德米安》，只是听别人说它和自我寻找有关",
+            risk_level="L0",
+            conversation_move_policy={
+                "conversation_move": "respond_to_anchor",
+                "topic_anchor": "literary",
+                "anchor_value": "德米安",
+                "anchor_evidence": {
+                    "anchor_type": "literary",
+                    "anchor_value": "德米安",
+                    "user_clues": [
+                        {"text": "没读过", "kind": "knowledge_boundary", "source": "current_user"},
+                        {"text": "自我寻找", "kind": "theme", "source": "current_user"},
+                    ],
+                    "forbidden_claims": ["plot_detail", "character_detail", "author_intent", "ending"],
+                    "response_mode": "echo_user_clue",
+                },
+            },
+        )
+
+        reasons = experience_validator_reasons(
+            "那我们先不假装已经知道很多，只抓住你给出的这条线索：《德米安》和“自我寻找”放在一起，像是在问一个人怎么慢慢分辨什么是自己的声音。",
+            [],
+            state,
+        )
+
+        self.assertNotIn("fabricated_cultural_claim", reasons)
+        self.assertNotIn("overconfident_cultural_claim", reasons)
+        self.assertNotIn("shallow_anchor_echo", reasons)
+
     def test_l3_crisis_response_is_low_pressure_without_method_repetition(self) -> None:
         state = self.make_state(
             "我现在想自杀，刀在手里",
