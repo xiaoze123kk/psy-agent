@@ -39,7 +39,7 @@ class ToolGateTests(unittest.TestCase):
     def test_gate_directly_blocks_disallowed_tools(self) -> None:
         gate = ToolGate(risk_level="L2", memory_mode="long_term")
 
-        self.assertFalse(gate.allows("search_memories"))
+        self.assertTrue(gate.allows("search_memories"))
         self.assertFalse(gate.allows("save_memory_summary"))
         self.assertTrue(gate.allows("get_safety_resources"))
         self.assertFalse(gate.allows("ask_knowledge"))
@@ -51,15 +51,30 @@ class ToolGateTests(unittest.TestCase):
         self.assertEqual(tool_names, ["search_memories", "save_memory_summary", "get_safety_resources", "web_search", "get_current_time", "get_weather", "summarize_session"])
         self.assertEqual(plan.allowed_tool_names, tool_names)
         self.assertNotIn("ask_knowledge", tool_names)
-        self.assertFalse(plan.blocked_tool_names)
+        self.assertEqual(plan.blocked_tool_names, ["safe_web_search"])
 
-    def test_high_risk_plan_limits_to_safety_tools(self) -> None:
+    def test_high_risk_plan_exposes_safety_context_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(risk_level="L2"))
 
-        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_safety_resources", "get_current_time", "summarize_session"])
-        self.assertEqual(plan.allowed_tool_names, ["get_safety_resources", "get_current_time", "summarize_session"])
-        self.assertIn("search_memories", plan.blocked_tool_names)
+        self.assertEqual(
+            [tool["function"]["name"] for tool in plan.tools],
+            ["search_memories", "get_safety_resources", "safe_web_search", "get_current_time", "summarize_session"],
+        )
+        self.assertEqual(
+            plan.allowed_tool_names,
+            ["search_memories", "get_safety_resources", "safe_web_search", "get_current_time", "summarize_session"],
+        )
         self.assertIn("save_memory_summary", plan.blocked_tool_names)
+        self.assertIn("web_search", plan.blocked_tool_names)
+        self.assertIn("get_weather", plan.blocked_tool_names)
+
+    def test_blocked_context_keeps_only_minimal_tools(self) -> None:
+        state = make_state(risk_level="L1")
+        state["tool_gate_mode"] = "blocked_context"
+
+        plan = build_dialogue_tool_plan(state)
+
+        self.assertEqual([tool["function"]["name"] for tool in plan.tools], ["get_current_time", "summarize_session"])
 
     def test_memory_mode_off_limits_to_safety_tools(self) -> None:
         plan = build_dialogue_tool_plan(make_state(memory_mode="off"))
@@ -197,6 +212,41 @@ class MemoryToolHandlerTests(unittest.TestCase):
         self.assertEqual(adult_resources["region"], "US")
         self.assertIn("school", {item["resource_type"] for item in teen_resources["items"]})
         self.assertIn("adult_support", {item["resource_type"] for item in adult_resources["items"]})
+
+    def test_high_risk_search_memories_returns_safe_context_only(self) -> None:
+        state = make_state(
+            risk_level="L3",
+            memory_index=[
+                {
+                    "memory_id": "pref-1",
+                    "memory_type": "preference",
+                    "title": "Style",
+                    "description": "User dislikes command-like replies.",
+                    "importance": 4,
+                    "visibility": "user_visible",
+                    "updated_at": "2026-05-01T00:00:00+00:00",
+                    "freshness_warning": "",
+                },
+                {
+                    "memory_id": "state-1",
+                    "memory_type": "state",
+                    "title": "Ordinary state",
+                    "description": "Should not show in safety context.",
+                    "importance": 4,
+                    "visibility": "user_visible",
+                    "updated_at": "2026-05-01T00:00:00+00:00",
+                    "freshness_warning": "",
+                },
+            ],
+        )
+        state["tool_gate_mode"] = "safety_context"
+        plan = build_dialogue_tool_plan(state)
+
+        result = plan.tool_handlers["search_memories"]({"query": "style", "limit": 5})
+
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["memory_id"], "pref-1")
+        self.assertNotIn("state-1", str(result))
 
 
 class ToolAuditSummaryTests(unittest.TestCase):
@@ -371,7 +421,8 @@ class GetCurrentTimeToolTests(unittest.TestCase):
         self.assertIn("timezone", result)
         self.assertIn("weekday", result)
         self.assertIn("session_elapsed_seconds", result)
-        self.assertEqual(result["timezone"], "Asia/Shanghai")
+        self.assertEqual(result["timezone"], "Asia/Wuhan")
+        self.assertIn("day_period", result)
         self.assertIn(result["weekday"], {"星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"})
 
     def test_get_current_time_session_elapsed_starts_at_zero(self) -> None:

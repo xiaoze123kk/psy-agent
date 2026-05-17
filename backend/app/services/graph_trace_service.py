@@ -18,6 +18,30 @@ MAX_LIST_ITEMS = 10
 MAX_DICT_ITEMS = 20
 MAX_TRACE_STEPS = 12
 MAX_MEMORY_REFERENCES = 5
+SAFE_POLICY_SCALAR_KEYS = {
+    "conversation_move",
+    "topic_anchor",
+    "button_style",
+    "psychologizing_risk",
+    "cultural_response_mode",
+    "primary_lane",
+}
+SAFE_VOICE_CONTRACT_KEYS = {
+    "voice_mode",
+    "analysis_depth",
+    "question_budget",
+    "sentence_budget",
+    "opening_preference",
+    "closing_preference",
+    "humor_allowed",
+}
+SAFE_ADAPTATION_KEYS = {
+    "avoid_analysis_turns",
+    "avoid_questions_turns",
+    "avoid_safety_check_turns",
+    "prefer_direct_anchor_response_turns",
+    "last_correction_type",
+}
 
 BLOCKED_KEYS = {
     "assistant_text",
@@ -42,6 +66,8 @@ SAFE_DIRECT_KEYS = {
     "control_category",
     "control_confidence",
     "control_reasons",
+    "conversation_quality_trace",
+    "conversation_move_policy",
     "delivery_status",
     "example_ids",
     "example_source_keys",
@@ -54,6 +80,7 @@ SAFE_DIRECT_KEYS = {
     "memory_write_decisions",
     "node_name",
     "rag_skipped_reason",
+    "rag_trace_summary",
     "rag_used",
     "requires_safety_check",
     "retryable",
@@ -68,6 +95,9 @@ SAFE_DIRECT_KEYS = {
     "should_write_memory",
     "validator_blocked",
     "validator_reasons",
+    "validator_severity",
+    "experience_validator_warnings",
+    "experience_validator_blocking_reasons",
 }
 
 SAFE_RISK_FORMULATION_KEYS = {
@@ -139,6 +169,89 @@ def _summarize_risk_formulation(value: object) -> dict[str, object]:
     }
 
 
+def _safe_topic_anchor(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_value(value[key])
+            for key in ("type", "anchor_type", "kind")
+            if key in value and value[key] not in ("", [], {})
+        }
+    text = str(value or "").strip()
+    if "/" in text:
+        return text.split("/", 1)[0]
+    return _sanitize_value(text)
+
+
+def _summarize_intent_lanes(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    lanes: list[dict[str, object]] = []
+    for lane in value[:MAX_LIST_ITEMS]:
+        if not isinstance(lane, dict):
+            continue
+        summary = {
+            key: _sanitize_value(lane[key])
+            for key in ("kind", "anchor_type", "priority", "handling")
+            if lane.get(key) not in (None, "", [], {})
+        }
+        clues = lane.get("user_clues")
+        if isinstance(clues, list):
+            summary["user_clue_count"] = len(clues)
+        if summary:
+            lanes.append(summary)
+    return lanes
+
+
+def summarize_conversation_move_policy(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    summary: dict[str, object] = {}
+    for key in SAFE_POLICY_SCALAR_KEYS:
+        if key not in value or value[key] in ("", [], {}):
+            continue
+        summary[key] = _safe_topic_anchor(value[key]) if key == "topic_anchor" else _sanitize_value(value[key])
+
+    lanes = _summarize_intent_lanes(value.get("intent_lanes"))
+    if lanes:
+        summary["intent_lanes"] = lanes
+        summary["intent_lane_count"] = len(value.get("intent_lanes") or [])
+
+    voice_contract = value.get("ningyu_voice_contract")
+    if isinstance(voice_contract, dict):
+        contract_summary = {
+            key: _sanitize_value(voice_contract[key])
+            for key in SAFE_VOICE_CONTRACT_KEYS
+            if key in voice_contract and voice_contract[key] not in ("", [], {})
+        }
+        if contract_summary:
+            summary["ningyu_voice_contract"] = contract_summary
+
+    adaptation = value.get("adaptation_state")
+    if isinstance(adaptation, dict):
+        adaptation_summary = {
+            key: _sanitize_value(adaptation[key])
+            for key in SAFE_ADAPTATION_KEYS
+            if key in adaptation and adaptation[key] not in ("", [], {})
+        }
+        if adaptation_summary:
+            summary["adaptation_state"] = adaptation_summary
+
+    evidence = value.get("anchor_evidence")
+    if isinstance(evidence, dict):
+        evidence_summary = {
+            key: _sanitize_value(evidence[key])
+            for key in ("anchor_type", "response_mode")
+            if key in evidence and evidence[key] not in ("", [], {})
+        }
+        if isinstance(evidence.get("user_clues"), list):
+            evidence_summary["user_clue_count"] = len(evidence["user_clues"])
+        if isinstance(evidence.get("forbidden_claims"), list):
+            evidence_summary["forbidden_claim_count"] = len(evidence["forbidden_claims"])
+        if evidence_summary:
+            summary["anchor_evidence"] = evidence_summary
+    return _sanitize_summary(summary)
+
+
 def summarize_node_output(node_name: str, node_output: object) -> dict[str, object]:
     if not isinstance(node_output, dict):
         return {"node_output_type": type(node_output).__name__}
@@ -146,7 +259,12 @@ def summarize_node_output(node_name: str, node_output: object) -> dict[str, obje
     summary: dict[str, object] = {}
     for key in SAFE_DIRECT_KEYS:
         if key in node_output and node_output[key] not in ("", [], {}):
-            summary[key] = _sanitize_value(node_output[key])
+            if key == "conversation_move_policy":
+                policy_summary = summarize_conversation_move_policy(node_output[key])
+                if policy_summary:
+                    summary[key] = policy_summary
+            else:
+                summary[key] = _sanitize_value(node_output[key])
 
     if "risk_formulation" in node_output:
         risk_formulation = _summarize_risk_formulation(node_output["risk_formulation"])
@@ -209,6 +327,13 @@ def _first_present(*values: object) -> object | None:
     return None
 
 
+def _optional_text(value: object) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    text = str(value)
+    return "" if text.lower() == "none" else text
+
+
 def _latest_trace_value(graph_trace: list[dict[str, object]], key: str) -> object | None:
     for record in reversed(graph_trace):
         summary = _as_dict(record.get("output_summary"))
@@ -268,6 +393,8 @@ def extract_reason_codes(summary: dict[str, object]) -> list[str]:
     codes: list[str] = []
     codes.extend(_as_string_list(summary.get("risk_reason_codes")))
     codes.extend(_as_string_list(summary.get("validator_reasons")))
+    codes.extend(_as_string_list(summary.get("experience_validator_blocking_reasons")))
+    codes.extend(_as_string_list(summary.get("experience_validator_warnings")))
     if isinstance(summary.get("risk_formulation"), dict):
         codes.extend(_as_string_list(summary["risk_formulation"].get("reason_codes")))
     for key in ("failure_reason", "rag_skipped_reason", "memory_policy_reason"):
@@ -367,6 +494,19 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
     validator_reasons = _as_string_list(result.get("validator_reasons")) or _as_string_list(
         _latest_trace_value(graph_trace, "validator_reasons")
     )
+    experience_validator_warnings = _as_string_list(result.get("experience_validator_warnings")) or _as_string_list(
+        _latest_trace_value(graph_trace, "experience_validator_warnings")
+    )
+    experience_validator_blocking_reasons = _as_string_list(
+        result.get("experience_validator_blocking_reasons")
+    ) or _as_string_list(_latest_trace_value(graph_trace, "experience_validator_blocking_reasons"))
+    validator_severity = str(
+        _first_present(
+            result.get("validator_severity"),
+            _latest_trace_value(graph_trace, "validator_severity"),
+            "passed" if not validator_reasons and not experience_validator_warnings else "warning",
+        )
+    )
     referenced_memories = _safe_memory_references(result.get("referenced_memories"))
     retrieved_memory_count = _max_present_int(
         result.get("retrieved_memory_count"),
@@ -381,9 +521,23 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
     rag_used = _as_bool(result.get("rag_used"))
     if rag_used is None:
         rag_used = _latest_trace_bool(graph_trace, "rag_used") or False
+    rag_trace_summary = _sanitize_summary(
+        _first_present(
+            result.get("rag_trace_summary"),
+            _latest_trace_value(graph_trace, "rag_trace_summary"),
+            {},
+        )
+    )
     validator_blocked = _as_bool(result.get("validator_blocked"))
     if validator_blocked is None:
         validator_blocked = _latest_trace_bool(graph_trace, "validator_blocked") or False
+    conversation_quality = _sanitize_summary(
+        _first_present(
+            result.get("conversation_quality_trace"),
+            _latest_trace_value(graph_trace, "conversation_quality_trace"),
+            {},
+        )
+    )
     steps = [_safe_step(record) for record in graph_trace[:MAX_TRACE_STEPS]]
     tooling = _sanitize_summary(result.get("tool_trace_summary") or {})
     if not tooling:
@@ -425,7 +579,10 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
         },
         "rag": {
             "used": rag_used,
-            "skipped_reason": str(_first_present(result.get("rag_skipped_reason"), _latest_trace_value(graph_trace, "rag_skipped_reason"), "")),
+            "skipped_reason": _optional_text(
+                _first_present(result.get("rag_skipped_reason"), _latest_trace_value(graph_trace, "rag_skipped_reason"), "")
+            ),
+            "trace": rag_trace_summary,
             "retrieved_example_count": _max_present_int(
                 result.get("retrieved_example_count"),
                 _latest_trace_int(graph_trace, "retrieved_example_count"),
@@ -440,8 +597,12 @@ def build_trace_summary(graph_trace: list[dict[str, object]], result: dict[str, 
             "checked": any(str(record.get("node_name") or "") == "response_validator" for record in graph_trace),
             "blocked": validator_blocked,
             "reasons": validator_reasons,
+            "severity": validator_severity,
+            "warnings": experience_validator_warnings,
+            "experience_blocking_reasons": experience_validator_blocking_reasons,
             "delivery_status": delivery_status,
         },
+        "conversation_quality": conversation_quality,
         "tooling": tooling,
         "fallback": {
             "triggered": delivery_status != "generated" or bool(failure_reason),

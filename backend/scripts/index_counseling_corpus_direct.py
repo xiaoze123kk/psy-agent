@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.services.counseling_chunking import DialoguePair, LayeredChunk, build_layered_chunks
 from app.services.counseling_vector_service import COUNSELING_CORPUS_SOURCES
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
@@ -88,6 +90,8 @@ class ParsedExample:
     content: str
     source_url: str
     license: str
+    tags: list[str]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -95,6 +99,27 @@ class ImportCounts:
     parsed: int = 0
     indexed: int = 0
     skipped: int = 0
+    resumed: int = 0
+
+
+@dataclass(frozen=True)
+class BatchFlushResult:
+    indexed: int
+    skipped: int
+    completed: bool
+
+
+@dataclass(frozen=True)
+class SourcePosition:
+    file_name: str
+    item_index: int
+    chunk_offset: int
+
+
+@dataclass(frozen=True)
+class PositionedExample:
+    example: ParsedExample
+    position: SourcePosition
 
 
 def _clean_text(text: object) -> str:
@@ -110,6 +135,15 @@ def _clip_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3].rstrip() + "..."
+
+
+def _clip_utf8_bytes(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    suffix = "...".encode("utf-8")
+    clipped = encoded[: max(max_bytes - len(suffix), 0)]
+    return clipped.decode("utf-8", errors="ignore").rstrip() + "..."
 
 
 def _contains_high_risk(text: str) -> bool:
@@ -144,6 +178,32 @@ def _content(context_text: str, user_text: str, assistant_text: str) -> str:
     parts.append(f"用户：{user_text}")
     parts.append(f"咨询回应：{assistant_text}")
     return _clip_text("\n".join(parts), MAX_CONTENT_TEXT_CHARS)
+
+
+def _parsed_from_layered_chunk(
+    *,
+    source_key: str,
+    source_name: str,
+    source_url: str,
+    license: str,
+    chunk: LayeredChunk,
+) -> ParsedExample:
+    return ParsedExample(
+        source_key=source_key,
+        source_name=source_name,
+        external_id=chunk.external_id[:160],
+        chunk_index=chunk.chunk_index,
+        mode=chunk.mode,
+        topic=(chunk.topic or "")[:80],
+        user_text=_clip_text(chunk.user_text, MAX_USER_TEXT_CHARS),
+        assistant_text=_clip_text(chunk.assistant_text, MAX_ASSISTANT_TEXT_CHARS),
+        context_text=_clip_text(chunk.context_text or "", MAX_CONTEXT_TEXT_CHARS),
+        content=_clip_text(chunk.content, MAX_CONTENT_TEXT_CHARS),
+        source_url=source_url,
+        license=license,
+        tags=chunk.tags,
+        metadata=chunk.metadata,
+    )
 
 
 def _topic_from_item(item: dict[str, Any]) -> str:
@@ -235,8 +295,11 @@ def _pairs_from_messages(
     messages: list[dict[str, str]],
 ) -> Iterator[ParsedExample]:
     source = COUNSELING_CORPUS_SOURCES[source_key]
+    source_name = str(source["name"])
+    source_url = str(source["base_url"])
+    license = str(source["license"])
     prior: list[str] = []
-    pair_index = 0
+    pairs: list[DialoguePair] = []
     waiting_user: str | None = None
 
     for message in messages:
@@ -253,27 +316,25 @@ def _pairs_from_messages(
         raw_assistant_text = content
         raw_context_text = "\n".join(prior[:-1][-4:])
         if _is_safe_example(raw_user_text, raw_assistant_text, raw_context_text):
-            user_text = _clip_text(raw_user_text, MAX_USER_TEXT_CHARS)
-            assistant_text = _clip_text(raw_assistant_text, MAX_ASSISTANT_TEXT_CHARS)
-            context_text = _clip_text(raw_context_text, MAX_CONTEXT_TEXT_CHARS)
-            mode = _classify_mode(user_text, assistant_text)
-            yield ParsedExample(
-                source_key=source_key,
-                source_name=str(source["name"]),
-                external_id=external_id[:160],
-                chunk_index=pair_index,
-                mode=mode,
-                topic=topic[:80],
-                user_text=waiting_user,
-                assistant_text=assistant_text,
-                context_text=context_text,
-                content=_content(context_text, waiting_user, assistant_text),
-                source_url=str(source["base_url"]),
-                license=str(source["license"]),
+            pairs.append(
+                DialoguePair(
+                    user_text=_clip_text(raw_user_text, MAX_USER_TEXT_CHARS),
+                    assistant_text=_clip_text(raw_assistant_text, MAX_ASSISTANT_TEXT_CHARS),
+                    context_text=_clip_text(raw_context_text, MAX_CONTEXT_TEXT_CHARS),
+                )
             )
-            pair_index += 1
         prior.append(f"咨询师：{raw_assistant_text}")
         waiting_user = None
+
+    chunks = build_layered_chunks(pairs, external_id=external_id, topic=topic, parser="messages")
+    for chunk in chunks:
+        yield _parsed_from_layered_chunk(
+            source_key=source_key,
+            source_name=source_name,
+            source_url=source_url,
+            license=license,
+            chunk=chunk,
+        )
 
 
 def _parse_item(item: dict[str, Any], index: int, source_key: str) -> Iterator[ParsedExample]:
@@ -432,11 +493,197 @@ def _vector_row(example: ParsedExample, vector: list[float]) -> dict[str, object
         "status": "published",
         "embedding_key": embedding_client.embedding_key,
         "content": example.content,
+        "language": "zh-CN",
+        "age_group": "general",
+        "review_status": "approved",
+        "risk_allowed": "non_crisis",
+        "scenario_tags": ",".join(example.tags),
+        "intervention_tags": ",".join(str(tag) for tag in example.metadata.get("intervention_tags", []) if tag),
+        "style_tags": "supportive",
+        "contraindications": "",
+        "quality_score": str(example.metadata.get("process_quality_score", "")),
+        "safety_score": "",
+        "chunk_type": str(example.metadata.get("chunk_type") or "turn_pair"),
+        "original_external_id": str(example.metadata.get("original_external_id") or example.external_id),
+        "phase": str(example.metadata.get("phase") or ""),
+        "display_text": _clip_utf8_bytes(str(example.metadata.get("display_text") or ""), 2048),
+        "process_quality_score": str(example.metadata.get("process_quality_score", "")),
         "vector": vector,
     }
 
 
-async def _flush_batch(examples: list[ParsedExample]) -> tuple[int, int]:
+def _load_resume_state(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {"sources": {}}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (json.JSONDecodeError, OSError):
+        return {"sources": {}}
+    return raw if isinstance(raw, dict) else {"sources": {}}
+
+
+def _source_resume_counts(state: dict[str, Any], source_key: str) -> dict[str, Any]:
+    sources = state.get("sources")
+    if not isinstance(sources, dict):
+        return {"completed_chunks": 0, "indexed": 0, "skipped": 0, "position": None}
+    raw = sources.get(source_key)
+    if not isinstance(raw, dict):
+        return {"completed_chunks": 0, "indexed": 0, "skipped": 0, "position": None}
+    counts: dict[str, Any] = {}
+    for key in ("completed_chunks", "indexed", "skipped"):
+        try:
+            counts[key] = max(int(raw.get(key) or 0), 0)
+        except (TypeError, ValueError):
+            counts[key] = 0
+    position = raw.get("position")
+    counts["position"] = position if isinstance(position, dict) else None
+    return counts
+
+
+def _save_resume_state(
+    path: Path | None,
+    state: dict[str, Any],
+    source_key: str,
+    *,
+    completed_chunks: int,
+    indexed: int,
+    skipped: int,
+    position: SourcePosition | None = None,
+) -> None:
+    if path is None:
+        return
+    sources = state.setdefault("sources", {})
+    if not isinstance(sources, dict):
+        sources = {}
+        state["sources"] = sources
+    source_state: dict[str, Any] = {
+        "completed_chunks": completed_chunks,
+        "indexed": indexed,
+        "skipped": skipped,
+    }
+    if position is not None:
+        source_state["position"] = {
+            "file_name": position.file_name,
+            "item_index": position.item_index,
+            "chunk_offset": position.chunk_offset,
+        }
+    sources[source_key] = source_state
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    for attempt in range(5):
+        try:
+            tmp_path.replace(path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2)
+
+
+def _position_from_resume(raw: dict[str, Any] | None) -> SourcePosition | None:
+    if not raw:
+        return None
+    file_name = str(raw.get("file_name") or "").strip()
+    try:
+        item_index = int(raw.get("item_index"))
+        chunk_offset = int(raw.get("chunk_offset") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not file_name or item_index < 0 or chunk_offset < 0:
+        return None
+    return SourcePosition(file_name=file_name, item_index=item_index, chunk_offset=chunk_offset)
+
+
+def _file_order_key(file_name: str) -> tuple[int, int | str]:
+    stem = Path(file_name).stem
+    if stem.isdigit():
+        return (0, int(stem))
+    return (1, file_name)
+
+
+def _file_is_before(left: str, right: str) -> bool:
+    return _file_order_key(left) < _file_order_key(right)
+
+
+def _file_is_after(left: str, right: str) -> bool:
+    return _file_order_key(left) > _file_order_key(right)
+
+
+def _position_is_before_or_at(position: SourcePosition, resume_position: SourcePosition) -> bool:
+    if _file_is_before(position.file_name, resume_position.file_name):
+        return True
+    if _file_is_after(position.file_name, resume_position.file_name):
+        return False
+    if position.item_index < resume_position.item_index:
+        return True
+    if position.item_index > resume_position.item_index:
+        return False
+    return position.chunk_offset <= resume_position.chunk_offset
+
+
+def _iter_positioned_source_examples(
+    source_key: str,
+    corpus_root: Path,
+    *,
+    smilechat_start_file: int | None = None,
+    quiet_files: bool = False,
+    resume_position: SourcePosition | None = None,
+) -> Iterator[PositionedExample]:
+    if source_key == "smilechat":
+        data_dir = corpus_root / "smilechat" / "data"
+        files = sorted(data_dir.glob("*.json"), key=lambda path: int(path.stem) if path.stem.isdigit() else path.stem)
+        for file_index, file_path in enumerate(files):
+            if smilechat_start_file is not None and file_path.stem.isdigit() and int(file_path.stem) < smilechat_start_file:
+                continue
+            if resume_position is not None and _file_is_before(file_path.name, resume_position.file_name):
+                continue
+            if not quiet_files:
+                print(f"[{source_key}] reading {file_path.name}", flush=True)
+            try:
+                turns = json.loads(file_path.read_text(encoding="utf-8-sig"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(turns, list):
+                continue
+            if (
+                resume_position is not None
+                and file_path.name == resume_position.file_name
+                and file_index < resume_position.item_index
+            ):
+                continue
+            item = {"id": file_path.stem, "messages": turns}
+            for chunk_offset, example in enumerate(_parse_item(item, file_index, source_key)):
+                yield PositionedExample(
+                    example=example,
+                    position=SourcePosition(file_name=file_path.name, item_index=file_index, chunk_offset=chunk_offset),
+                )
+        return
+
+    source_dir = corpus_root / source_key
+    json_files = sorted(path for path in source_dir.glob("*.json") if path.is_file())
+    for file_path in json_files:
+        if resume_position is not None and _file_is_before(file_path.name, resume_position.file_name):
+            continue
+        if not quiet_files:
+            print(f"[{source_key}] reading {file_path.name}", flush=True)
+        for index, item in enumerate(_iter_json_or_jsonl(file_path)):
+            if (
+                resume_position is not None
+                and file_path.name == resume_position.file_name
+                and index < resume_position.item_index
+            ):
+                continue
+            raw_id = item.get("external_id") or item.get("id") or item.get("conversation_id") or item.get("uuid") or index
+            item = {**item, "external_id": f"{file_path.stem}_{index}_{raw_id}"}
+            for chunk_offset, example in enumerate(_parse_item(item, index, source_key)):
+                yield PositionedExample(
+                    example=example,
+                    position=SourcePosition(file_name=file_path.name, item_index=index, chunk_offset=chunk_offset),
+                )
+
+
+async def _flush_batch(examples: list[ParsedExample]) -> BatchFlushResult:
     unique_examples: list[ParsedExample] = []
     seen_ids: set[str] = set()
     duplicate_count = 0
@@ -449,15 +696,38 @@ async def _flush_batch(examples: list[ParsedExample]) -> tuple[int, int]:
         unique_examples.append(example)
 
     if not unique_examples:
-        return 0, duplicate_count
+        return BatchFlushResult(indexed=0, skipped=duplicate_count, completed=True)
 
-    vectors = await embedding_client.embed_texts([example.content for example in unique_examples])
+    if len(unique_examples) > 1:
+        vectors = await embedding_client.embed_documents([example.content for example in unique_examples])
+        if vectors is None:
+            midpoint = len(unique_examples) // 2
+            left = await _flush_batch(unique_examples[:midpoint])
+            right = await _flush_batch(unique_examples[midpoint:])
+            return BatchFlushResult(
+                indexed=left.indexed + right.indexed,
+                skipped=duplicate_count + left.skipped + right.skipped,
+                completed=left.completed and right.completed,
+            )
+        rows = [_vector_row(example, vector) for example, vector in zip(unique_examples, vectors)]
+        if milvus_store.upsert_counseling_examples(rows):
+            return BatchFlushResult(indexed=len(rows), skipped=duplicate_count, completed=True)
+        midpoint = len(unique_examples) // 2
+        left = await _flush_batch(unique_examples[:midpoint])
+        right = await _flush_batch(unique_examples[midpoint:])
+        return BatchFlushResult(
+            indexed=left.indexed + right.indexed,
+            skipped=duplicate_count + left.skipped + right.skipped,
+            completed=left.completed and right.completed,
+        )
+
+    vectors = await embedding_client.embed_documents([example.content for example in unique_examples])
     if vectors is None:
-        return 0, len(unique_examples) + duplicate_count
+        return BatchFlushResult(indexed=0, skipped=len(unique_examples) + duplicate_count, completed=False)
     rows = [_vector_row(example, vector) for example, vector in zip(unique_examples, vectors)]
     if milvus_store.upsert_counseling_examples(rows):
-        return len(rows), duplicate_count
-    return 0, len(rows) + duplicate_count
+        return BatchFlushResult(indexed=len(rows), skipped=duplicate_count, completed=True)
+    return BatchFlushResult(indexed=0, skipped=len(rows) + duplicate_count, completed=False)
 
 
 async def index_sources(
@@ -469,6 +739,7 @@ async def index_sources(
     progress_every: int,
     smilechat_start_file: int | None = None,
     quiet_files: bool = False,
+    resume_state_file: Path | None = None,
 ) -> dict[str, ImportCounts]:
     if not embedding_client.is_configured:
         raise RuntimeError("Embedding provider is not configured.")
@@ -476,26 +747,55 @@ async def index_sources(
         raise RuntimeError("Milvus counseling collection is not available.")
 
     results: dict[str, ImportCounts] = {}
+    resume_state = _load_resume_state(resume_state_file)
     for source_key in sources:
+        resume_counts = _source_resume_counts(resume_state, source_key)
+        completed_chunks = resume_counts["completed_chunks"]
+        resume_position = _position_from_resume(resume_counts["position"])
         counts = ImportCounts()
+        counts.resumed = completed_chunks
         batch: list[ParsedExample] = []
+        batch_positions: list[SourcePosition] = []
         last_report = 0
-        for example in _iter_source_examples(
+        seen_source_chunks = 0
+        for positioned in _iter_positioned_source_examples(
             source_key,
             corpus_root,
             smilechat_start_file=smilechat_start_file,
             quiet_files=quiet_files,
+            resume_position=resume_position,
         ):
+            if resume_position is not None and _position_is_before_or_at(positioned.position, resume_position):
+                continue
+            example = positioned.example
+            seen_source_chunks += 1
+            if resume_position is None and seen_source_chunks <= completed_chunks:
+                continue
             batch.append(example)
+            batch_positions.append(positioned.position)
             counts.parsed += 1
             if len(batch) >= batch_size:
-                indexed, skipped = await _flush_batch(batch)
-                counts.indexed += indexed
-                counts.skipped += skipped
+                result = await _flush_batch(batch)
+                counts.indexed += result.indexed
+                counts.skipped += result.skipped
+                if not result.completed:
+                    raise RuntimeError(f"Failed to index {source_key} batch ending at chunk {seen_source_chunks}.")
+                completed_chunks += len(batch)
+                _save_resume_state(
+                    resume_state_file,
+                    resume_state,
+                    source_key,
+                    completed_chunks=completed_chunks,
+                    indexed=resume_counts["indexed"] + counts.indexed,
+                    skipped=resume_counts["skipped"] + counts.skipped,
+                    position=batch_positions[-1],
+                )
                 batch = []
+                batch_positions = []
                 if counts.parsed - last_report >= progress_every:
                     print(
-                        f"[{source_key}] parsed={counts.parsed} indexed={counts.indexed} skipped={counts.skipped}",
+                        f"[{source_key}] resumed={counts.resumed} parsed={counts.parsed} "
+                        f"indexed={counts.indexed} skipped={counts.skipped}",
                         flush=True,
                     )
                     last_report = counts.parsed
@@ -503,12 +803,25 @@ async def index_sources(
                 break
 
         if batch:
-            indexed, skipped = await _flush_batch(batch)
-            counts.indexed += indexed
-            counts.skipped += skipped
+            result = await _flush_batch(batch)
+            counts.indexed += result.indexed
+            counts.skipped += result.skipped
+            if not result.completed:
+                raise RuntimeError(f"Failed to index {source_key} final batch ending at chunk {seen_source_chunks}.")
+            completed_chunks += len(batch)
+            _save_resume_state(
+                resume_state_file,
+                resume_state,
+                source_key,
+                completed_chunks=completed_chunks,
+                indexed=resume_counts["indexed"] + counts.indexed,
+                skipped=resume_counts["skipped"] + counts.skipped,
+                position=batch_positions[-1],
+            )
         results[source_key] = counts
         print(
-            f"[{source_key}] done parsed={counts.parsed} indexed={counts.indexed} skipped={counts.skipped}",
+            f"[{source_key}] done resumed={counts.resumed} parsed={counts.parsed} "
+            f"indexed={counts.indexed} skipped={counts.skipped}",
             flush=True,
         )
     return results
@@ -538,11 +851,18 @@ async def main() -> None:
         help="Skip SMILECHAT files whose numeric file stem is lower than this value.",
     )
     parser.add_argument("--quiet-files", action="store_true", help="Do not print every source file as it is read.")
+    parser.add_argument(
+        "--resume-state-file",
+        type=Path,
+        help="JSON state file for resumable local indexing. Completed chunks are skipped on the next run.",
+    )
     args = parser.parse_args()
 
     sources = args.source or ["soulchat_corpus", "psydt_corpus", "smilechat"]
     if args.recreate:
         milvus_store.drop_collections("counseling")
+        if args.resume_state_file and args.resume_state_file.exists():
+            args.resume_state_file.unlink()
 
     results = await index_sources(
         sources=sources,
@@ -552,10 +872,14 @@ async def main() -> None:
         progress_every=max(args.progress_every, 1),
         smilechat_start_file=args.smilechat_start_file,
         quiet_files=args.quiet_files,
+        resume_state_file=args.resume_state_file,
     )
     print(
         json.dumps(
-            {key: {"parsed": val.parsed, "indexed": val.indexed, "skipped": val.skipped} for key, val in results.items()},
+            {
+                key: {"resumed": val.resumed, "parsed": val.parsed, "indexed": val.indexed, "skipped": val.skipped}
+                for key, val in results.items()
+            },
             ensure_ascii=False,
             indent=2,
         )

@@ -439,6 +439,24 @@ class SlowGraphRuntime:
         return {}
 
 
+class SlowGraphStreamRuntime:
+    async def stream_turn(self, **kwargs):
+        await asyncio.sleep(1)
+        yield "graph_result", {
+            "assistant_text": "我在。",
+            "risk_level": "L0",
+            "intent": "other",
+            "suggested_actions": ["我还想说"],
+            "session_summary": "本轮可见摘要",
+            "should_write_memory": False,
+            "referenced_memories": [],
+            "delivery_status": "generated",
+            "failure_reason": None,
+            "retryable": False,
+            "trace_summary": {"total_graph_duration_ms": 1, "node_count": 1},
+        }
+
+
 class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_vector_retrieval = os.environ.get("MEMORY_VECTOR_RETRIEVAL_ENABLED")
@@ -615,7 +633,7 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_rows, [])
         self.assertEqual(memories, [])
 
-    async def test_high_risk_chat_turn_timeout_persists_safety_fallback(self) -> None:
+    async def test_high_risk_chat_turn_timeout_returns_failed_no_reply_without_template(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
         chat_service.graph_runtime = SlowGraphRuntime()
         chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
@@ -628,14 +646,59 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         )
         memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
 
-        self.assertIsNotNone(assistant_message)
-        self.assertEqual(result["delivery_status"], "safety_fallback")
-        self.assertEqual(assistant_message.content, result["assistant_text"])
-        self.assertIn("安全", assistant_message.content)
+        self.assertIsNone(assistant_message)
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertTrue(result["requires_safety_check"])
+        self.assertEqual(result["route_priority"], "P0_immediate_safety")
         self.assertEqual(result["referenced_memories"], [])
-        self.assertFalse(result["retryable"])
+        self.assertTrue(result["retryable"])
         self.assertFalse(result["should_write_memory"])
         self.assertEqual(memories, [])
+
+    async def test_l2_chat_turn_timeout_returns_failed_no_reply_without_template(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        _, assistant_message, result = await chat_service.process_message_turn(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="我现在有点想死"),
+        )
+
+        self.assertIsNone(assistant_message)
+        self.assertEqual(result["risk_level"], "L2")
+        self.assertEqual(result["delivery_status"], "failed_no_reply")
+        self.assertEqual(result["assistant_text"], "")
+        self.assertEqual(result["suggested_actions"], [])
+        self.assertTrue(result["requires_safety_check"])
+        self.assertTrue(result["retryable"])
+
+    async def test_stream_chat_turn_timeout_cleans_up_without_runtime_error(self) -> None:
+        user, thread = self.create_user_with_thread(memory_mode="summary_only")
+        chat_service.graph_runtime = SlowGraphStreamRuntime()
+        chat_service.settings = replace(chat_service.settings, chat_turn_timeout_seconds=0.1)
+
+        events: list[tuple[str, dict[str, object]]] = []
+        async for event_name, data in chat_service.process_message_turn_stream(
+            self.db,
+            user=user,
+            thread=thread,
+            payload=SendMessageRequest(content="请验证流式超时清理"),
+        ):
+            events.append((event_name, data))
+
+        event_names = [event_name for event_name, _ in events]
+        self.assertIn("accepted", event_names)
+        self.assertIn("graph_update", event_names)
+        self.assertIn("final", event_names)
+        final_event = next(data for event_name, data in events if event_name == "final")
+        self.assertEqual(final_event["delivery_status"], "failed_no_reply")
+        self.assertEqual(final_event["assistant_message_id"], None)
+        self.assertEqual(final_event["retryable"], True)
 
     async def test_summary_only_mode_retrieves_and_writes_only_session_summaries(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="summary_only")
@@ -869,7 +932,7 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_message.meta["memory_job_status"], "failed")
         self.assertEqual(turn.response_snapshot["memory_job_status"], "failed")
 
-    async def test_high_risk_turn_does_not_create_visible_memory_but_records_risk_event(self) -> None:
+    async def test_high_risk_turn_uses_safety_scoped_memory_and_records_risk_event(self) -> None:
         user, thread = self.create_user_with_thread(memory_mode="long_term")
         visible = self.add_memory(user, memory_type="preference", content="prefers reassurance first", importance=5)
         safety = self.add_memory(
@@ -896,8 +959,8 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["referenced_memories"], [])
         self.assertEqual(len(risk_events), 1)
         self.assertIn(safety.id, retrieved_ids)
-        self.assertNotIn(visible.id, retrieved_ids)
-        self.assertEqual(indexed_ids, [safety.id])
+        self.assertIn(visible.id, retrieved_ids)
+        self.assertEqual(indexed_ids, [safety.id, visible.id])
         created = [memory for memory in memories if memory.id not in {visible.id, safety.id}]
         self.assertEqual(len(created), 0)
         await process_pending_memory_jobs(self.db)

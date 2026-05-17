@@ -23,6 +23,7 @@ class AgentState(TypedDict, total=False):
     user_profile_digest: dict
     goal_state: dict
     user_context_pack: dict
+    temporal_context: dict
 
     profile: dict
     companion_preferences: dict
@@ -47,6 +48,20 @@ class AgentState(TypedDict, total=False):
     risk_source: str
     risk_reason_codes: list[str]
     requires_safety_check: bool
+    risk_domain: str
+    immediacy: Literal["none", "vague", "near_term", "active"]
+    risk_confidence: Literal["low", "medium", "high"]
+    protective_signals: list[str]
+    risk_phase: Literal["first_contact", "stabilizing", "still_high", "deescalating", "post_crisis"]
+    risk_response_policy: dict
+    conversation_move_policy: dict
+    conversation_quality_trace: dict
+    tool_gate_mode: Literal["normal_context", "safety_context", "blocked_context"]
+    safety_context_pack: dict
+    experience_validator_reasons: list[str]
+    experience_validator_warnings: list[str]
+    experience_validator_blocking_reasons: list[str]
+    validator_severity: Literal["passed", "warning", "repaired", "blocked", "failed"]
 
     route_priority: Literal[
         "P0_immediate_safety",
@@ -66,6 +81,7 @@ class AgentState(TypedDict, total=False):
     rag_policy: dict
     rag_used: bool
     rag_skipped_reason: str
+    rag_trace_summary: dict
     retrieved_counseling_examples: list[dict]
     validator_blocked: bool
     validator_reasons: list[str]

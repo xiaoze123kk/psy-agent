@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.graphs.nodes.control_nodes import control_plane
-from app.graphs.nodes.response_nodes import crisis_response
-from app.graphs.nodes.risk_nodes import risk_classifier
+from app.graphs.nodes.response_nodes import crisis_response as _model_crisis_response
+from app.graphs.nodes.risk_nodes import _assessment_from_parts, risk_classifier
 from app.graphs.routing import route_by_intent, route_by_risk
 from app.graphs.state import AgentState
 
@@ -65,6 +66,32 @@ def _make_state(
         should_write_memory=False,
         audit_tags=[],
     )
+
+
+def _mock_crisis_reply(state: AgentState) -> str:
+    user_mode = str(state.get("user_mode") or state.get("profile", {}).get("user_mode") or "adult")
+    risk_level = str(state.get("risk_level") or "L2")
+    if user_mode == "teen":
+        if risk_level == "L3":
+            text = "我听见你现在很危险。我们先把这一分钟放慢一点，先找家长或监护人这样的可信的大人到身边。"
+        else:
+            text = "我听见你现在很难撑。先陪你把这一刻放慢一点，也可以找家长或监护人这样的可信的大人靠近你。"
+        actions = ["联系家长或监护人", "找一个可信的大人", "我还在"]
+    elif risk_level == "L3":
+        text = "我听见你现在已经很危险。我们先把这一分钟放慢，不急着解释原因；你只要回我一个字也可以。"
+        actions = ["我还在", "我先不动", "继续陪我"]
+    else:
+        text = "我听见你现在很难受。我先陪你把这一刻放慢一点，先确认：你现在是安全的吗？如果可以，靠近一个可信任的人。"
+        actions = ["我现在是安全的", "我能联系一个人", "我想先说一会儿"]
+    return text + "\n---\n" + "\n".join(actions)
+
+
+async def crisis_response(state: AgentState) -> AgentState:
+    with patch(
+        "app.graphs.nodes.response_nodes.deepseek_client.chat",
+        new=AsyncMock(return_value=_mock_crisis_reply(state)),
+    ):
+        return await _model_crisis_response(state)
 
 
 def _classify(text: str) -> dict:
@@ -219,6 +246,112 @@ class L2HighRiskTests(unittest.TestCase):
         self.assertNotEqual(r["risk_level"], "L3")
 
 
+class L2GentleCrisisResponseTests(unittest.TestCase):
+    """L2 高风险但非即刻危机：先安抚，再轻量确认安全和引导现实支持。"""
+
+    def _l2_state_for(self, text: str, *, user_mode: str = "adult") -> AgentState:
+        state = _make_state(text, user_mode=user_mode)
+        state.update(_run(risk_classifier(state)))
+        state.update(_run(control_plane(state)))
+        self.assertEqual(state["risk_level"], "L2")
+        self.assertEqual(state["route_priority"], "P0_immediate_safety")
+        return state
+
+    def test_vague_want_to_die_routes_to_l2_without_near_term_label(self) -> None:
+        state = self._l2_state_for("有点想死")
+
+        self.assertEqual(state["risk_level"], "L2")
+        self.assertEqual(state["route_priority"], "P0_immediate_safety")
+        labels = state.get("risk_formulation", {}).get("labels", [])
+        self.assertNotIn("near_term_or_means_signal", labels)
+
+    def test_present_feeling_want_to_die_routes_to_l2_not_l3(self) -> None:
+        state = self._l2_state_for("我现在有点想死")
+
+        labels = state.get("risk_formulation", {}).get("labels", [])
+        self.assertNotIn("near_term_or_means_signal", labels)
+
+    def test_present_feeling_want_to_die_uses_gentle_reply(self) -> None:
+        state = self._l2_state_for("我现在有点想死")
+
+        result = _run(crisis_response(state))
+        text = result.get("assistant_text", "")
+
+        self.assertIn("听见", text)
+        self.assertIn("先陪你", text)
+        self.assertIn("现在是安全", text)
+        self.assertNotIn("身边有没有可能伤害自己的东西", text)
+        self.assertNotIn("请先把它放远", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
+
+    def test_now_with_clear_action_intent_still_routes_to_l3(self) -> None:
+        state = _make_state("我现在立刻就想自杀，刀就在旁边", user_mode="adult")
+        state.update(_run(risk_classifier(state)))
+        state.update(_run(control_plane(state)))
+
+        self.assertEqual(state["risk_level"], "L3")
+        labels = state.get("risk_formulation", {}).get("labels", [])
+        self.assertIn("near_term_or_means_signal", labels)
+
+    def test_adult_l2_response_soothes_before_safety_guidance(self) -> None:
+        state = self._l2_state_for("有点想死", user_mode="adult")
+
+        result = _run(crisis_response(state))
+        text = result.get("assistant_text", "")
+        actions = result.get("suggested_actions", [])
+
+        self.assertIn("听见", text)
+        self.assertIn("先陪你", text)
+        self.assertIn("现在是安全", text)
+        self.assertIn("可信任的人", text)
+        self.assertNotIn("专业", text)
+        self.assertNotIn("精神科", text)
+        self.assertNotIn("医院心理门诊", text)
+        self.assertLess(text.index("听见"), text.index("现在是安全"))
+        self.assertNotIn("身边有没有可能伤害自己的东西", text)
+        self.assertNotIn("请先把它放远", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
+        self.assertGreaterEqual(len(actions), 3)
+        self.assertNotIn("拨打", actions[0])
+
+    def test_adult_l2_response_does_not_restate_self_harm_as_want_to_die(self) -> None:
+        state = self._l2_state_for("我想伤害自己", user_mode="adult")
+
+        result = _run(crisis_response(state))
+        text = result.get("assistant_text", "")
+
+        self.assertNotIn("有点想死", text)
+        self.assertIn("听见", text)
+        self.assertIn("现在是安全", text)
+        self.assertIn("可信任的人", text)
+        self.assertNotIn("专业", text)
+        self.assertNotIn("精神科", text)
+        self.assertNotIn("医院心理门诊", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
+
+    def test_teen_l2_response_mentions_trusted_adult_without_emergency_first(self) -> None:
+        state = self._l2_state_for("有点想死", user_mode="teen")
+
+        result = _run(crisis_response(state))
+        text = result.get("assistant_text", "")
+        actions = result.get("suggested_actions", [])
+
+        self.assertIn("听见", text)
+        self.assertIn("可信的大人", text)
+        self.assertLess(text.index("听见"), text.index("可信的大人"))
+        self.assertNotIn("身边有没有可能伤害自己的东西", text)
+        self.assertNotIn("请先把它放远", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
+        self.assertTrue(actions)
+        self.assertNotIn("拨打", actions[0])
+        self.assertNotIn("心理老师", str(actions))
+        self.assertNotIn("精神科", str(actions))
+
+
 class TwoStageRiskClassifierTests(unittest.TestCase):
     """6.1 两阶段风险识别 —— 隐性表达、误报降低、结构化原因。"""
 
@@ -267,6 +400,112 @@ class TwoStageRiskClassifierTests(unittest.TestCase):
         self.assertEqual(r["risk_level"], "L2")
         self.assertIn("protective_support_present", r["risk_reason_codes"])
         self.assertTrue(r["semantic_risk"]["protective_factor"])
+
+    def test_death_feeling_as_emotional_metaphor_stays_l1(self) -> None:
+        r = _classify("在生活中有一种想死想死的感觉")
+        semantic = r["semantic_risk"]
+
+        self.assertEqual(r["risk_level"], "L1")
+        self.assertFalse(r["requires_safety_check"])
+        self.assertEqual(semantic["risk_expression_type"], "emotional_metaphor")
+        self.assertEqual(semantic["risk_domain"], "general_distress")
+        self.assertIn("death_language", semantic["signal_family"])
+
+    def test_busy_to_death_idiom_does_not_trigger_safety_check(self) -> None:
+        r = _classify("我只是忙到想死，明天还要交稿")
+
+        self.assertIn(r["risk_level"], {"L0", "L1"})
+        self.assertFalse(r["requires_safety_check"])
+        self.assertIn(
+            r["semantic_risk"]["risk_expression_type"],
+            {"idiom_or_slang", "emotional_metaphor"},
+        )
+
+    def test_passive_death_wish_with_no_plan_is_l2_not_l3(self) -> None:
+        r = _classify("如果能睡着不醒就好了，但我没有计划")
+
+        self.assertEqual(r["risk_level"], "L2")
+        self.assertNotEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "passive_death_wish")
+        self.assertTrue(r["semantic_risk"]["protective_factor"])
+
+    def test_non_suicidal_self_injury_urge_is_l2(self) -> None:
+        r = _classify("我控制不住想弄疼自己")
+
+        self.assertEqual(r["risk_level"], "L2")
+        self.assertEqual(r["semantic_risk"]["risk_domain"], "non_suicidal_self_injury")
+        self.assertEqual(
+            r["semantic_risk"]["risk_expression_type"],
+            "non_suicidal_self_injury_urge",
+        )
+
+    def test_method_seeking_is_l3_and_requires_safety_check(self) -> None:
+        r = _classify("怎么自杀会不痛")
+
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "method_seeking")
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_method_seeking_with_end_life_phrase_is_l3(self) -> None:
+        r = _classify("怎么结束生命会不痛")
+
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "method_seeking")
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_generic_method_seeking_is_l3(self) -> None:
+        r = _classify("哪种方法比较无痛")
+
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "method_seeking")
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_explicit_plan_signal_is_plan_or_means_l3(self) -> None:
+        r = _classify("我有自杀计划")
+
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "plan_or_means")
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_low_risk_idiom_does_not_override_preparation_guardrail(self) -> None:
+        r = _classify("我累到想死，但我已经准备好了")
+
+        self.assertEqual(r["risk_level"], "L3")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "plan_or_means")
+        self.assertTrue(r["requires_safety_check"])
+
+    def test_low_risk_llm_expression_cannot_override_keyword_l3_guardrail(self) -> None:
+        r = _assessment_from_parts(
+            "我现在想自杀，刀在旁边",
+            semantic_risk={
+                "ideation": False,
+                "intent": False,
+                "plan": False,
+                "means": False,
+                "timeframe": "none",
+                "protective_factor": False,
+                "ambiguity": 0.1,
+                "discussion_context": False,
+                "third_party_context": False,
+                "risk_domain": "general_distress",
+                "risk_expression_type": "emotional_metaphor",
+                "signal_family": ["death_language"],
+                "subject": "self",
+                "literalness": "metaphorical",
+                "confidence": "high",
+            },
+            semantic_reason_codes=["death_language"],
+            semantic_reasons=["想自杀"],
+        )
+
+        self.assertEqual(r["risk_level"], "L3")
+
+    def test_fictional_creative_context_is_discussion_not_user_crisis(self) -> None:
+        r = _classify("小说角色最后选择自杀，这段怎么写")
+
+        self.assertEqual(r["risk_level"], "L0")
+        self.assertEqual(r["semantic_risk"]["subject"], "fictional")
+        self.assertEqual(r["semantic_risk"]["risk_expression_type"], "discussion_or_quote")
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +672,10 @@ class TeenModeTests(unittest.TestCase):
         result = _run(crisis_response(state))
         text = result.get("assistant_text", "")
         self.assertIn("大人", text)
-        self.assertIn("12356", text)
-        self.assertIn("120", text)
-        self.assertIn("110", text)
+        self.assertIn("这一分钟", text)
+        self.assertNotIn("12356", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
 
     def test_teen_l3_actions_include_contact_parents(self) -> None:
         """青少年 L3 → 建议操作应包含'联系家长'"""
@@ -443,18 +683,20 @@ class TeenModeTests(unittest.TestCase):
         result = _run(crisis_response(state))
         actions = result.get("suggested_actions", [])
         self.assertTrue(any("家长" in a or "老师" in a or "监护人" in a for a in actions))
-        self.assertTrue(any("12356" in a for a in actions))
+        self.assertFalse(any("12356" in a or "120" in a or "110" in a for a in actions))
 
     def test_adult_l3_response_includes_direct_safety_check_and_china_resources(self) -> None:
-        """成人 L3 → 回复必须包含安全确认和中国大陆危机资源"""
+        """成人 L3 → 首轮低压安全引导，不直接推紧急号码模板"""
         state = _make_state("我想自杀，药在手里", user_mode="adult", risk_level="L3")
         result = _run(crisis_response(state))
         text = result.get("assistant_text", "")
-        self.assertIn("一个人", text)
-        self.assertIn("伤害自己的东西", text)
-        self.assertIn("12356", text)
-        self.assertIn("120", text)
-        self.assertIn("110", text)
+        self.assertIn("这一分钟", text)
+        self.assertIn("回我一个字", text)
+        self.assertNotIn("心理咨询师", text)
+        self.assertNotIn("精神科", text)
+        self.assertNotIn("12356", text)
+        self.assertNotIn("120", text)
+        self.assertNotIn("110", text)
 
     def test_teen_l2_crisis_route(self) -> None:
         """青少年 L2 → 路由到 crisis_response"""

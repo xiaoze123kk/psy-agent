@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from test_conversation_quality import load_quality_cases, quality_report
+from tests.evals.test_conversation_quality import load_quality_cases, quality_report
 
 
 def _case(case_id: str) -> dict[str, Any]:

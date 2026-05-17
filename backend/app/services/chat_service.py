@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextlib import suppress
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
@@ -15,16 +16,18 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, generate_uuid, utcnow
-from app.graphs.nodes import sync_risk_classify
+from app.graphs.nodes import classify_risk_text, control_plane
 from app.schemas.chat import SendMessageRequest
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
+from app.services.conversation_quality_service import infer_next_turn_signal
 from app.services.memory_job_service import build_memory_job_payload, enqueue_memory_job, notify_memory_jobs
 from app.services.memory_service import (
     build_memory_index,
     retrieve_memories_for_turn,
     retrieve_memories_for_turn_async,
 )
+from app.services.safety_context_service import build_safety_context_pack
 from app.services.user_context_pack_service import build_user_context_pack
 from app.services.user_context_service import build_goal_state, build_user_profile_digest
 
@@ -59,22 +62,23 @@ class TurnClaim:
 
 
 def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object]:
+    is_safety_risk = risk_level in {"L2", "L3"}
     return {
         "assistant_text": "",
         "risk_level": risk_level,
-        "intent": "vent" if risk_level == "L1" else "other",
+        "intent": "crisis" if is_safety_risk else ("vent" if risk_level == "L1" else "other"),
         "risk_reasons": [],
         "semantic_risk": {},
         "risk_source": "fallback",
         "risk_reason_codes": [],
-        "requires_safety_check": False,
-        "route_priority": "P2_support",
+        "requires_safety_check": is_safety_risk,
+        "route_priority": "P0_immediate_safety" if is_safety_risk else "P2_support",
         "control_category": "fallback",
         "control_reasons": [reason],
         "control_confidence": 0.0,
         "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
         "response_contract": {},
-        "memory_policy": "skip_sensitive",
+        "memory_policy": "crisis_audit_only" if is_safety_risk else "skip_sensitive",
         "memory_policy_reason": reason,
         "rag_used": False,
         "rag_skipped_reason": reason,
@@ -82,6 +86,10 @@ def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object
         "example_source_keys": [],
         "validator_blocked": False,
         "validator_reasons": [],
+        "experience_validator_reasons": [],
+        "experience_validator_warnings": [],
+        "experience_validator_blocking_reasons": [],
+        "validator_severity": "failed",
         "suggested_actions": [],
         "session_summary": "",
         "memory_candidates": [],
@@ -96,54 +104,19 @@ def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object
     }
 
 
-def _safety_fallback_result(*, risk_level: str, reason: str) -> dict[str, object]:
-    assistant_text = (
-        "我更关心你现在的安全。先别一个人扛，尽量去有人在的地方，联系可信的人；"
-        "如果马上有危险，请立刻拨打当地紧急电话。"
-    )
-    suggested_actions = ["我现在不安全", "我能联系谁", "先陪我稳住"]
-
-    return {
-        "assistant_text": assistant_text,
-        "risk_level": risk_level,
-        "intent": "crisis",
-        "risk_reasons": [],
-        "semantic_risk": {},
-        "risk_source": "fallback",
-        "risk_reason_codes": [],
-        "requires_safety_check": True,
-        "route_priority": "P0_immediate_safety",
-        "control_category": "fallback",
-        "control_reasons": [reason],
-        "control_confidence": 0.0,
-        "risk_formulation": {"labels": [reason], "observed_reasons": [], "uncertainty": 1.0},
-        "response_contract": {},
-        "memory_policy": "crisis_audit_only",
-        "memory_policy_reason": reason,
-        "rag_used": False,
-        "rag_skipped_reason": reason,
-        "example_ids": [],
-        "example_source_keys": [],
-        "validator_blocked": False,
-        "validator_reasons": [],
-        "suggested_actions": suggested_actions,
-        "session_summary": "",
-        "memory_candidates": [],
-        "should_write_memory": False,
-        "memory_write_decisions": [{"status": "skipped", "reason": reason}],
-        "referenced_memories": [],
-        "referenced_counseling_examples": [],
-        "delivery_status": "safety_fallback",
-        "failure_reason": reason,
-        "retryable": False,
-        "audit_tags": [reason],
-    }
-
-
 def _fallback_assistant_result(*, risk_level: str, reason: str) -> dict[str, object]:
-    if risk_level in {"L2", "L3"}:
-        return _safety_fallback_result(risk_level=risk_level, reason=reason)
     return _failed_no_reply_result(risk_level=risk_level, reason=reason)
+
+
+async def _preclassify_risk_level(text: str) -> str:
+    assessment = classify_risk_text(text)
+    state = {
+        "user_text": text,
+        "normalized_text": text,
+        **assessment,
+    }
+    controlled = await control_plane(state)
+    return str(controlled.get("risk_level") or assessment.get("risk_level") or "L0")
 
 
 def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -> dict[str, object]:
@@ -157,13 +130,8 @@ def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -
     if delivery_status == "generated" and not assistant_text:
         delivery_status = "failed_no_reply"
 
-    if delivery_status == "failed_no_reply" and risk_level in {"L2", "L3"}:
-        return _safety_fallback_result(
-            risk_level=risk_level,
-            reason=str(result.get("failure_reason") or "safety_fallback"),
-        )
-
     if delivery_status == "failed_no_reply":
+        is_safety_risk = risk_level in {"L2", "L3"}
         result.update(
             {
                 "assistant_text": "",
@@ -173,22 +141,23 @@ def _coerce_delivery_result(result: dict[str, object], *, pre_risk_level: str) -
                 "should_write_memory": False,
                 "referenced_memories": [],
                 "referenced_counseling_examples": [],
-                "memory_policy": "skip_sensitive",
+                "requires_safety_check": bool(result.get("requires_safety_check", is_safety_risk)),
+                "route_priority": result.get("route_priority") or ("P0_immediate_safety" if is_safety_risk else "P2_support"),
+                "memory_policy": "crisis_audit_only" if is_safety_risk else "skip_sensitive",
                 "memory_policy_reason": str(result.get("failure_reason") or "failed_no_reply"),
                 "delivery_status": "failed_no_reply",
                 "failure_reason": str(result.get("failure_reason") or "failed_no_reply"),
                 "retryable": True,
+                "validator_severity": result.get("validator_severity") or "failed",
+                "experience_validator_warnings": result.get("experience_validator_warnings", []),
+                "experience_validator_blocking_reasons": result.get("experience_validator_blocking_reasons", []),
             }
         )
         return result
 
-    result["delivery_status"] = "safety_fallback" if delivery_status == "safety_fallback" else "generated"
+    result["delivery_status"] = "generated"
     result["failure_reason"] = result.get("failure_reason")
     result["retryable"] = bool(result.get("retryable", False))
-    if result["delivery_status"] == "safety_fallback":
-        result["referenced_memories"] = []
-        result["referenced_counseling_examples"] = []
-        result["retryable"] = False
     return result
 
 
@@ -228,6 +197,9 @@ async def _invoke_graph_with_fallback(
                 crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
                 retrieved_memories=retrieved_memories,
                 memory_index=memory_index,
+                safety_context_pack=user_context_pack.get("safety_context_pack", {})
+                if isinstance(user_context_pack, dict)
+                else {},
             ),
             timeout=timeout_seconds,
         )
@@ -349,6 +321,65 @@ def _request_hash(payload: SendMessageRequest) -> str:
 
 def _json_safe(value: object) -> object:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _dict_copy(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _set_quality_next_turn_signal(payload: dict | None, signal: str) -> dict:
+    updated = _dict_copy(payload)
+
+    quality_trace = _dict_copy(updated.get("conversation_quality_trace"))
+    quality_user_signal = _dict_copy(quality_trace.get("user_signal"))
+    quality_user_signal["next_turn_signal"] = signal
+    quality_trace["user_signal"] = quality_user_signal
+    updated["conversation_quality_trace"] = quality_trace
+
+    trace_summary = _dict_copy(updated.get("trace_summary"))
+    summary_quality = _dict_copy(trace_summary.get("conversation_quality"))
+    summary_user_signal = _dict_copy(summary_quality.get("user_signal"))
+    summary_user_signal["next_turn_signal"] = signal
+    summary_quality["user_signal"] = summary_user_signal
+    trace_summary["conversation_quality"] = summary_quality
+    updated["trace_summary"] = trace_summary
+
+    return updated
+
+
+def _backfill_previous_turn_next_signal(
+    db: Session,
+    *,
+    user: User,
+    thread: ConversationThread,
+    current_turn: ConversationTurn,
+    current_user_text: str,
+) -> None:
+    signal = infer_next_turn_signal(current_user_text)
+    if signal == "unknown":
+        return
+
+    previous_turn = db.scalar(
+        select(ConversationTurn)
+        .where(
+            ConversationTurn.user_id == user.id,
+            ConversationTurn.thread_id == thread.id,
+            ConversationTurn.id != current_turn.id,
+            ConversationTurn.turn_status == "completed",
+        )
+        .order_by(desc(ConversationTurn.created_at))
+        .limit(1)
+    )
+    if previous_turn is None:
+        return
+
+    previous_turn.response_snapshot = _set_quality_next_turn_signal(previous_turn.response_snapshot, signal)
+    previous_turn.updated_at = utcnow()
+
+    if previous_turn.assistant_message_id:
+        assistant_message = db.get(Message, previous_turn.assistant_message_id)
+        if assistant_message is not None and assistant_message.user_id == user.id and assistant_message.thread_id == thread.id:
+            assistant_message.meta = _set_quality_next_turn_signal(assistant_message.meta, signal)
 
 
 def _pop_graph_trace(assistant_result: dict[str, object]) -> list[dict[str, object]]:
@@ -594,7 +625,7 @@ async def _prepare_turn_context(
         recent_messages=serialized_recent_messages,
     ) or {}
     memory_mode = getattr(user.settings, "memory_mode", "summary_only") if user.settings else "summary_only"
-    pre_risk_level = sync_risk_classify(payload.content)
+    pre_risk_level = await _preclassify_risk_level(payload.content)
     memory_index = build_memory_index(
         db,
         user.id,
@@ -622,6 +653,17 @@ async def _prepare_turn_context(
         goal_state=goal_state,
         retrieved_memories=retrieved_memories,
     )
+    safety_context_pack = build_safety_context_pack(
+        risk_level=pre_risk_level,
+        retrieved_memories=retrieved_memories,
+        session_digest=thread.session_digest or {},
+        user_context_pack=user_context_pack,
+    )
+    if safety_context_pack:
+        user_context_pack = {
+            **user_context_pack,
+            "safety_context_pack": safety_context_pack,
+        }
     return TurnContext(
         turn=turn,
         user_message=user_message,
@@ -680,6 +722,20 @@ async def _persist_turn_result(
         "risk_source": assistant_result.get("risk_source", ""),
         "risk_reason_codes": assistant_result.get("risk_reason_codes", []),
         "requires_safety_check": bool(assistant_result.get("requires_safety_check", False)),
+        "risk_domain": assistant_result.get("risk_domain", ""),
+        "immediacy": assistant_result.get("immediacy", ""),
+        "risk_confidence": assistant_result.get("risk_confidence", ""),
+        "protective_signals": assistant_result.get("protective_signals", []),
+        "risk_phase": assistant_result.get("risk_phase", ""),
+        "risk_response_policy": assistant_result.get("risk_response_policy", {}),
+        "conversation_move_policy": assistant_result.get("conversation_move_policy", {}),
+        "conversation_quality_trace": assistant_result.get("conversation_quality_trace", {}),
+        "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
+        "safety_context_summary": assistant_result.get("safety_context_pack", {}),
+        "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),
+        "experience_validator_warnings": assistant_result.get("experience_validator_warnings", []),
+        "experience_validator_blocking_reasons": assistant_result.get("experience_validator_blocking_reasons", []),
+        "validator_severity": assistant_result.get("validator_severity", "passed"),
         "control_category": assistant_result.get("control_category", "normal_support"),
         "control_reasons": assistant_result.get("control_reasons", []),
         "control_confidence": assistant_result.get("control_confidence", 0.0),
@@ -816,6 +872,13 @@ async def process_message_turn(
             return _replay_turn_result(db, claim.turn)
 
         user_message = _create_user_message(db, user=user, thread=thread, payload=payload, turn=claim.turn)
+        _backfill_previous_turn_next_signal(
+            db,
+            user=user,
+            thread=thread,
+            current_turn=claim.turn,
+            current_user_text=payload.content,
+        )
         context = await _prepare_turn_context(
             db,
             user=user,
@@ -885,6 +948,13 @@ async def process_message_turn_stream(
             return
 
         user_message = _create_user_message(db, user=user, thread=thread, payload=payload, turn=claim.turn)
+        _backfill_previous_turn_next_signal(
+            db,
+            user=user,
+            thread=thread,
+            current_turn=claim.turn,
+            current_user_text=payload.content,
+        )
         context = await _prepare_turn_context(
             db,
             user=user,
@@ -920,6 +990,9 @@ async def process_message_turn_stream(
             crisis_resource_region=getattr(user.settings, "crisis_resource_region", "CN") if user.settings else "CN",
             retrieved_memories=context.retrieved_memories,
             memory_index=context.memory_index,
+            safety_context_pack=context.user_context_pack.get("safety_context_pack", {})
+            if isinstance(context.user_context_pack, dict)
+            else {},
         )
         next_event = asyncio.create_task(anext(graph_events))
         assistant_result: dict[str, object] | None = None
@@ -957,9 +1030,12 @@ async def process_message_turn_stream(
         finally:
             if not next_event.done():
                 next_event.cancel()
+                with suppress(asyncio.CancelledError):
+                    await next_event
             aclose = getattr(graph_events, "aclose", None)
             if callable(aclose):
-                await aclose()
+                with suppress(RuntimeError):
+                    await aclose()
 
         if assistant_result is None:
             assistant_result = _fallback_assistant_result(
@@ -971,6 +1047,10 @@ async def process_message_turn_stream(
             "response_validator",
             risk_level=str(assistant_result.get("risk_level", context.pre_risk_level)),
             validator_blocked=bool(assistant_result.get("validator_blocked", False)),
+            experience_validator_reasons=list(assistant_result.get("experience_validator_reasons", [])),
+            experience_validator_warnings=list(assistant_result.get("experience_validator_warnings", [])),
+            experience_validator_blocking_reasons=list(assistant_result.get("experience_validator_blocking_reasons", [])),
+            validator_severity=str(assistant_result.get("validator_severity", "passed")),
             delivery_status=str(assistant_result.get("delivery_status", "generated")),
         )
         yield _graph_update_event("saving_record", delivery_status=str(assistant_result.get("delivery_status", "generated")))
