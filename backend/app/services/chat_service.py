@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 from contextlib import suppress
 from collections.abc import AsyncIterator
@@ -11,16 +9,29 @@ from time import monotonic
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, generate_uuid, utcnow
+from app.db.models import ConversationThread, ConversationTurn, Message, RiskEvent, User, utcnow
 from app.graphs.nodes import classify_risk_text, control_plane
 from app.schemas.chat import SendMessageRequest
+from app.services.chat_streaming import (
+    ChatStreamEvent,
+    graph_update_event as _graph_update_event,
+    heartbeat_event as _heartbeat_event,
+    iter_stream_chunks as _iter_stream_chunks,
+)
+from app.services.chat_turn_lifecycle import (
+    backfill_previous_turn_next_signal as _backfill_previous_turn_next_signal,
+    claim_turn as _claim_turn,
+    complete_turn as _complete_turn,
+    mark_turn_failed as _mark_turn_failed,
+    replay_turn_result as _replay_turn_result,
+    turn_metadata as _turn_metadata,
+    turn_response_fields as _turn_response_fields,
+)
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
-from app.services.conversation_quality_service import infer_next_turn_signal
 from app.services.memory_job_service import build_memory_job_payload, enqueue_memory_job, notify_memory_jobs
 from app.services.memory_service import (
     build_memory_index,
@@ -34,9 +45,6 @@ from app.services.user_context_service import build_goal_state, build_user_profi
 
 logger = logging.getLogger(__name__)
 graph_runtime = GraphRuntime()
-ChatStreamEvent = tuple[str, dict[str, object]]
-TURN_RUNNING_WAIT_SECONDS = 1.0
-TURN_RUNNING_POLL_INTERVAL_SECONDS = 0.1
 RECENT_MESSAGE_CANDIDATE_LIMIT = 24
 
 
@@ -53,12 +61,6 @@ class TurnContext:
     memory_index: list[dict]
     retrieved_memories: list[dict]
     pre_risk_level: str
-
-
-@dataclass
-class TurnClaim:
-    turn: ConversationTurn
-    replay: bool
 
 
 def _failed_no_reply_result(*, risk_level: str, reason: str) -> dict[str, object]:
@@ -308,80 +310,6 @@ def _upsert_risk_event(
     return event
 
 
-def _request_hash(payload: SendMessageRequest) -> str:
-    user_mode = payload.user_mode.value if payload.user_mode is not None else None
-    body = {
-        "content": payload.content,
-        "input_type": payload.input_type.value,
-        "user_mode": user_mode,
-    }
-    canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _json_safe(value: object) -> object:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
-
-
-def _dict_copy(value: object) -> dict:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _set_quality_next_turn_signal(payload: dict | None, signal: str) -> dict:
-    updated = _dict_copy(payload)
-
-    quality_trace = _dict_copy(updated.get("conversation_quality_trace"))
-    quality_user_signal = _dict_copy(quality_trace.get("user_signal"))
-    quality_user_signal["next_turn_signal"] = signal
-    quality_trace["user_signal"] = quality_user_signal
-    updated["conversation_quality_trace"] = quality_trace
-
-    trace_summary = _dict_copy(updated.get("trace_summary"))
-    summary_quality = _dict_copy(trace_summary.get("conversation_quality"))
-    summary_user_signal = _dict_copy(summary_quality.get("user_signal"))
-    summary_user_signal["next_turn_signal"] = signal
-    summary_quality["user_signal"] = summary_user_signal
-    trace_summary["conversation_quality"] = summary_quality
-    updated["trace_summary"] = trace_summary
-
-    return updated
-
-
-def _backfill_previous_turn_next_signal(
-    db: Session,
-    *,
-    user: User,
-    thread: ConversationThread,
-    current_turn: ConversationTurn,
-    current_user_text: str,
-) -> None:
-    signal = infer_next_turn_signal(current_user_text)
-    if signal == "unknown":
-        return
-
-    previous_turn = db.scalar(
-        select(ConversationTurn)
-        .where(
-            ConversationTurn.user_id == user.id,
-            ConversationTurn.thread_id == thread.id,
-            ConversationTurn.id != current_turn.id,
-            ConversationTurn.turn_status == "completed",
-        )
-        .order_by(desc(ConversationTurn.created_at))
-        .limit(1)
-    )
-    if previous_turn is None:
-        return
-
-    previous_turn.response_snapshot = _set_quality_next_turn_signal(previous_turn.response_snapshot, signal)
-    previous_turn.updated_at = utcnow()
-
-    if previous_turn.assistant_message_id:
-        assistant_message = db.get(Message, previous_turn.assistant_message_id)
-        if assistant_message is not None and assistant_message.user_id == user.id and assistant_message.thread_id == thread.id:
-            assistant_message.meta = _set_quality_next_turn_signal(assistant_message.meta, signal)
-
-
 def _pop_graph_trace(assistant_result: dict[str, object]) -> list[dict[str, object]]:
     raw_trace = assistant_result.pop("graph_trace", [])
     graph_trace = [record for record in raw_trace if isinstance(record, dict)] if isinstance(raw_trace, list) else []
@@ -389,182 +317,6 @@ def _pop_graph_trace(assistant_result: dict[str, object]) -> list[dict[str, obje
         graph_trace = build_delivery_trace(assistant_result)
     assistant_result["trace_summary"] = build_trace_summary(graph_trace, assistant_result)
     return graph_trace
-
-
-def _turn_metadata(turn: ConversationTurn | None) -> dict[str, str]:
-    if turn is None:
-        return {}
-    return {
-        "turn_id": turn.id,
-        "client_message_id": turn.client_message_id,
-    }
-
-
-def _turn_response_fields(turn: ConversationTurn) -> dict[str, object]:
-    return {
-        "turn_id": turn.id,
-        "client_message_id": turn.client_message_id,
-        "turn_status": turn.turn_status,
-    }
-
-
-def _turn_conflict(code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "code": code,
-            "message": message,
-        },
-    )
-
-
-async def _wait_for_running_turn(db: Session, turn: ConversationTurn) -> bool:
-    deadline = monotonic() + TURN_RUNNING_WAIT_SECONDS
-    while monotonic() < deadline:
-        await asyncio.sleep(TURN_RUNNING_POLL_INTERVAL_SECONDS)
-        db.expire(turn)
-        db.refresh(turn)
-        if turn.turn_status == "completed":
-            return True
-        if turn.turn_status == "failed":
-            return False
-    db.expire(turn)
-    db.refresh(turn)
-    return turn.turn_status == "completed"
-
-
-async def _claim_turn(
-    db: Session,
-    *,
-    user: User,
-    thread: ConversationThread,
-    payload: SendMessageRequest,
-    wait_for_running: bool,
-) -> TurnClaim:
-    client_message_id = payload.client_message_id or generate_uuid()
-    request_hash = _request_hash(payload)
-    existing = db.scalar(
-        select(ConversationTurn).where(
-            ConversationTurn.user_id == user.id,
-            ConversationTurn.thread_id == thread.id,
-            ConversationTurn.client_message_id == client_message_id,
-        )
-    )
-    if existing is not None:
-        if existing.request_hash != request_hash:
-            raise _turn_conflict(
-                "idempotency_key_conflict",
-                "client_message_id already exists for a different message payload.",
-            )
-        if existing.turn_status == "completed":
-            return TurnClaim(turn=existing, replay=True)
-        if existing.turn_status == "running":
-            if wait_for_running and await _wait_for_running_turn(db, existing):
-                return TurnClaim(turn=existing, replay=True)
-            raise _turn_conflict("turn_running", "Conversation turn is still running.")
-        if existing.turn_status == "failed":
-            raise _turn_conflict("turn_failed", "Conversation turn failed before it produced a replayable result.")
-        raise _turn_conflict("turn_unavailable", "Conversation turn is not replayable yet.")
-
-    turn = ConversationTurn(
-        user_id=user.id,
-        thread_id=thread.id,
-        client_message_id=client_message_id,
-        request_hash=request_hash,
-        turn_status="running",
-    )
-    db.add(turn)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return await _claim_turn(
-            db,
-            user=user,
-            thread=thread,
-            payload=payload,
-            wait_for_running=wait_for_running,
-        )
-    db.refresh(turn)
-    return TurnClaim(turn=turn, replay=False)
-
-
-def _complete_turn(
-    turn: ConversationTurn,
-    *,
-    user_message: Message,
-    assistant_message: Message | None,
-    assistant_result: dict[str, object],
-) -> dict[str, object]:
-    turn.turn_status = "completed"
-    turn.delivery_status = str(assistant_result.get("delivery_status", "generated"))
-    failure_reason = assistant_result.get("failure_reason")
-    turn.failure_reason = str(failure_reason) if failure_reason is not None else None
-    turn.retryable = bool(assistant_result.get("retryable", False))
-    turn.user_message_id = user_message.id
-    turn.assistant_message_id = assistant_message.id if assistant_message is not None else None
-    turn.updated_at = utcnow()
-    result = {
-        **assistant_result,
-        **_turn_response_fields(turn),
-    }
-    turn.response_snapshot = _json_safe(result)
-    return result
-
-
-def _mark_turn_failed(db: Session, turn_id: str | None, reason: str) -> None:
-    if turn_id is None:
-        return
-    try:
-        turn = db.get(ConversationTurn, turn_id)
-        if turn is None or turn.turn_status == "completed":
-            return
-        turn.turn_status = "failed"
-        turn.delivery_status = "failed_no_reply"
-        turn.failure_reason = reason
-        turn.retryable = True
-        turn.updated_at = utcnow()
-        turn.response_snapshot = _json_safe(
-            {
-                "assistant_text": "",
-                "delivery_status": "failed_no_reply",
-                "failure_reason": reason,
-                "retryable": True,
-                **_turn_response_fields(turn),
-            }
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to mark conversation turn as failed.")
-
-
-def _replay_turn_result(db: Session, turn: ConversationTurn) -> tuple[Message, Message | None, dict[str, object]]:
-    if not turn.user_message_id:
-        raise _turn_conflict("turn_result_unavailable", "Conversation turn has no user message to replay.")
-    user_message = db.get(Message, turn.user_message_id)
-    if user_message is None:
-        raise _turn_conflict("turn_result_unavailable", "Conversation turn user message is missing.")
-    assistant_message = db.get(Message, turn.assistant_message_id) if turn.assistant_message_id else None
-    snapshot = dict(turn.response_snapshot or {})
-    if not snapshot:
-        raise _turn_conflict("turn_result_unavailable", "Conversation turn has no response snapshot to replay.")
-    snapshot.update(_turn_response_fields(turn))
-    return user_message, assistant_message, snapshot
-
-
-def _iter_stream_chunks(text: str, *, chunk_size: int = 6):
-    buffer = ""
-    stop_chars = set("。！？!?；;\n")
-    for char in text:
-        buffer += char
-        if len(buffer) >= chunk_size or char in stop_chars:
-            yield buffer
-            buffer = ""
-
-    if buffer:
-        yield buffer
-
 
 def _create_user_message(
     db: Session,
@@ -847,15 +599,6 @@ async def _persist_turn_result(
     if memory_job_id is not None:
         notify_memory_jobs()
     return assistant_message, assistant_result
-
-
-def _graph_update_event(node: str, **data: object) -> ChatStreamEvent:
-    return "graph_update", {"node": node, "status": "completed", **data}
-
-
-def _heartbeat_event(started_at: float) -> ChatStreamEvent:
-    return "heartbeat", {"status": "running", "elapsed_ms": int((monotonic() - started_at) * 1000)}
-
 
 async def process_message_turn(
     db: Session,
