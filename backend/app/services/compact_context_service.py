@@ -10,6 +10,12 @@ DEFAULT_MAX_CHARS = 6000
 DEFAULT_MAX_MESSAGES = 10
 TIMEZONE_NAME = "Asia/Wuhan"
 HIGH_RISK_LEVELS = {"L2", "L3"}
+QUALITY_NEGATIVE_FEEDBACK = {"missed", "too_analytic", "too_generic", "too_many_questions"}
+QUALITY_OVER_QUESTIONING_REASONS = {"too_many_questions", "question_overload", "over_questioning"}
+QUALITY_REPETITION_REASONS = {"repetitive", "repetition", "fixed_opening", "too_generic"}
+QUALITY_TOPIC_DRIFT_REASONS = {"missed_primary_lane", "topic_drift", "off_topic"}
+QUALITY_CONTEXT_BREAK_REASONS = {"context_break", "lost_context", "missed_current_turn", "missed_context"}
+QUALITY_STALE_ANCHOR_REASONS = {"stale_anchor_misuse", "revived_stale_anchor", "stale_anchor"}
 QUALITY_WARNING_VALUES = {"high", "warn", "warning", "poor", "bad", True}
 ANCHOR_TERMS = ("在轮下", "德米安", "荣格")
 HIGH_RISK_SAFE_SUMMARY = "用户表达了安全相关痛苦或冲动；只保留安全连续性，不复述危险方法、地点、时间或数量。"
@@ -54,10 +60,165 @@ def _quality_reasons(quality_signals: dict[str, Any]) -> list[str]:
     repetition = quality_signals.get("recent_repetition_risk")
     if repetition in QUALITY_WARNING_VALUES:
         reasons.append("quality_repetition_risk")
+    over_questioning = quality_signals.get("recent_over_questioning_risk")
+    if over_questioning in QUALITY_WARNING_VALUES:
+        reasons.append("quality_over_questioning_risk")
     drift = quality_signals.get("topic_drift_risk")
     if drift in QUALITY_WARNING_VALUES:
         reasons.append("quality_topic_drift_risk")
+    stale_anchor = quality_signals.get("stale_anchor_misuse_risk")
+    if stale_anchor in QUALITY_WARNING_VALUES:
+        reasons.append("quality_stale_anchor_misuse_risk")
+    context_break = quality_signals.get("context_break_risk")
+    if context_break in QUALITY_WARNING_VALUES:
+        reasons.append("quality_context_break_risk")
+    if str(quality_signals.get("user_correction_signal") or "") == "corrected":
+        reasons.append("quality_user_correction_signal")
     return reasons
+
+
+def _message_metadata(message: object) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        return {}
+    metadata = message.get("metadata")
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def _quality_trace_from_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    quality_trace = metadata.get("conversation_quality_trace")
+    if isinstance(quality_trace, dict):
+        return quality_trace
+
+    trace_summary = metadata.get("trace_summary")
+    if isinstance(trace_summary, dict):
+        conversation_quality = trace_summary.get("conversation_quality")
+        if isinstance(conversation_quality, dict):
+            return conversation_quality
+    return {}
+
+
+def _quality_reason_set(trace: dict[str, Any]) -> set[str]:
+    validator = trace.get("validator_snapshot")
+    if not isinstance(validator, dict):
+        return set()
+
+    reasons: set[str] = set()
+    for key in ("validator_reasons", "experience_reasons"):
+        values = validator.get(key)
+        if not isinstance(values, list):
+            continue
+        reasons.update(str(value) for value in values if str(value or "").strip())
+    severity = str(validator.get("severity") or "")
+    if severity and severity not in {"passed", "unknown"}:
+        reasons.add(severity)
+    return reasons
+
+
+def _quality_user_signal(trace: dict[str, Any]) -> dict[str, str]:
+    signal = trace.get("user_signal")
+    if not isinstance(signal, dict):
+        return {}
+    return {
+        "explicit_feedback": str(signal.get("explicit_feedback") or "none"),
+        "next_turn_signal": str(signal.get("next_turn_signal") or "unknown"),
+    }
+
+
+def _quality_question_count(trace: dict[str, Any]) -> int:
+    shape = trace.get("turn_shape")
+    if not isinstance(shape, dict):
+        return 0
+    count = shape.get("question_count")
+    return count if isinstance(count, int) else 0
+
+
+def _message_policy(metadata: dict[str, Any]) -> dict[str, Any]:
+    policy = metadata.get("conversation_move_policy")
+    return dict(policy) if isinstance(policy, dict) else {}
+
+
+def _has_suppressed_anchor(policy: dict[str, Any]) -> bool:
+    suppressed = policy.get("suppressed_recent_anchors")
+    if isinstance(suppressed, list) and suppressed:
+        return True
+    handling = str(policy.get("stale_anchor_handling") or "")
+    return bool(handling)
+
+
+def quality_signals_from_recent_messages(recent_messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize recent quality traces into compact-safe signal labels."""
+
+    traces_seen = 0
+    reason_labels: set[str] = set()
+    over_questioning = False
+    repetition = False
+    topic_drift = False
+    stale_anchor = False
+    context_break = False
+    user_corrected = False
+
+    for message in recent_messages or []:
+        metadata = _message_metadata(message)
+        trace = _quality_trace_from_metadata(metadata)
+        policy = _message_policy(metadata)
+        if not trace and not policy:
+            continue
+
+        traces_seen += 1
+        reasons = _quality_reason_set(trace)
+        reason_labels.update(sorted(reasons))
+        user_signal = _quality_user_signal(trace)
+        feedback = user_signal.get("explicit_feedback", "none")
+        next_turn_signal = user_signal.get("next_turn_signal", "unknown")
+
+        if _quality_question_count(trace) >= 2 or reasons.intersection(QUALITY_OVER_QUESTIONING_REASONS):
+            over_questioning = True
+        if reasons.intersection(QUALITY_REPETITION_REASONS):
+            repetition = True
+        if reasons.intersection(QUALITY_TOPIC_DRIFT_REASONS):
+            topic_drift = True
+        if reasons.intersection(QUALITY_CONTEXT_BREAK_REASONS):
+            context_break = True
+        if reasons.intersection(QUALITY_STALE_ANCHOR_REASONS):
+            stale_anchor = True
+        if next_turn_signal == "corrected" or feedback in QUALITY_NEGATIVE_FEEDBACK:
+            user_corrected = True
+        if _has_suppressed_anchor(policy) and user_corrected:
+            stale_anchor = True
+
+    signals: dict[str, Any] = {}
+    if over_questioning:
+        signals["recent_over_questioning_risk"] = "high"
+    if repetition:
+        signals["recent_repetition_risk"] = "high"
+    if topic_drift:
+        signals["topic_drift_risk"] = "high"
+    if stale_anchor:
+        signals["stale_anchor_misuse_risk"] = "high"
+    if context_break:
+        signals["context_break_risk"] = "high"
+    if user_corrected:
+        signals["user_correction_signal"] = "corrected"
+
+    known_issue_reasons = (
+        QUALITY_OVER_QUESTIONING_REASONS
+        | QUALITY_REPETITION_REASONS
+        | QUALITY_TOPIC_DRIFT_REASONS
+        | QUALITY_CONTEXT_BREAK_REASONS
+        | QUALITY_STALE_ANCHOR_REASONS
+    )
+    issue_reasons = [
+        reason
+        for reason in sorted(reason_labels)
+        if reason and reason not in {"passed", "unknown"} and reason in known_issue_reasons
+    ]
+    if issue_reasons:
+        signals["last_quality_issue"] = ";".join(issue_reasons[:4])
+    elif user_corrected:
+        signals["last_quality_issue"] = "user_corrected_previous_turn"
+    if traces_seen:
+        signals["quality_trace_turns"] = traces_seen
+    return signals
 
 
 def estimate_context_budget(recent_messages: list[dict[str, Any]], max_chars: int = DEFAULT_MAX_CHARS) -> dict[str, Any]:
@@ -80,6 +241,8 @@ def should_compact_context(
     force: bool = False,
 ) -> dict[str, Any]:
     quality_signals = quality_signals if isinstance(quality_signals, dict) else {}
+    if not quality_signals:
+        quality_signals = quality_signals_from_recent_messages(recent_messages or [])
     budget = estimate_context_budget(recent_messages or [], max_chars=max_chars)
     reasons: list[str] = []
 
@@ -265,6 +428,9 @@ def _safe_quality_signals(quality_signals: dict[str, Any], *, risk_level: str) -
         "recent_repetition_risk",
         "topic_drift_risk",
         "recent_over_questioning_risk",
+        "stale_anchor_misuse_risk",
+        "context_break_risk",
+        "user_correction_signal",
         "last_quality_issue",
     }
     safe: dict[str, Any] = {}
@@ -285,7 +451,9 @@ def build_compact_context_pack(
 ) -> dict[str, Any]:
     messages = recent_messages or []
     session_digest = session_digest if isinstance(session_digest, dict) else {}
-    quality_signals = quality_signals if isinstance(quality_signals, dict) else {}
+    provided_quality_signals = quality_signals if isinstance(quality_signals, dict) else {}
+    derived_quality_signals = quality_signals_from_recent_messages(messages)
+    quality_signals = {**derived_quality_signals, **provided_quality_signals}
     risk_level = str(risk_level or "L0")
     max_recent_messages = max(1, int(max_recent_messages or DEFAULT_MAX_MESSAGES))
     summary = _summary(messages, session_digest, risk_level=risk_level)

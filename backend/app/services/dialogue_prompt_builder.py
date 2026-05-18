@@ -715,6 +715,15 @@ def _compact_context_prompt_block(state: AgentState) -> str:
         over_questioning = _compact_text(quality_signals.get("recent_over_questioning_risk"), limit=20)
         if over_questioning:
             quality_lines.append(f"追问过密风险={over_questioning}")
+        stale_anchor = _compact_text(quality_signals.get("stale_anchor_misuse_risk"), limit=20)
+        if stale_anchor:
+            quality_lines.append(f"旧锚点误用风险={stale_anchor}")
+        context_break = _compact_text(quality_signals.get("context_break_risk"), limit=20)
+        if context_break:
+            quality_lines.append(f"上下文断裂风险={context_break}")
+        correction_signal = _compact_text(quality_signals.get("user_correction_signal"), limit=20)
+        if correction_signal:
+            quality_lines.append(f"用户纠正={correction_signal}")
         drift = _compact_text(quality_signals.get("topic_drift_risk"), limit=20)
         if drift:
             quality_lines.append(f"跑题风险={drift}")

@@ -468,6 +468,30 @@ class ChatIdempotencyTests(unittest.TestCase):
                 )
             )
         self.db.commit()
+        quality_source = self.db.scalar(
+            select(Message)
+            .where(Message.thread_id == thread.id, Message.role == "assistant")
+            .order_by(Message.created_at)
+        )
+        assert quality_source is not None
+        quality_source.meta = {
+            "conversation_quality_trace": {
+                "turn_shape": {"question_count": 3},
+                "policy_snapshot": {
+                    "conversation_move": "continue_thread",
+                    "topic_anchor_type": "literary",
+                },
+                "validator_snapshot": {
+                    "severity": "repaired",
+                    "experience_reasons": ["too_many_questions"],
+                },
+                "user_signal": {
+                    "explicit_feedback": "none",
+                    "next_turn_signal": "corrected",
+                },
+            }
+        }
+        self.db.commit()
         fake_runtime = FakeGraphRuntime()
         chat_service.graph_runtime = fake_runtime
 
@@ -481,6 +505,8 @@ class ChatIdempotencyTests(unittest.TestCase):
         pack = fake_runtime.calls[0]["compact_context_pack"]
         self.assertEqual(pack["schema_version"], 1)
         self.assertEqual(pack["memory_candidates"], [])
+        self.assertEqual(pack["state"]["quality_signals"]["recent_over_questioning_risk"], "high")
+        self.assertIn("quality_over_questioning_risk", pack["event"]["trigger"]["reason"])
         self.assertIn("state", pack)
         self.assertIn("event", pack)
 

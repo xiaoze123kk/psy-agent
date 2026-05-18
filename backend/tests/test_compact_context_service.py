@@ -1,6 +1,7 @@
 from app.services.compact_context_service import (
     build_compact_context_pack,
     estimate_context_budget,
+    quality_signals_from_recent_messages,
     should_compact_context,
 )
 
@@ -49,6 +50,81 @@ def test_should_compact_when_forced_even_without_pressure():
 
     assert decision["should_compact"] is True
     assert "force" in decision["reasons"]
+
+
+def test_quality_signals_from_recent_messages_summarizes_trace_without_raw_text():
+    messages = [
+        _msg(
+            1,
+            "assistant",
+            "raw-assistant-answer-that-must-not-leak",
+            conversation_quality_trace={
+                "turn_shape": {"question_count": 3},
+                "policy_snapshot": {
+                    "conversation_move": "continue_thread",
+                    "topic_anchor_type": "literary",
+                },
+                "validator_snapshot": {
+                    "severity": "repaired",
+                    "experience_reasons": ["too_many_questions", "missed_primary_lane"],
+                },
+                "user_signal": {
+                    "explicit_feedback": "none",
+                    "next_turn_signal": "corrected",
+                },
+            },
+            conversation_move_policy={
+                "suppressed_recent_anchors": ["raw-stale-anchor-that-must-not-leak"],
+            },
+        ),
+        _msg(2, "user", "raw-user-correction-that-must-not-leak"),
+    ]
+
+    signals = quality_signals_from_recent_messages(messages)
+
+    assert signals["recent_over_questioning_risk"] == "high"
+    assert signals["topic_drift_risk"] == "high"
+    assert signals["stale_anchor_misuse_risk"] == "high"
+    assert signals["user_correction_signal"] == "corrected"
+    assert "raw-assistant-answer" not in str(signals)
+    assert "raw-user-correction" not in str(signals)
+    assert "raw-stale-anchor" not in str(signals)
+
+
+def test_build_pack_derives_quality_triggers_from_recent_trace_when_not_explicitly_passed():
+    messages = [
+        _msg(
+            1,
+            "assistant",
+            "previous answer",
+            trace_summary={
+                "conversation_quality": {
+                    "turn_shape": {"question_count": 2},
+                    "policy_snapshot": {
+                        "conversation_move": "continue_thread",
+                        "topic_anchor_type": "literary",
+                    },
+                    "validator_snapshot": {
+                        "severity": "passed",
+                        "experience_reasons": ["too_many_questions"],
+                    },
+                    "user_signal": {
+                        "explicit_feedback": "none",
+                        "next_turn_signal": "corrected",
+                    },
+                }
+            },
+        ),
+        _msg(2, "user", "actually I meant something else"),
+    ]
+
+    pack = build_compact_context_pack(recent_messages=messages, risk_level="L0")
+
+    quality = pack["state"]["quality_signals"]
+    assert quality["recent_over_questioning_risk"] == "high"
+    assert quality["user_correction_signal"] == "corrected"
+    assert "quality_over_questioning_risk" in pack["event"]["trigger"]["reason"]
+    assert "quality_user_correction_signal" in pack["event"]["trigger"]["reason"]
 
 
 def test_build_pack_marks_old_anchor_as_stale_when_user_does_not_reuse_it():

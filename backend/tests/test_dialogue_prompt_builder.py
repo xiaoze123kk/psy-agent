@@ -176,7 +176,12 @@ class DialoguePromptBuilderTests(unittest.TestCase):
                     "interaction_preferences": ["少连续追问"],
                     "safety_context": {"risk_level": "L0", "note": "普通支持"},
                     "time_context_policy": {"timezone": "Asia/Wuhan", "source": "runtime"},
-                    "quality_signals": {"recent_repetition_risk": "high"},
+                    "quality_signals": {
+                        "recent_repetition_risk": "high",
+                        "stale_anchor_misuse_risk": "high",
+                        "context_break_risk": "warn",
+                        "user_correction_signal": "corrected",
+                    },
                 },
             }
         )
@@ -197,6 +202,9 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("用户不喜欢被强行分析", parts.user_prompt)
         self.assertIn("少连续追问", parts.user_prompt)
         self.assertIn("Asia/Wuhan", parts.user_prompt)
+        self.assertIn("旧锚点误用风险=high", parts.user_prompt)
+        self.assertIn("上下文断裂风险=warn", parts.user_prompt)
+        self.assertIn("用户纠正=corrected", parts.user_prompt)
         self.assertNotIn("compact_context_pack", parts.user_prompt)
         self.assertNotIn("schema_version", parts.user_prompt)
         self.assertNotIn("forgotten_turn_ids", parts.user_prompt)
