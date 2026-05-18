@@ -4,6 +4,8 @@ import type {
   AskKnowledgeResponse,
   CaptchaResponse,
   CompleteAttemptResponse,
+  ConversationFeedbackRequest,
+  ConversationQualitySummary,
   CurrentUserResponse,
   FeedbackCreateRequest,
   FeedbackResponse,
@@ -51,7 +53,6 @@ import type {
   UpdateMemoryRequest,
   UserSettingsResponse,
   UserSettingsUpdateRequest,
-  VoiceSessionResponse,
   WeeklySummaryResponse,
 } from "../types/api";
 
@@ -228,19 +229,23 @@ export class CounselingApi {
     return this.client.get<CompleteAttemptResponse>(`/api/v1/tests/attempts/${attemptId}/result`);
   }
 
-  // --- Sprint 3: Voice MVP ---
-
-  createVoiceSession(threadId?: string, mode = "companion"): Promise<VoiceSessionResponse> {
-    return this.client.post<VoiceSessionResponse, { thread_id?: string; mode: string }>(
-      "/api/v1/voice/sessions",
-      { thread_id: threadId, mode },
-    );
-  }
-
   // --- Sprint 3: Feedback ---
 
   submitFeedback(payload: FeedbackCreateRequest): Promise<FeedbackResponse> {
     return this.client.post<FeedbackResponse, FeedbackCreateRequest>("/api/v1/feedback", payload);
+  }
+
+  submitConversationQualityFeedback(payload: ConversationFeedbackRequest): Promise<FeedbackResponse> {
+    return this.submitFeedback(payload);
+  }
+
+  getConversationQualitySummary(threadId?: string): Promise<ConversationQualitySummary> {
+    const params = new URLSearchParams();
+    if (threadId) params.set("thread_id", threadId);
+    const query = params.toString();
+    return this.client.get<ConversationQualitySummary>(
+      `/api/v1/feedback/conversation-quality/summary${query ? `?${query}` : ""}`,
+    );
   }
 
   // --- Sprint 3: Weekly Summary ---

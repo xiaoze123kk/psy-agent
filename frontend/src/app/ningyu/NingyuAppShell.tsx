@@ -1,10 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import bgDay from "../../imports/wcbg.png";
 import bgNight from "../../imports/wcbg_night.png";
 import logo from "../../imports/wind-chat-logo.png";
 import { api } from "../../api";
 import { useAppState } from "../state";
+import {
+  conversationFeedbackOptions,
+  formatDuration,
+  formatRagStatus,
+  graphUpdateDetail,
+  traceTimingFromSummary,
+  type ConversationFeedbackSubmitStatus,
+  type TraceTiming,
+} from "./conversationQuality";
+import {
+  buildConversationList,
+  buildDraftThread,
+  formatMessageTime,
+  toThreadListItemFromStartThread,
+  type ConversationListEntry,
+  type ConversationListSection,
+  type DraftThread,
+} from "./threadList";
+import {
+  getMoodCheckInOwnerId,
+  getMoodCheckInStorage,
+  hasMoodCheckInForToday,
+  markMoodCheckInRecordedToday,
+  readRecordedMoodCheckInDay,
+  shouldShowMoodCheckInControls,
+} from "./moodCheckInFrequency";
+import {
+  buildDailyOpeningSuggestions,
+  claimDailyOpeningSuggestionsForSession,
+  dismissDailyOpeningSuggestionsForSession,
+  getDailyOpeningSuggestionOwnerId,
+  getDailyOpeningSuggestionStorage,
+  markDailyOpeningSuggestionsSeenToday,
+  type DailyOpeningSuggestion,
+} from "./dailyOpeningSuggestions";
 import "./NingyuAppShell.css";
 import type {
   ChatStreamAcceptedEvent,
@@ -14,6 +49,7 @@ import type {
   ChatStreamGraphUpdateEvent,
   ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
+  ConversationFeedbackValue,
   MemoryMode,
   MessageItem,
   MoodLogResponse,
@@ -49,22 +85,19 @@ interface Message {
   riskLevel?: string | null;
   suggestedActions?: string[];
   metadata?: Record<string, unknown>;
+  turnId?: string | null;
+  assistantMessageId?: string | null;
+  trace?: TraceTiming | null;
+  feedbackState?: {
+    value: ConversationFeedbackValue;
+    status: ConversationFeedbackSubmitStatus;
+  };
   isStreaming?: boolean;
   deliveryStatus?: string;
   intent?: string;
   sessionSummary?: string;
   turnStatus?: string;
   failureReason?: string | null;
-}
-
-interface HomeEntry {
-  id: string;
-  title: string;
-  time: string;
-  preview: string;
-  mode?: string;
-  riskLevel?: string;
-  threadId?: string;
 }
 
 interface HomeSupportResource {
@@ -74,19 +107,12 @@ interface HomeSupportResource {
   title: string;
 }
 
-interface QuickAction {
-  id: string;
-  label: string;
-  title: string;
-  kind: "chat" | "voice";
-}
+type QuickAction = DailyOpeningSuggestion;
 
 interface QuickActionResult {
   title: string;
   detail: string;
   threadId: string;
-  voiceSessionId?: string;
-  protocol?: string;
 }
 
 interface GraphUpdateItem {
@@ -106,7 +132,6 @@ interface HighRiskSafetyState {
   error?: string;
 }
 
-type MessageFeedback = "helpful" | "not_helpful";
 type ShellPhase = "loading" | "ready" | "error";
 type SafetyTone = "loading" | "stable" | "watch" | "support" | "error";
 type MoodCheckInStatus = "idle" | "submitting" | "success" | "error";
@@ -118,6 +143,9 @@ type ThreadListStatus = "idle" | "loading" | "success" | "error";
 type MessageListStatus = "idle" | "loading" | "success" | "error";
 type CreateThreadStatus = "idle" | "loading" | "success" | "error";
 type ChatStreamStatus = "idle" | "streaming" | "success" | "error";
+type ActiveConversation = { kind: "thread"; threadId: string } | { kind: "draft" } | null;
+type SendMessageHandler = (content: string) => boolean | Promise<boolean>;
+type DraftInputSeed = { id: string; text: string };
 
 interface MoodTagOption {
   id: string;
@@ -134,9 +162,11 @@ const moodTagOptions: MoodTagOption[] = [
 const moodScoreLabels = ["很低", "偏低", "还可以", "轻一点", "有力量"];
 
 const supportResources: HomeSupportResource[] = [
-  { id: "hotline", icon: "phone", label: "24小时热线", title: "400-xxx-xxxx" },
+  { id: "hotline", icon: "phone", label: "24小时热线", title: "010-82951332" },
   { id: "urgent-chat", icon: "message", label: "紧急咨询", title: "立即连接" },
 ];
+
+const dailyOpeningSuggestionSessionKeys = new Set<string>();
 const userModeLabels: Record<UserMode, string> = {
   teen: "青少年模式",
   adult: "标准模式",
@@ -146,34 +176,16 @@ const memoryModeLabels: Record<MemoryMode, string> = {
   summary_only: "摘要记忆",
   long_term: "长时记忆",
 };
-const voiceStyleLabels: Record<string, string> = {
-  gentle: "温柔陪伴",
-};
-
-function formatVoiceStyleLabel(style: string): string {
-  return voiceStyleLabels[style] ?? (style || "默认陪伴");
-}
-
-function formatThreadTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "最近";
-  }
-
-  return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
-}
-
-function formatMessageTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-}
-
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function extractSuggestedActions(metadata: Record<string, unknown>): string[] {
@@ -188,20 +200,6 @@ function extractSuggestedActions(metadata: Record<string, unknown>): string[] {
   return [];
 }
 
-function buildGraphUpdateDetail(update: ChatStreamGraphUpdateEvent): string {
-  const details = [
-    update.intent ? `意图：${update.intent}` : null,
-    update.route_priority ? `优先级：${update.route_priority}` : null,
-    update.control_category ? `控制：${update.control_category}` : null,
-    typeof update.retrieved_memory_count === "number" ? `记忆：${update.retrieved_memory_count}` : null,
-    typeof update.rag_used === "boolean" ? `知识：${update.rag_used ? "已参考" : "未使用"}` : null,
-    update.validator_blocked ? "已被安全校验拦截" : null,
-    update.delivery_status ? `投递：${update.delivery_status}` : null,
-  ].filter(Boolean);
-
-  return details.join(" · ") || "正在整理这一步的上下文";
-}
-
 function mapGraphUpdate(update: ChatStreamGraphUpdateEvent): GraphUpdateItem {
   return {
     id: crypto.randomUUID(),
@@ -209,7 +207,7 @@ function mapGraphUpdate(update: ChatStreamGraphUpdateEvent): GraphUpdateItem {
     status: update.status,
     riskLevel: update.risk_level,
     intent: update.intent,
-    detail: buildGraphUpdateDetail(update),
+    detail: graphUpdateDetail(update),
   };
 }
 
@@ -217,66 +215,30 @@ function isHighRiskLevel(riskLevel: RiskLevel | string | null | undefined): risk
   return riskLevel === "L2" || riskLevel === "L3";
 }
 
-function mapThreadToHomeEntry(thread: ThreadListItem): HomeEntry {
-  return {
-    id: thread.thread_id,
-    threadId: thread.thread_id,
-    title: thread.title || "未命名对话",
-    time: formatThreadTime(thread.updated_at),
-    preview: thread.last_summary || "这段对话还没有摘要，可以点开继续。",
-    mode: thread.mode,
-    riskLevel: thread.last_risk_level,
-  };
-}
-
 function mapMessageItem(message: MessageItem): Message {
+  const metadata = message.metadata;
+  const accepted = recordOrNull(metadata.accepted);
+  const final = recordOrNull(metadata.final);
+  const traceSummary = recordOrNull(metadata.trace_summary) ?? recordOrNull(final?.trace_summary);
+  const turnId = stringOrNull(metadata.turn_id) ?? stringOrNull(final?.turn_id) ?? stringOrNull(accepted?.turn_id);
+  const assistantMessageId =
+    stringOrNull(metadata.assistant_message_id) ??
+    stringOrNull(final?.assistant_message_id) ??
+    (message.role === "assistant" ? message.id : null);
+
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     timestamp: formatMessageTime(message.created_at),
     riskLevel: message.risk_level,
-    suggestedActions: extractSuggestedActions(message.metadata),
-    metadata: message.metadata,
+    suggestedActions: extractSuggestedActions(metadata),
+    metadata,
+    turnId,
+    assistantMessageId,
+    deliveryStatus: stringOrNull(metadata.delivery_status) ?? stringOrNull(final?.delivery_status) ?? undefined,
+    trace: traceTimingFromSummary(traceSummary ?? undefined),
   };
-}
-
-function buildHomeEntries(displayName: string, userMode: UserMode, memoryMode: MemoryMode): HomeEntry[] {
-  const modeHint = userMode === "teen" ? "青少年安全陪伴已开启" : "标准陪伴空间已准备";
-  const memoryHint = memoryMode === "off" ? "本次先轻轻聊，不写入长期记忆" : "可以从上次的感受继续说起";
-
-  return [
-    {
-      id: "continue",
-      title: `${displayName}，欢迎回来`,
-      time: "续聊入口",
-      preview: memoryHint,
-    },
-    {
-      id: "mode",
-      title: modeHint,
-      time: "当前模式",
-      preview: userMode === "teen" ? "需要时可以优先找可信任的大人一起处理。" : "你可以按自己的节奏整理今天的感受。",
-    },
-    {
-      id: "safety",
-      title: "安全支持随时可见",
-      time: "SOS",
-      preview: "如果感觉撑不住，请先打开右侧安全入口。",
-    },
-  ];
-}
-
-function buildHomeSuggestions(userMode: UserMode, isNight: boolean): QuickAction[] {
-  const restPrompt = isNight ? "用三句话卸下今晚的压力" : "写下此刻最想被听见的一句话";
-  const modePrompt = userMode === "teen" ? "想想一个可以联系的可信任大人" : "把问题拆成一个很小的下一步";
-
-  return [
-    { id: "listen", label: restPrompt, title: restPrompt, kind: "chat" },
-    { id: "breathing", label: "试试 30 秒呼吸练习", title: "30 秒呼吸练习", kind: "chat" },
-    { id: "next-step", label: modePrompt, title: modePrompt, kind: "chat" },
-    { id: "voice", label: "开启文本模拟语音", title: "语音陪伴", kind: "voice" },
-  ];
 }
 
 export function NingyuAppShell() {
@@ -285,8 +247,6 @@ export function NingyuAppShell() {
     ageModeProfile,
     userMode,
     memoryMode,
-    voiceSettings,
-    privacySettings,
     isNight,
     toggleThemeMode,
   } = useAppState();
@@ -303,6 +263,15 @@ export function NingyuAppShell() {
   const [moodTrendStatus, setMoodTrendStatus] = useState<MoodTrendStatus>("idle");
   const [moodTrendError, setMoodTrendError] = useState<string | null>(null);
   const [moodTrend, setMoodTrend] = useState<MoodTrendResponse | null>(null);
+  const moodCheckInOwnerId = useMemo(() => getMoodCheckInOwnerId(currentUser?.user_id ?? currentUser?.username), [currentUser]);
+  const dailyOpeningSuggestionOwnerId = useMemo(
+    () => getDailyOpeningSuggestionOwnerId(currentUser?.user_id ?? currentUser?.username),
+    [currentUser],
+  );
+  const [recordedMoodCheckInDay, setRecordedMoodCheckInDay] = useState<string | null>(() =>
+    readRecordedMoodCheckInDay(getMoodCheckInStorage(), "local"),
+  );
+  const [isDailyOpeningSuggestionsVisible, setIsDailyOpeningSuggestionsVisible] = useState(false);
   const [weeklySummaryStatus, setWeeklySummaryStatus] = useState<WeeklySummaryStatus>("idle");
   const [weeklySummaryError, setWeeklySummaryError] = useState<string | null>(null);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummaryResponse | null>(null);
@@ -311,18 +280,26 @@ export function NingyuAppShell() {
   const [quickActionError, setQuickActionError] = useState<string | null>(null);
   const [quickActionResult, setQuickActionResult] = useState<QuickActionResult | null>(null);
   const [threads, setThreads] = useState<ThreadListItem[]>([]);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
+  const [activeConversation, setActiveConversation] = useState<ActiveConversation>(null);
+  const activeThreadId = activeConversation?.kind === "thread" ? activeConversation.threadId : null;
+  const isDraftActive = activeConversation?.kind === "draft";
+  const activeConversationRef = useRef<ActiveConversation>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+  const sendOperationRef = useRef<string | null>(null);
+  const skipNextMessageLoadRef = useRef<string | null>(null);
+  const draftCreationRef = useRef<string | null>(null);
   const [threadListStatus, setThreadListStatus] = useState<ThreadListStatus>("idle");
   const [threadListError, setThreadListError] = useState<string | null>(null);
   const [messageListStatus, setMessageListStatus] = useState<MessageListStatus>("idle");
   const [messageListError, setMessageListError] = useState<string | null>(null);
   const [createThreadStatus, setCreateThreadStatus] = useState<CreateThreadStatus>("idle");
   const [createThreadError, setCreateThreadError] = useState<string | null>(null);
-  const [messageFeedback, setMessageFeedback] = useState<Record<string, MessageFeedback>>({});
   const [chatStreamStatus, setChatStreamStatus] = useState<ChatStreamStatus>("idle");
   const [chatStreamError, setChatStreamError] = useState<string | null>(null);
   const [graphUpdates, setGraphUpdates] = useState<GraphUpdateItem[]>([]);
   const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
+  const [draftInputSeed, setDraftInputSeed] = useState<DraftInputSeed | null>(null);
   const [highRiskSafety, setHighRiskSafety] = useState<HighRiskSafetyState | null>(null);
 
   useEffect(() => {
@@ -332,6 +309,25 @@ export function NingyuAppShell() {
 
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+    activeThreadIdRef.current = activeThreadId;
+  }, [activeConversation, activeThreadId]);
+
+  useEffect(() => {
+    setRecordedMoodCheckInDay(readRecordedMoodCheckInDay(getMoodCheckInStorage(), moodCheckInOwnerId));
+  }, [moodCheckInOwnerId]);
+
+  useEffect(() => {
+    const claim = claimDailyOpeningSuggestionsForSession({
+      storage: getDailyOpeningSuggestionStorage(),
+      ownerId: dailyOpeningSuggestionOwnerId,
+      sessionKeys: dailyOpeningSuggestionSessionKeys,
+    });
+
+    setIsDailyOpeningSuggestionsVisible(claim.visible);
+  }, [dailyOpeningSuggestionOwnerId]);
 
   const loadMoodTrend = useCallback(async (range: MoodTrendRange) => {
     setMoodTrendStatus("loading");
@@ -369,7 +365,14 @@ export function NingyuAppShell() {
       const response = await api.listThreads();
       setThreads(response.items);
       setThreadListStatus("success");
-      setActiveThreadId((current) => current ?? response.items[0]?.thread_id ?? null);
+      setActiveConversation((current) => {
+        if (current?.kind === "draft" || current?.kind === "thread") {
+          return current;
+        }
+
+        const firstThreadId = response.items[0]?.thread_id;
+        return firstThreadId ? { kind: "thread", threadId: firstThreadId } : null;
+      });
     } catch (error) {
       setThreadListStatus("error");
       setThreadListError(error instanceof Error ? error.message : "最近对话加载失败，请稍后再试。");
@@ -382,23 +385,54 @@ export function NingyuAppShell() {
 
     try {
       const response = await api.listMessages(threadId);
+      if (activeThreadIdRef.current !== threadId) {
+        return;
+      }
+
       setMessages(response.items.map(mapMessageItem));
       setMessageListStatus("success");
     } catch (error) {
+      if (activeThreadIdRef.current !== threadId) {
+        return;
+      }
+
       setMessageListStatus("error");
       setMessageListError(error instanceof Error ? error.message : "消息列表加载失败，请稍后再试。");
     }
   }, []);
 
-  const activateThread = useCallback((thread: ThreadListItem, options: { clearMessages?: boolean } = {}) => {
+  const activateThread = useCallback((thread: ThreadListItem, options: { clearMessages?: boolean; skipMessageLoad?: boolean } = {}) => {
     setThreads((current) => [thread, ...current.filter((item) => item.thread_id !== thread.thread_id)]);
-    setActiveThreadId(thread.thread_id);
+    draftCreationRef.current = null;
+    activeConversationRef.current = { kind: "thread", threadId: thread.thread_id };
+    activeThreadIdRef.current = thread.thread_id;
+    if (options.skipMessageLoad) {
+      skipNextMessageLoadRef.current = thread.thread_id;
+    }
+    setActiveConversation({ kind: "thread", threadId: thread.thread_id });
     setMessageListError(null);
 
     if (options.clearMessages) {
       setMessages([]);
       setMessageListStatus("success");
     }
+  }, []);
+
+  const activateDraft = useCallback(() => {
+    setDraftThread((current) => current ?? buildDraftThread());
+    activeConversationRef.current = { kind: "draft" };
+    activeThreadIdRef.current = null;
+    sendOperationRef.current = null;
+    setActiveConversation({ kind: "draft" });
+    setMessages([]);
+    setGraphUpdates([]);
+    setStreamStatusDetail(null);
+    setChatStreamStatus("idle");
+    setChatStreamError(null);
+    setMessageListError(null);
+    setMessageListStatus("success");
+    setCreateThreadStatus("success");
+    setCreateThreadError(null);
   }, []);
 
   useEffect(() => {
@@ -415,12 +449,18 @@ export function NingyuAppShell() {
 
   useEffect(() => {
     if (!activeThreadId) {
-      setMessageListStatus("idle");
+      setMessageListStatus(isDraftActive ? "success" : "idle");
+      return;
+    }
+
+    if (skipNextMessageLoadRef.current === activeThreadId) {
+      skipNextMessageLoadRef.current = null;
+      setMessageListStatus("success");
       return;
     }
 
     void loadMessages(activeThreadId);
-  }, [activeThreadId, loadMessages]);
+  }, [activeThreadId, isDraftActive, loadMessages]);
 
   const safetyState = useMemo(() => {
     if (shellPhase === "loading") {
@@ -476,31 +516,52 @@ export function NingyuAppShell() {
   }, [highRiskSafety, isSafetyEntryOpen, messages.length, shellPhase]);
 
   const displayName = currentUser?.nickname || currentUser?.username || "正在倾听你";
-  const homeEntries = useMemo(
-    () => (threads.length ? threads.map(mapThreadToHomeEntry) : buildHomeEntries(displayName, userMode, memoryMode)),
-    [displayName, memoryMode, threads, userMode],
+  const hasRecordedMoodToday = useMemo(
+    () =>
+      hasMoodCheckInForToday({
+        recordedDay: recordedMoodCheckInDay,
+        latestMoodLog,
+        moodTrend,
+      }),
+    [latestMoodLog, moodTrend, recordedMoodCheckInDay],
   );
-  const homeSuggestions = useMemo(() => buildHomeSuggestions(userMode, isNight), [isNight, userMode]);
+  const conversationList = useMemo(
+    () =>
+      buildConversationList({
+        threads,
+        draft: draftThread,
+        displayName,
+        userMode,
+        memoryMode,
+    }),
+    [displayName, draftThread, memoryMode, threads, userMode],
+  );
+  const homeSuggestions = useMemo(
+    () =>
+      buildDailyOpeningSuggestions({
+        userMode,
+        memoryMode,
+        isNight,
+        latestMoodLog,
+        moodTrend,
+        weeklySummary,
+        hasRecordedMoodToday,
+      }),
+    [hasRecordedMoodToday, isNight, latestMoodLog, memoryMode, moodTrend, weeklySummary, userMode],
+  );
+  const visibleHomeSuggestions = isDailyOpeningSuggestionsVisible ? homeSuggestions : [];
   const statusTags = useMemo(
     () => [
       userModeLabels[userMode],
       ageModeProfile.ageLabel,
       ageModeProfile.description,
       memoryModeLabels[memoryMode],
-      voiceSettings.voiceEnabled ? "语音已开启" : "语音已关闭",
-      voiceSettings.saveVoiceAudio ? "保存语音音频" : "不保存语音音频",
-      privacySettings.saveTranscript ? "保存转写" : "不保存转写",
-      formatVoiceStyleLabel(voiceSettings.companionStyle),
     ],
     [
       memoryMode,
       ageModeProfile.ageLabel,
       ageModeProfile.description,
-      privacySettings.saveTranscript,
       userMode,
-      voiceSettings.companionStyle,
-      voiceSettings.saveVoiceAudio,
-      voiceSettings.voiceEnabled,
     ],
   );
 
@@ -560,13 +621,91 @@ export function NingyuAppShell() {
     [],
   );
 
-  const handleSend = async (content: string) => {
-    if (chatStreamStatus === "streaming") return;
+  const updateMessage = useCallback((messageId: string, updater: (message: Message) => Message) => {
+    setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
+  }, []);
 
-    if (!activeThreadId) {
-      setChatStreamStatus("error");
-      setChatStreamError("请先从左侧开始一段新对话，再发送消息。");
+  const handleSelectConversationEntry = useCallback((entry: ConversationListEntry) => {
+    if (entry.kind === "draft") {
+      activateDraft();
       return;
+    }
+
+    if (!entry.threadId) {
+      return;
+    }
+
+    sendOperationRef.current = null;
+    draftCreationRef.current = null;
+    activeConversationRef.current = { kind: "thread", threadId: entry.threadId };
+    activeThreadIdRef.current = entry.threadId;
+    setChatStreamStatus("idle");
+    setChatStreamError(null);
+    setCreateThreadStatus("success");
+    setCreateThreadError(null);
+    setStreamStatusDetail(null);
+    setGraphUpdates([]);
+    setMessages([]);
+    setMessageListError(null);
+    setActiveConversation({ kind: "thread", threadId: entry.threadId });
+  }, [activateDraft]);
+
+  const ensureThreadForSend = useCallback(async (): Promise<string | null> => {
+    if (activeThreadId) {
+      return activeThreadId;
+    }
+
+    if (!isDraftActive) {
+      return null;
+    }
+
+    const draftCreationId = crypto.randomUUID();
+    draftCreationRef.current = draftCreationId;
+    setCreateThreadStatus("loading");
+    setCreateThreadError(null);
+
+    try {
+      const thread = await api.startThread({
+        mode: "companion",
+        title: draftThread?.title ?? "新的陪伴对话",
+      });
+      if (
+        draftCreationRef.current !== draftCreationId ||
+        activeConversationRef.current?.kind !== "draft" ||
+        activeThreadIdRef.current !== null
+      ) {
+        return null;
+      }
+
+      const threadItem = toThreadListItemFromStartThread(thread);
+      setDraftThread(null);
+      draftCreationRef.current = null;
+      activeThreadIdRef.current = threadItem.thread_id;
+      activateThread(threadItem, { clearMessages: false, skipMessageLoad: true });
+      setCreateThreadStatus("success");
+      return threadItem.thread_id;
+    } catch (error) {
+      if (draftCreationRef.current !== draftCreationId || activeConversationRef.current?.kind !== "draft") {
+        return null;
+      }
+
+      draftCreationRef.current = null;
+      setCreateThreadStatus("error");
+      setCreateThreadError(error instanceof Error ? error.message : "新对话暂时没创建成功，可以稍后重试。");
+      return null;
+    }
+  }, [activeThreadId, activateThread, draftThread?.title, isDraftActive]);
+
+  const handleSend = async (content: string): Promise<boolean> => {
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return false;
+
+    const resolvedThreadId = await ensureThreadForSend();
+    if (!resolvedThreadId) {
+      if (activeConversationRef.current?.kind !== "thread" && activeThreadIdRef.current === null) {
+        setChatStreamStatus("error");
+        setChatStreamError(isDraftActive ? "新对话暂时没创建成功，可以稍后重试。" : "请先从左侧开始一段新对话，再发送消息。");
+      }
+      return false;
     }
 
     const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -578,6 +717,8 @@ export function NingyuAppShell() {
       input_type: "text",
       user_mode: userMode,
     };
+    const sendOperationId = crypto.randomUUID();
+    sendOperationRef.current = sendOperationId;
 
     setChatStreamStatus("streaming");
     setChatStreamError(null);
@@ -602,8 +743,13 @@ export function NingyuAppShell() {
 
     let hasReceivedStreamEvent = false;
 
+    void (async () => {
     try {
-      await api.streamMessage(activeThreadId, payload, (eventName, data) => {
+      await api.streamMessage(resolvedThreadId, payload, (eventName, data) => {
+        if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+          return;
+        }
+
         hasReceivedStreamEvent = true;
         const typedEvent = eventName as ChatStreamEventName;
 
@@ -613,7 +759,12 @@ export function NingyuAppShell() {
           setMessages((current) =>
             current.map((message) =>
               message.id === assistantMessageId
-                ? { ...message, turnStatus: accepted.turn_status, metadata: { ...message.metadata, accepted } }
+                ? {
+                    ...message,
+                    turnId: accepted.turn_id ?? message.turnId,
+                    turnStatus: accepted.turn_status,
+                    metadata: { ...message.metadata, accepted, turn_id: accepted.turn_id ?? message.turnId },
+                  }
                 : message,
             ),
           );
@@ -622,7 +773,25 @@ export function NingyuAppShell() {
 
         if (typedEvent === "graph_update") {
           const update = data as unknown as ChatStreamGraphUpdateEvent;
+          const graphTrace = traceTimingFromSummary({
+            node: update.node,
+            duration_ms: update.duration_ms,
+            retrieved_memory_count: update.retrieved_memory_count,
+            retrieved_example_count: update.retrieved_example_count,
+            rag_used: update.rag_used,
+            rag_skipped_reason: update.rag_skipped_reason,
+            rag_trace_summary: update.rag_trace_summary,
+          });
           setGraphUpdates((current) => [...current.slice(-4), mapGraphUpdate(update)]);
+          if (graphTrace) {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantMessageId && message.isStreaming
+                  ? { ...message, trace: { ...message.trace, ...graphTrace } }
+                  : message,
+              ),
+            );
+          }
           setStreamStatusDetail(update.status ? `${update.node} · ${update.status}` : `${update.node} 正在处理`);
           return;
         }
@@ -666,7 +835,16 @@ export function NingyuAppShell() {
                     sessionSummary: final.session_summary,
                     turnStatus: final.turn_status,
                     failureReason: final.failure_reason,
-                    metadata: { ...message.metadata, final },
+                    turnId: final.turn_id ?? message.turnId,
+                    assistantMessageId: final.assistant_message_id ?? final.message_id ?? message.assistantMessageId,
+                    trace: traceTimingFromSummary(final.trace_summary) ?? message.trace,
+                    metadata: {
+                      ...message.metadata,
+                      final,
+                      turn_id: final.turn_id ?? message.turnId,
+                      assistant_message_id: final.assistant_message_id ?? final.message_id ?? message.assistantMessageId,
+                      trace_summary: final.trace_summary,
+                    },
                   }
                 : message,
             ),
@@ -674,7 +852,7 @@ export function NingyuAppShell() {
           setStreamStatusDetail(final.delivery_status ? `完成 · ${final.delivery_status}` : "回复已完成");
           setChatStreamStatus("success");
           void handleHighRiskChatResponse({
-            threadId: final.thread_id || activeThreadId,
+            threadId: final.thread_id || resolvedThreadId,
             riskLevel: final.risk_level,
             detectedSignals: [
               final.intent,
@@ -707,19 +885,31 @@ export function NingyuAppShell() {
         }
       });
 
+      if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+        return;
+      }
+
       setMessages((current) =>
         current.map((message) => (message.id === assistantMessageId ? { ...message, isStreaming: false } : message)),
       );
       setChatStreamStatus((current) => (current === "streaming" ? "success" : current));
       setStreamStatusDetail((current) => current ?? "回复已完成");
     } catch (error) {
+      if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "流式回复失败，请稍后再试。";
 
       if (!hasReceivedStreamEvent) {
         setStreamStatusDetail("流式连接未开始，正在切换到普通发送...");
 
         try {
-          const fallback = await api.sendMessage(activeThreadId, payload);
+          const fallback = await api.sendMessage(resolvedThreadId, payload);
+          if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+            return;
+          }
+
           const assistant = fallback.assistant_message;
 
           setMessages((current) =>
@@ -745,7 +935,14 @@ export function NingyuAppShell() {
                   sessionSummary: assistant?.session_summary,
                   turnStatus: fallback.turn_status,
                   failureReason: fallback.failure_reason,
-                  metadata: { ...item.metadata, fallback },
+                  turnId: fallback.turn_id ?? item.turnId,
+                  assistantMessageId: fallback.assistant_message_id ?? assistant?.id ?? item.assistantMessageId,
+                  metadata: {
+                    ...item.metadata,
+                    fallback,
+                    turn_id: fallback.turn_id ?? item.turnId,
+                    assistant_message_id: fallback.assistant_message_id ?? assistant?.id ?? item.assistantMessageId,
+                  },
                 };
               }
 
@@ -756,7 +953,7 @@ export function NingyuAppShell() {
           setChatStreamError(null);
           setStreamStatusDetail(fallback.delivery_status ? `已用普通发送完成 · ${fallback.delivery_status}` : "已用普通发送完成");
           void handleHighRiskChatResponse({
-            threadId: fallback.thread_id || activeThreadId,
+            threadId: fallback.thread_id || resolvedThreadId,
             riskLevel: assistant?.risk_level ?? null,
             detectedSignals: [
               assistant?.intent,
@@ -767,6 +964,10 @@ export function NingyuAppShell() {
           });
           return;
         } catch (fallbackError) {
+          if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+            return;
+          }
+
           const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "普通发送也失败了，请稍后再试。";
           setChatStreamError(fallbackMessage);
           setStreamStatusDetail("普通发送回退失败");
@@ -803,115 +1004,64 @@ export function NingyuAppShell() {
         ),
       );
     }
+    })();
+
+    return true;
   };
 
-  const addLocalAssistantMessage = (content: string, suggestedActions: string[] = []) => {
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content,
-        timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        suggestedActions,
-      },
-    ]);
-  };
+  const handleMessageFeedback = useCallback(
+    async (message: Message, feedback: ConversationFeedbackValue) => {
+      if (!activeThreadId || message.role !== "assistant" || !message.turnId) return;
+      if (message.feedbackState?.status === "submitting" || message.feedbackState?.status === "submitted") return;
 
-  const handleMessageFeedback = (messageId: string, feedback: MessageFeedback) => {
-    setMessageFeedback((current) => ({
-      ...current,
-      [messageId]: feedback,
-    }));
-  };
+      updateMessage(message.id, (current) => ({
+        ...current,
+        feedbackState: { value: feedback, status: "submitting" },
+      }));
+
+      try {
+        await api.submitConversationQualityFeedback({
+          thread_id: activeThreadId,
+          turn_id: message.turnId,
+          feedback,
+        });
+        updateMessage(message.id, (current) => ({
+          ...current,
+          feedbackState: { value: feedback, status: "submitted" },
+        }));
+      } catch {
+        updateMessage(message.id, (current) => ({
+          ...current,
+          feedbackState: { value: feedback, status: "failed" },
+        }));
+      }
+    },
+    [activeThreadId, updateMessage],
+  );
 
   const handleQuickAction = async (action: QuickAction) => {
-    if (quickActionStatus === "loading") return;
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return;
+    if (!isDailyOpeningSuggestionsVisible) return;
 
-    setQuickActionStatus("loading");
     setActiveQuickActionId(action.id);
     setQuickActionError(null);
+    setQuickActionResult(null);
+    setQuickActionStatus("success");
 
-    try {
-      const thread = await api.startThread({
-        mode: "companion",
-        title: action.title,
-      });
-
-      if (action.kind === "voice") {
-        const voiceSession = await api.createVoiceSession(thread.thread_id, "companion");
-        const result = {
-          title: "语音陪伴入口已准备",
-          detail: `已创建 ${voiceSession.protocol} 会话，后续语音页会继续接入。`,
-          threadId: voiceSession.thread_id,
-          voiceSessionId: voiceSession.voice_session_id,
-          protocol: voiceSession.protocol,
-        };
-        setQuickActionResult(result);
-        addLocalAssistantMessage(`${result.title}。这是 Sprint 3 的文本模拟语音入口，真正的 WebSocket 会话会在后续语音模块接入。`, [
-          "先用文字描述我想说的话",
-          "回到普通对话",
-        ]);
-      } else {
-        const result = {
-          title: "对话入口已准备",
-          detail: `已创建「${thread.title || action.title}」对话。`,
-          threadId: thread.thread_id,
-        };
-        setQuickActionResult(result);
-        addLocalAssistantMessage(`${result.detail} 你可以先在这里写下想说的话，后续聊天模块会接入完整消息流。`, [
-          "我想从刚才那句话开始",
-          "帮我把感受拆小一点",
-        ]);
-      }
-
-      activateThread(
-        {
-          thread_id: thread.thread_id,
-          title: thread.title || action.title,
-          mode: thread.mode,
-          last_summary: null,
-          last_risk_level: "L0",
-          updated_at: thread.updated_at,
-        },
-        { clearMessages: false },
-      );
-      setQuickActionStatus("success");
-    } catch (error) {
-      setQuickActionStatus("error");
-      setQuickActionError(error instanceof Error ? error.message : "快捷入口启动失败，请稍后再试。");
-    } finally {
-      setActiveQuickActionId(null);
-    }
+    markDailyOpeningSuggestionsSeenToday(getDailyOpeningSuggestionStorage(), dailyOpeningSuggestionOwnerId);
+    dismissDailyOpeningSuggestionsForSession({
+      ownerId: dailyOpeningSuggestionOwnerId,
+      sessionKeys: dailyOpeningSuggestionSessionKeys,
+    });
+    setIsDailyOpeningSuggestionsVisible(false);
+    activateDraft();
+    setDraftInputSeed({ id: crypto.randomUUID(), text: action.title });
+    setActiveQuickActionId(null);
   };
 
-  const handleStartNewThread = async () => {
-    if (createThreadStatus === "loading") return;
-
-    setCreateThreadStatus("loading");
-    setCreateThreadError(null);
-
-    try {
-      const thread = await api.startThread({
-        mode: "companion",
-        title: "新的陪伴对话",
-      });
-      activateThread(
-        {
-          thread_id: thread.thread_id,
-          title: thread.title || "新的陪伴对话",
-          mode: thread.mode,
-          last_summary: null,
-          last_risk_level: "L0",
-          updated_at: thread.updated_at,
-        },
-        { clearMessages: true },
-      );
-      setCreateThreadStatus("success");
-    } catch (error) {
-      setCreateThreadStatus("error");
-      setCreateThreadError(error instanceof Error ? error.message : "新对话创建失败，请稍后再试。");
-    }
+  const handleStartNewThread = () => {
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading") return;
+    activateDraft();
   };
 
   const handleMoodTagToggle = (tagId: string) => {
@@ -923,7 +1073,7 @@ export function NingyuAppShell() {
   };
 
   const handleMoodSubmit = async () => {
-    if (moodStatus === "submitting") return;
+    if (moodStatus === "submitting" || hasRecordedMoodToday) return;
 
     setMoodStatus("submitting");
     setMoodError(null);
@@ -935,6 +1085,7 @@ export function NingyuAppShell() {
         note: moodNote.trim() ? moodNote.trim() : null,
       });
       setLatestMoodLog(response);
+      setRecordedMoodCheckInDay(markMoodCheckInRecordedToday(getMoodCheckInStorage(), moodCheckInOwnerId));
       setMoodStatus("success");
       setMoodNote("");
       await loadMoodTrend(moodTrendRange);
@@ -961,32 +1112,33 @@ export function NingyuAppShell() {
         <div className="ningyu-shell__body">
           <LeftSidebar
             isNight={isNight}
-            entries={homeEntries}
-            activeThreadId={activeThreadId}
+            sections={conversationList.sections}
+            activeConversation={activeConversation}
             threadListStatus={threadListStatus}
             threadListError={threadListError}
+            hiddenEmptyThreadCount={conversationList.hiddenEmptyThreadCount}
+            overflowThreadCount={conversationList.overflowThreadCount}
             createThreadStatus={createThreadStatus}
             createThreadError={createThreadError}
             userModeLabel={userModeLabels[userMode]}
             memoryModeLabel={memoryModeLabels[memoryMode]}
-            onSelectThread={setActiveThreadId}
+            onSelectEntry={handleSelectConversationEntry}
             onStartNewThread={handleStartNewThread}
           />
           <ChatWorkspace
             isNight={isNight}
-            displayName={displayName}
-            userModeLabel={userModeLabels[userMode]}
             primarySuggestion={homeSuggestions[0]?.label ?? ""}
             primarySupportLabel={supportResources[1].title}
             messages={messages}
             messageListStatus={messageListStatus}
             messageListError={messageListError}
             activeThreadId={activeThreadId}
-            messageFeedback={messageFeedback}
+            isInputDisabled={chatStreamStatus === "streaming" || createThreadStatus === "loading"}
             chatStreamStatus={chatStreamStatus}
             chatStreamError={chatStreamError}
             graphUpdates={graphUpdates}
             streamStatusDetail={streamStatusDetail}
+            draftInputSeed={draftInputSeed}
             onSend={handleSend}
             onMessageFeedback={handleMessageFeedback}
           />
@@ -995,7 +1147,7 @@ export function NingyuAppShell() {
             currentUserLabel={displayName}
             userMode={userMode}
             statusTags={statusTags}
-            suggestions={homeSuggestions}
+            suggestions={visibleHomeSuggestions}
             supportResources={supportResources}
             safetyState={safetyState}
             isSafetyEntryOpen={isSafetyEntryOpen}
@@ -1006,6 +1158,7 @@ export function NingyuAppShell() {
             moodStatus={moodStatus}
             moodError={moodError}
             latestMoodLog={latestMoodLog}
+            hasRecordedMoodToday={hasRecordedMoodToday}
             moodTrendRange={moodTrendRange}
             moodTrendStatus={moodTrendStatus}
             moodTrendError={moodTrendError}
@@ -1118,27 +1271,31 @@ function Header({
 
 function LeftSidebar({
   isNight,
-  entries,
-  activeThreadId,
+  sections,
+  activeConversation,
   threadListStatus,
   threadListError,
+  hiddenEmptyThreadCount,
+  overflowThreadCount,
   createThreadStatus,
   createThreadError,
   userModeLabel,
   memoryModeLabel,
-  onSelectThread,
+  onSelectEntry,
   onStartNewThread,
 }: {
   isNight: boolean;
-  entries: HomeEntry[];
-  activeThreadId: string | null;
+  sections: ConversationListSection[];
+  activeConversation: ActiveConversation;
   threadListStatus: ThreadListStatus;
   threadListError: string | null;
+  hiddenEmptyThreadCount: number;
+  overflowThreadCount: number;
   createThreadStatus: CreateThreadStatus;
   createThreadError: string | null;
   userModeLabel: string;
   memoryModeLabel: string;
-  onSelectThread: (threadId: string) => void;
+  onSelectEntry: (entry: ConversationListEntry) => void;
   onStartNewThread: () => void;
 }) {
   return (
@@ -1164,28 +1321,56 @@ function LeftSidebar({
         </div>
         {threadListStatus === "loading" ? <p className="ningyu-thread-list__state">正在加载最近对话...</p> : null}
         {threadListStatus === "error" ? <p className="ningyu-thread-list__state is-error">{threadListError}</p> : null}
-        {entries.map((entry) => (
-          <button
-            className={`ningyu-thread ${entry.threadId && entry.threadId === activeThreadId ? "is-active" : ""}`}
-            key={entry.id}
-            type="button"
-            onClick={entry.threadId ? () => onSelectThread(entry.threadId as string) : undefined}
-            disabled={!entry.threadId}
-          >
-            <span className="ningyu-thread__dot" />
-            <span className="ningyu-thread__content">
-              <strong>{entry.title}</strong>
-              <span>{entry.preview}</span>
-              <small>{entry.time}</small>
-            </span>
-            {entry.riskLevel || entry.mode ? (
-              <span className="ningyu-thread__meta">
-                {entry.riskLevel ? <small>{entry.riskLevel}</small> : null}
-                {entry.mode ? <small>{entry.mode}</small> : null}
-              </span>
-            ) : null}
-          </button>
+        {sections.map((section) => (
+          <div className="ningyu-thread-group" key={section.id}>
+            <div className="ningyu-thread-group__header">
+              <span>{section.label}</span>
+              {section.countLabel ? <em className="ningyu-thread-group__count">{section.countLabel}</em> : null}
+            </div>
+            {section.entries.map((entry) => {
+              const isActive =
+                entry.kind === "draft"
+                  ? activeConversation?.kind === "draft"
+                  : Boolean(entry.threadId && activeConversation?.kind === "thread" && entry.threadId === activeConversation.threadId);
+              const isSelectable = entry.kind === "draft" || Boolean(entry.threadId);
+
+              return (
+                <button
+                  className={[
+                    "ningyu-thread",
+                    entry.kind === "draft" ? "ningyu-thread--draft" : "",
+                    isActive ? "is-active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={entry.id}
+                  type="button"
+                  onClick={isSelectable ? () => onSelectEntry(entry) : undefined}
+                  disabled={!isSelectable}
+                >
+                  <span className="ningyu-thread__dot" />
+                  <span className="ningyu-thread__content">
+                    <strong>{entry.title}</strong>
+                    <span>{entry.preview}</span>
+                    <small>{entry.time}</small>
+                  </span>
+                  {entry.kind === "thread" && (entry.riskLevel || entry.mode) ? (
+                    <span className="ningyu-thread__meta">
+                      {entry.riskLevel ? <small>{entry.riskLevel}</small> : null}
+                      {entry.mode ? <small>{entry.mode}</small> : null}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         ))}
+        {hiddenEmptyThreadCount > 0 ? (
+          <p className="ningyu-thread-list__meta">已隐藏 {hiddenEmptyThreadCount} 个未开始的空白对话</p>
+        ) : null}
+        {overflowThreadCount > 0 ? (
+          <p className="ningyu-thread-list__meta">还有 {overflowThreadCount} 条更早对话，后续接入历史分页。</p>
+        ) : null}
       </div>
 
       <div className="ningyu-sidebar__bottom">
@@ -1208,51 +1393,37 @@ function LeftSidebar({
 
 function ChatWorkspace({
   isNight,
-  displayName,
-  userModeLabel,
   primarySuggestion,
   primarySupportLabel,
   messages,
   messageListStatus,
   messageListError,
   activeThreadId,
-  messageFeedback,
+  isInputDisabled,
   chatStreamStatus,
   chatStreamError,
   graphUpdates,
   streamStatusDetail,
+  draftInputSeed,
   onSend,
   onMessageFeedback,
 }: {
   isNight: boolean;
-  displayName: string;
-  userModeLabel: string;
   primarySuggestion: string;
   primarySupportLabel: string;
   messages: Message[];
   messageListStatus: MessageListStatus;
   messageListError: string | null;
   activeThreadId: string | null;
-  messageFeedback: Record<string, MessageFeedback>;
+  isInputDisabled: boolean;
   chatStreamStatus: ChatStreamStatus;
   chatStreamError: string | null;
   graphUpdates: GraphUpdateItem[];
   streamStatusDetail: string | null;
-  onSend: (content: string) => void | Promise<void>;
-  onMessageFeedback: (messageId: string, feedback: MessageFeedback) => void;
+  draftInputSeed: DraftInputSeed | null;
+  onSend: SendMessageHandler;
+  onMessageFeedback: (message: Message, feedback: ConversationFeedbackValue) => void | Promise<void>;
 }) {
-  const [draftSuggestion, setDraftSuggestion] = useState<{ id: string; text: string } | null>(null);
-  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-  const suggestedActions = latestAssistant?.suggestedActions?.length
-    ? latestAssistant.suggestedActions
-    : messages.length
-      ? ["把刚才的话说得更具体一点", "帮我整理成一个小步骤"]
-      : [];
-
-  const handleSuggestedAction = (action: string) => {
-    setDraftSuggestion({ id: crypto.randomUUID(), text: action });
-  };
-
   return (
     <section className="ningyu-chat" aria-label="聊天工作区">
       <div className="ningyu-chat__scroll">
@@ -1264,8 +1435,6 @@ function ChatWorkspace({
           ) : messages.length === 0 ? (
             <WelcomeState
               isNight={isNight}
-              displayName={displayName}
-              userModeLabel={userModeLabel}
               primarySuggestion={primarySuggestion}
               primarySupportLabel={primarySupportLabel}
               activeThreadId={activeThreadId}
@@ -1277,13 +1446,9 @@ function ChatWorkspace({
                   key={message.id}
                   message={message}
                   isNight={isNight}
-                  feedback={messageFeedback[message.id]}
                   onFeedback={onMessageFeedback}
                 />
               ))}
-              {suggestedActions.length ? (
-                <SuggestedActionChips actions={suggestedActions} onSelect={handleSuggestedAction} />
-              ) : null}
               {graphUpdates.length || chatStreamStatus !== "idle" ? (
                 <GraphUpdateTrail
                   status={chatStreamStatus}
@@ -1299,8 +1464,9 @@ function ChatWorkspace({
       <div className="ningyu-chat__input">
         <ChatInput
           isNight={isNight}
-          draftSuggestion={draftSuggestion}
           isSending={chatStreamStatus === "streaming"}
+          isDisabled={isInputDisabled}
+          draftInputSeed={draftInputSeed}
           onSend={onSend}
         />
       </div>
@@ -1310,15 +1476,11 @@ function ChatWorkspace({
 
 function WelcomeState({
   isNight,
-  displayName,
-  userModeLabel,
   primarySuggestion,
   primarySupportLabel,
   activeThreadId,
 }: {
   isNight: boolean;
-  displayName: string;
-  userModeLabel: string;
   primarySuggestion: string;
   primarySupportLabel: string;
   activeThreadId: string | null;
@@ -1335,8 +1497,8 @@ function WelcomeState({
       </h2>
       <p>
         {activeThreadId
-          ? "这段对话暂时还没有消息。你可以先在下方写一句想说的话。"
-          : `${displayName}，这里已经进入${userModeLabel}。你可以从左侧续聊入口继续，也可以先试试「${primarySuggestion}」；如果此刻需要更直接的支持，右侧的 ${primarySupportLabel} 会一直保持可见。`}
+          ? "这段对话还安静地留着空白。你可以先在下方写一句想被听见的话。"
+          : `先把世界的声音放轻一点。可以从「${primarySuggestion}」轻轻开口，也可以把此刻最想被听见的心事慢慢写下；如果需要更直接的支撑，右侧的 ${primarySupportLabel} 会一直为你留着一束光。`}
       </p>
       <span>
         <Icon name="spark" />
@@ -1358,29 +1520,41 @@ function ChatStateMessage({ title, detail, tone = "default" }: { title: string; 
 
 function ChatInput({
   isNight,
-  draftSuggestion,
   isSending,
+  isDisabled,
+  draftInputSeed,
   onSend,
 }: {
   isNight: boolean;
-  draftSuggestion: { id: string; text: string } | null;
   isSending: boolean;
-  onSend: (content: string) => void | Promise<void>;
+  isDisabled: boolean;
+  draftInputSeed: DraftInputSeed | null;
+  onSend: SendMessageHandler;
 }) {
   const [value, setValue] = useState("");
 
   useEffect(() => {
-    if (draftSuggestion) {
-      setValue(draftSuggestion.text);
+    if (!draftInputSeed) {
+      return;
     }
-  }, [draftSuggestion]);
+
+    setValue(draftInputSeed.text);
+  }, [draftInputSeed]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextValue = value.trim();
-    if (!nextValue) return;
-    void onSend(nextValue);
-    setValue("");
+    if (!nextValue || isDisabled) return;
+    void (async () => {
+      try {
+        const accepted = await onSend(nextValue);
+        if (accepted) {
+          setValue("");
+        }
+      } catch {
+        // Keep the draft text if sending fails before acceptance.
+      }
+    })();
   };
 
   return (
@@ -1396,10 +1570,10 @@ function ChatInput({
         }}
         placeholder={isSending ? "宁语正在回应..." : isNight ? "夜风很安静，慢慢写..." : "随便写点什么吧，风在听..."}
         aria-label="输入聊天内容"
-        disabled={isSending}
+        disabled={isDisabled}
         rows={1}
       />
-      <button className={value.trim() ? "is-active" : ""} type="submit" disabled={!value.trim() || isSending} aria-label="发送">
+      <button className={value.trim() ? "is-active" : ""} type="submit" disabled={!value.trim() || isDisabled} aria-label="发送">
         <Icon name="send" />
       </button>
     </form>
@@ -1409,17 +1583,18 @@ function ChatInput({
 function ChatMessage({
   message,
   isNight,
-  feedback,
   onFeedback,
 }: {
   message: Message;
   isNight: boolean;
-  feedback?: MessageFeedback;
-  onFeedback: (messageId: string, feedback: MessageFeedback) => void;
+  onFeedback: (message: Message, feedback: ConversationFeedbackValue) => void | Promise<void>;
 }) {
   const isUser = message.role === "user";
   const metaLabel = message.role === "user" ? "你" : message.role === "system" ? "系统" : "宁语";
   const isAssistant = message.role === "assistant";
+  const canSendFeedback = isAssistant && !message.isStreaming && Boolean(message.turnId);
+  const feedbackStatus = message.feedbackState?.status;
+  const feedbackDisabled = feedbackStatus === "submitting" || feedbackStatus === "submitted";
 
   return (
     <article className={`ningyu-message ${isUser ? "is-user" : "is-assistant"} ${isNight ? "is-night" : ""}`}>
@@ -1430,26 +1605,33 @@ function ChatMessage({
       <div className="ningyu-message__bubble">
         <Icon name={isUser ? "leaf" : "wind"} />
         <p>{message.content}</p>
+        {message.trace ? <TraceLine trace={message.trace} /> : null}
       </div>
       <div className="ningyu-message__footer">
         <time>{message.timestamp}</time>
-        {isAssistant ? (
+        {canSendFeedback ? (
           <div className="ningyu-message-feedback" aria-label="消息反馈">
-            <button
-              className={feedback === "helpful" ? "is-selected" : ""}
-              type="button"
-              onClick={() => onFeedback(message.id, "helpful")}
-            >
-              有帮助
-            </button>
-            <button
-              className={feedback === "not_helpful" ? "is-selected" : ""}
-              type="button"
-              onClick={() => onFeedback(message.id, "not_helpful")}
-            >
-              不适合
-            </button>
-            {feedback ? <span>已记录</span> : null}
+            {conversationFeedbackOptions.map((option) => {
+              const selected = message.feedbackState?.value === option.value;
+
+              return (
+                <button
+                  key={option.value}
+                  className={selected ? "is-selected" : ""}
+                  type="button"
+                  onClick={() => onFeedback(message, option.value)}
+                  disabled={feedbackDisabled}
+                  aria-pressed={selected}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+            {feedbackStatus ? (
+              <span aria-live="polite">
+                {feedbackStatus === "submitting" ? "记录中" : feedbackStatus === "submitted" ? "已记录" : "未记录"}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1457,19 +1639,32 @@ function ChatMessage({
   );
 }
 
-function SuggestedActionChips({ actions, onSelect }: { actions: string[]; onSelect: (action: string) => void }) {
-  return (
-    <div className="ningyu-chat-suggestions" aria-label="建议行动">
-      <span>可以接着试试</span>
-      <div>
-        {actions.slice(0, 4).map((action) => (
-          <button key={action} type="button" onClick={() => onSelect(action)}>
-            {action}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+function TraceLine({ trace }: { trace: TraceTiming }) {
+  const totalDuration = formatDuration(trace.totalMs);
+  const graphDuration = formatDuration(trace.totalGraphMs);
+  const nodeDuration = formatDuration(trace.nodeMs);
+  const slowestDuration = formatDuration(trace.slowestNodeMs);
+  const ragDuration = formatDuration(trace.ragMs ?? trace.ragTotalMs);
+  const hasRagInfo =
+    trace.ragStatus ||
+    trace.ragUsed !== undefined ||
+    trace.retrievedMemoryCount !== undefined ||
+    trace.retrievedExampleCount !== undefined ||
+    trace.ragSkippedReason;
+  const parts = [
+    totalDuration ? `总耗时 ${totalDuration}` : null,
+    graphDuration ? `图 ${graphDuration}` : null,
+    trace.node && nodeDuration ? `节点 ${trace.node} ${nodeDuration}` : trace.node ? `节点 ${trace.node}` : null,
+    hasRagInfo ? formatRagStatus(trace) : ragDuration ? `RAG ${ragDuration}` : null,
+    trace.ragSkippedReason ? `原因 ${trace.ragSkippedReason}` : null,
+    trace.slowestNode && slowestDuration ? `最慢 ${trace.slowestNode} ${slowestDuration}` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  if (!parts.length) {
+    return null;
+  }
+
+  return <span className="ningyu-trace-line">{parts.join(" · ")}</span>;
 }
 
 function GraphUpdateTrail({
@@ -1526,6 +1721,7 @@ function RightPanel({
   moodStatus,
   moodError,
   latestMoodLog,
+  hasRecordedMoodToday,
   moodTrendRange,
   moodTrendStatus,
   moodTrendError,
@@ -1561,6 +1757,7 @@ function RightPanel({
   moodStatus: MoodCheckInStatus;
   moodError: string | null;
   latestMoodLog: MoodLogResponse | null;
+  hasRecordedMoodToday: boolean;
   moodTrendRange: MoodTrendRange;
   moodTrendStatus: MoodTrendStatus;
   moodTrendError: string | null;
@@ -1642,6 +1839,7 @@ function RightPanel({
           moodStatus={moodStatus}
           moodError={moodError}
           latestMoodLog={latestMoodLog}
+          hasRecordedMoodToday={hasRecordedMoodToday}
           onMoodScoreChange={onMoodScoreChange}
           onMoodTagToggle={onMoodTagToggle}
           onMoodNoteChange={onMoodNoteChange}
@@ -1674,27 +1872,29 @@ function RightPanel({
         ))}
       </section>
 
-      <section className="ningyu-panel-section ningyu-panel-section--suggestions">
-        <span className="ningyu-panel-section__caption">低优先级建议</span>
-        <h2>
-          <Icon name="light" />
-          可以试试
-        </h2>
-        <div className="ningyu-suggestions">
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion.id}
-              className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
-              type="button"
-              onClick={() => onQuickAction(suggestion)}
-              disabled={quickActionStatus === "loading"}
-            >
-              {activeQuickActionId === suggestion.id ? "准备中..." : suggestion.label}
-            </button>
-          ))}
-        </div>
-        <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
-      </section>
+      {suggestions.length ? (
+        <section className="ningyu-panel-section ningyu-panel-section--suggestions">
+          <span className="ningyu-panel-section__caption">今天第一次对话</span>
+          <h2>
+            <Icon name="light" />
+            今日开场
+          </h2>
+          <div className="ningyu-suggestions">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
+                type="button"
+                onClick={() => onQuickAction(suggestion)}
+                disabled={quickActionStatus === "loading"}
+              >
+                {activeQuickActionId === suggestion.id ? "准备中..." : suggestion.label}
+              </button>
+            ))}
+          </div>
+          <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
+        </section>
+      ) : null}
       <span className="ningyu-sidebar__mode">
         {isNight ? "夜间保持安全入口可见" : "白天保持安全入口可见"}
       </span>
@@ -1788,7 +1988,6 @@ function QuickActionFeedback({
       <span>{result.detail}</span>
       <small>
         Thread {result.threadId}
-        {result.voiceSessionId ? ` · Voice ${result.voiceSessionId}` : ""}
       </small>
     </div>
   );
@@ -1801,6 +2000,7 @@ function MoodCheckIn({
   moodStatus,
   moodError,
   latestMoodLog,
+  hasRecordedMoodToday,
   onMoodScoreChange,
   onMoodTagToggle,
   onMoodNoteChange,
@@ -1812,63 +2012,81 @@ function MoodCheckIn({
   moodStatus: MoodCheckInStatus;
   moodError: string | null;
   latestMoodLog: MoodLogResponse | null;
+  hasRecordedMoodToday: boolean;
   onMoodScoreChange: (score: number) => void;
   onMoodTagToggle: (tagId: string) => void;
   onMoodNoteChange: (note: string) => void;
   onMoodSubmit: () => void;
 }) {
   const selectedTags = moodTagOptions.filter((tag) => moodTags.includes(tag.id)).map((tag) => tag.label);
-  const latestSummary = latestMoodLog
+  const latestSummary = hasRecordedMoodToday
+    ? latestMoodLog
+      ? `今日已记录：${latestMoodLog.mood_score}/5${selectedTags.length ? ` · ${selectedTags.join("、")}` : ""}`
+      : "今天已经记录过心情了，明天再来轻轻更新。"
+    : latestMoodLog
     ? `刚刚记录：${latestMoodLog.mood_score}/5${selectedTags.length ? ` · ${selectedTags.join("、")}` : ""}`
     : "选一个最接近此刻的分数就好，不需要解释得很完整。";
+  const summaryTone = moodStatus === "error" ? "error" : hasRecordedMoodToday ? "success" : moodStatus;
+  const showControls = shouldShowMoodCheckInControls({ hasRecordedMoodToday });
 
   return (
     <div className="ningyu-mood-checkin">
-      <div className="ningyu-mood-score" role="group" aria-label="选择心情分数">
-        {[1, 2, 3, 4, 5].map((score) => (
-          <button
-            key={score}
-            className={moodScore === score ? "is-active" : ""}
-            type="button"
-            onClick={() => onMoodScoreChange(score)}
-            aria-pressed={moodScore === score}
-          >
-            <strong>{score}</strong>
-            <span>{moodScoreLabels[score - 1]}</span>
+      {showControls ? (
+        <>
+          <div className="ningyu-mood-score" role="group" aria-label="选择心情分数">
+            {[1, 2, 3, 4, 5].map((score) => (
+              <button
+                key={score}
+                className={moodScore === score ? "is-active" : ""}
+                type="button"
+                onClick={() => onMoodScoreChange(score)}
+                aria-pressed={moodScore === score}
+              >
+                <strong>{score}</strong>
+                <span>{moodScoreLabels[score - 1]}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="ningyu-mood-tags" role="group" aria-label="选择心情标签">
+            {moodTagOptions.map((tag) => (
+              <button
+                key={tag.id}
+                className={moodTags.includes(tag.id) ? "is-active" : ""}
+                type="button"
+                onClick={() => onMoodTagToggle(tag.id)}
+                aria-pressed={moodTags.includes(tag.id)}
+              >
+                {tag.label}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            value={moodNote}
+            onChange={(event) => onMoodNoteChange(event.target.value)}
+            placeholder="想补一句也可以..."
+            rows={2}
+            aria-label="心情备注"
+          />
+
+          <div className="ningyu-mood-checkin__footer">
+            <p className={`ningyu-mood-checkin__summary is-${summaryTone}`}>
+              {moodStatus === "error" ? moodError : latestSummary}
+            </p>
+            <button type="button" onClick={onMoodSubmit} disabled={moodStatus === "submitting"}>
+              {moodStatus === "submitting" ? "记录中..." : "记录心情"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="ningyu-mood-checkin__recorded-state" aria-live="polite">
+          <p className={`ningyu-mood-checkin__summary is-${summaryTone}`}>{latestSummary}</p>
+          <button className="is-recorded" type="button" disabled>
+            今日已记录
           </button>
-        ))}
-      </div>
-
-      <div className="ningyu-mood-tags" role="group" aria-label="选择心情标签">
-        {moodTagOptions.map((tag) => (
-          <button
-            key={tag.id}
-            className={moodTags.includes(tag.id) ? "is-active" : ""}
-            type="button"
-            onClick={() => onMoodTagToggle(tag.id)}
-            aria-pressed={moodTags.includes(tag.id)}
-          >
-            {tag.label}
-          </button>
-        ))}
-      </div>
-
-      <textarea
-        value={moodNote}
-        onChange={(event) => onMoodNoteChange(event.target.value)}
-        placeholder="想补一句也可以..."
-        rows={2}
-        aria-label="心情备注"
-      />
-
-      <div className="ningyu-mood-checkin__footer">
-        <p className={`ningyu-mood-checkin__summary is-${moodStatus}`}>
-          {moodStatus === "error" ? moodError : latestSummary}
-        </p>
-        <button type="button" onClick={onMoodSubmit} disabled={moodStatus === "submitting"}>
-          {moodStatus === "submitting" ? "记录中..." : "记录心情"}
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

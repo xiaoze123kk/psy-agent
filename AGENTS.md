@@ -18,6 +18,11 @@
 - 不要编辑构建产物、缓存、虚拟环境、依赖安装目录或日志。
 - 常见例子包括 `node_modules/`、`.venv/`、`frontend/dist/`、`.pytest_cache/`、`*.log`、`.env*`、`backend/data/*.db`。
 
+## 开发日志
+- 每次开发都要写 dev-log：优先在 `docs/dev-log/` 中找到相关主题文件续写；没有合适文件时新建主题明确的 Markdown 文件。
+- dev-log 至少记录日期、背景/问题、关键改动、验证结果和后续事项。
+- 不要在 dev-log 中写入密钥、令牌、完整隐私数据或大段运行日志；只保留必要的结论和可复现线索。
+
 ## Git 提交
 - commit message 使用中文描述，并保持 Conventional Commit 格式：`type: 中文简短说明`。
 - `type` 使用常见类型，如 `feat`、`fix`、`docs`、`refactor`、`test`、`chore`。
