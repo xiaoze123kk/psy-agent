@@ -643,6 +643,95 @@ def _session_digest_prompt_block(state: AgentState) -> str:
     return "会话全景（仅供理解连续性，不要直接复述）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
 
 
+def _compact_context_prompt_block(state: AgentState) -> str:
+    pack = state.get("compact_context_pack")
+    if not isinstance(pack, dict) or not pack:
+        return ""
+
+    compact_state = pack.get("state")
+    if not isinstance(compact_state, dict) or not compact_state:
+        return ""
+
+    lines: list[str] = []
+    summary = _compact_text(compact_state.get("summary_for_prompt"), limit=220)
+    if summary:
+        lines.append(f"短期连续性：{summary}")
+
+    active_threads = compact_state.get("active_threads")
+    if isinstance(active_threads, list):
+        for thread in active_threads[:3]:
+            if not isinstance(thread, dict):
+                continue
+            topic = _compact_text(thread.get("topic"), limit=80)
+            hint = _compact_text(thread.get("next_move_hint"), limit=100)
+            if topic and hint:
+                lines.append(f"当前仍活跃的话题：{topic}；下一步：{hint}")
+            elif topic:
+                lines.append(f"当前仍活跃的话题：{topic}")
+
+    stale_threads = compact_state.get("stale_threads")
+    if isinstance(stale_threads, list):
+        for thread in stale_threads[:3]:
+            if not isinstance(thread, dict):
+                continue
+            topic = _compact_text(thread.get("topic"), limit=80)
+            reuse_policy = _compact_text(thread.get("reuse_policy"), limit=120)
+            if topic and reuse_policy:
+                lines.append(f"旧锚点降权：{topic}；{reuse_policy}")
+            elif topic:
+                lines.append(f"旧锚点降权：{topic}；除非用户主动提起，否则不要复用。")
+
+    boundaries = _compact_list(compact_state.get("user_boundaries"), limit=4)
+    if boundaries:
+        lines.append(f"用户边界：{'、'.join(boundaries)}")
+
+    preferences = _compact_list(compact_state.get("interaction_preferences"), limit=4)
+    if preferences:
+        lines.append(f"互动偏好：{'、'.join(preferences)}")
+
+    safety_context = compact_state.get("safety_context")
+    if isinstance(safety_context, dict):
+        risk_level = _compact_text(safety_context.get("risk_level"), limit=12)
+        note = _compact_text(safety_context.get("note"), limit=120)
+        if risk_level or note:
+            detail = f"{risk_level}；{note}" if risk_level and note else risk_level or note
+            lines.append(f"安全连续性：{detail}")
+
+    time_policy = compact_state.get("time_context_policy")
+    if isinstance(time_policy, dict):
+        timezone_name = _compact_text(time_policy.get("timezone"), limit=40)
+        use_policy = _compact_text(time_policy.get("use_policy"), limit=120)
+        if timezone_name and use_policy:
+            lines.append(f"时间策略：{timezone_name}；{use_policy}")
+        elif timezone_name:
+            lines.append(f"时间策略：{timezone_name}；当前时间由运行时提供。")
+
+    quality_signals = compact_state.get("quality_signals")
+    if isinstance(quality_signals, dict):
+        quality_lines: list[str] = []
+        repetition = _compact_text(quality_signals.get("recent_repetition_risk"), limit=20)
+        if repetition:
+            quality_lines.append(f"重复风险={repetition}")
+        over_questioning = _compact_text(quality_signals.get("recent_over_questioning_risk"), limit=20)
+        if over_questioning:
+            quality_lines.append(f"追问过密风险={over_questioning}")
+        drift = _compact_text(quality_signals.get("topic_drift_risk"), limit=20)
+        if drift:
+            quality_lines.append(f"跑题风险={drift}")
+        quality_issue = _compact_text(quality_signals.get("last_quality_issue"), limit=100)
+        if quality_issue:
+            quality_lines.append(f"最近质量问题：{quality_issue}")
+        risk_continuity = _compact_text(quality_signals.get("risk_continuity"), limit=80)
+        if risk_continuity:
+            quality_lines.append(f"风险连续性：{risk_continuity}")
+        if quality_lines:
+            lines.append(f"质量提醒：{'；'.join(quality_lines)}")
+
+    if not lines:
+        return ""
+    return "当前会话压缩状态（短期运行态，不要直接复述）：\n" + "\n".join(f"- {line}" for line in lines) + "\n"
+
+
 def _user_profile_digest_prompt_block(state: AgentState) -> str:
     digest = state.get("user_profile_digest")
     if not isinstance(digest, dict) or not digest:
@@ -829,6 +918,7 @@ def build_dialogue_prompt_parts(
     selected_strategy = select_dialogue_strategy(state, mode)
     style = build_companion_style_prompt(state.get("companion_preferences", {}).get("style", ""))
     last_summary = state.get("last_summary") or "无"
+    compact_context_text = _compact_context_prompt_block(state)
     user_context_pack_text = _user_context_pack_prompt_block(state)
     session_digest_text = "" if user_context_pack_text else _session_digest_prompt_block(state)
     user_profile_digest_text = "" if user_context_pack_text else _user_profile_digest_prompt_block(state)
@@ -865,6 +955,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{compact_context_text}"
         f"{temporal_context_text}"
         f"{conversation_move_text}"
         f"{risk_semantic_text}"

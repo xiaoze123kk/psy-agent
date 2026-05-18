@@ -160,6 +160,67 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertNotIn("用户画像", parts.user_prompt)
         self.assertNotIn("旧的会话摘要不应重复注入", parts.user_prompt)
 
+    def test_prompt_includes_compact_context_pack_without_raw_json(self) -> None:
+        state = self.make_state(
+            compact_context_pack={
+                "schema_version": 1,
+                "event": {
+                    "type": "compact_event",
+                    "range": {"forgotten_turn_ids": ["turn-1", "turn-2"]},
+                },
+                "state": {
+                    "summary_for_prompt": "用户现在主要在表达生气和堵。",
+                    "active_threads": [{"topic": "当前生气", "next_move_hint": "先承接"}],
+                    "stale_threads": [{"topic": "在轮下", "reuse_policy": "除非用户主动提起，否则不要复用"}],
+                    "user_boundaries": ["用户不喜欢被强行分析"],
+                    "interaction_preferences": ["少连续追问"],
+                    "safety_context": {"risk_level": "L0", "note": "普通支持"},
+                    "time_context_policy": {"timezone": "Asia/Wuhan", "source": "runtime"},
+                    "quality_signals": {"recent_repetition_risk": "high"},
+                },
+            }
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("当前会话压缩状态", parts.user_prompt)
+        self.assertIn("用户现在主要在表达生气和堵", parts.user_prompt)
+        self.assertIn("当前生气", parts.user_prompt)
+        self.assertIn("在轮下", parts.user_prompt)
+        self.assertIn("不要复用", parts.user_prompt)
+        self.assertIn("用户不喜欢被强行分析", parts.user_prompt)
+        self.assertIn("少连续追问", parts.user_prompt)
+        self.assertIn("Asia/Wuhan", parts.user_prompt)
+        self.assertNotIn("compact_context_pack", parts.user_prompt)
+        self.assertNotIn("schema_version", parts.user_prompt)
+        self.assertNotIn("forgotten_turn_ids", parts.user_prompt)
+
+    def test_prompt_keeps_compact_context_when_user_context_pack_exists(self) -> None:
+        state = self.make_state(
+            compact_context_pack={"state": {"summary_for_prompt": "短期压缩状态"}},
+            user_context_pack={"active_goal": "先把情绪稳住"},
+            session_digest={"summary_200chars": "旧摘要"},
+        )
+
+        parts = build_dialogue_prompt_parts(
+            state,
+            mode="companion",
+            response_contract={"allow_rag": False},
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("当前会话压缩状态", parts.user_prompt)
+        self.assertIn("短期压缩状态", parts.user_prompt)
+        self.assertIn("用户上下文优先级包", parts.user_prompt)
+        self.assertNotIn("会话全景", parts.user_prompt)
+
     def test_prompt_uses_dynamic_length_guidance_instead_of_fixed_short_range(self) -> None:
         parts = build_dialogue_prompt_parts(
             self.make_state(normalized_text="这件事有点复杂，我想让你多说一点，帮我详细展开看看。"),

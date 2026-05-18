@@ -37,6 +37,27 @@ def test_map_result_includes_risk_policy_metadata() -> None:
     assert result["experience_validator_warnings"] == ["too_many_questions"]
 
 
+def test_map_result_includes_compact_context_pack() -> None:
+    runtime = object.__new__(GraphRuntime)
+    pack = {
+        "schema_version": 1,
+        "state": {"summary_for_prompt": "用户还在同一条情绪线上。"},
+        "event": {"type": "compact_event"},
+    }
+
+    result = runtime._map_result(
+        {
+            "assistant_text": "我在。",
+            "risk_level": "L0",
+            "compact_context_pack": pack,
+            "delivery_status": "generated",
+        },
+        retrieved_memories=[],
+    )
+
+    assert result["compact_context_pack"] == pack
+
+
 class FakeStreamingGraph:
     async def astream(self, input_state, config=None, stream_mode=None):
         yield {

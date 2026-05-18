@@ -30,6 +30,7 @@ from app.services.chat_turn_lifecycle import (
     turn_metadata as _turn_metadata,
     turn_response_fields as _turn_response_fields,
 )
+from app.services.compact_context_service import build_compact_context_pack
 from app.services.graph_runtime import GraphRuntime
 from app.services.graph_trace_service import build_delivery_trace, build_trace_summary, persist_turn_traces
 from app.services.memory_job_service import build_memory_job_payload, enqueue_memory_job, notify_memory_jobs
@@ -57,6 +58,7 @@ class TurnContext:
     user_profile_digest: dict
     goal_state: dict
     user_context_pack: dict
+    compact_context_pack: dict
     memory_mode: str
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -173,6 +175,7 @@ async def _invoke_graph_with_fallback(
     user_profile_digest: dict,
     goal_state: dict,
     user_context_pack: dict,
+    compact_context_pack: dict,
     memory_mode: str,
     memory_index: list[dict],
     retrieved_memories: list[dict],
@@ -193,6 +196,7 @@ async def _invoke_graph_with_fallback(
                 user_profile_digest=user_profile_digest,
                 goal_state=goal_state,
                 user_context_pack=user_context_pack,
+                compact_context_pack=compact_context_pack,
                 memory_mode=memory_mode,
                 companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
                 nickname=getattr(user.profile, "nickname", None) if user.profile else None,
@@ -416,6 +420,12 @@ async def _prepare_turn_context(
             **user_context_pack,
             "safety_context_pack": safety_context_pack,
         }
+    compact_context_pack = build_compact_context_pack(
+        recent_messages=serialized_recent_messages,
+        session_digest=thread.session_digest or {},
+        risk_level=pre_risk_level,
+        created_at=utcnow().isoformat(),
+    )
     return TurnContext(
         turn=turn,
         user_message=user_message,
@@ -424,6 +434,7 @@ async def _prepare_turn_context(
         user_profile_digest=user_profile_digest,
         goal_state=goal_state,
         user_context_pack=user_context_pack,
+        compact_context_pack=compact_context_pack,
         memory_mode=memory_mode,
         memory_index=memory_index,
         retrieved_memories=retrieved_memories,
@@ -441,6 +452,7 @@ async def _persist_turn_result(
     assistant_result: dict[str, object],
 ) -> tuple[Message | None, dict[str, object]]:
     assistant_result = _coerce_delivery_result(assistant_result, pre_risk_level=context.pre_risk_level)
+    assistant_result.setdefault("compact_context_pack", context.compact_context_pack)
     assistant_result["memory_mode"] = context.memory_mode
     assistant_result["retrieved_memory_count"] = len(context.retrieved_memories)
     delivery_status = str(assistant_result.get("delivery_status", "generated"))
@@ -482,6 +494,7 @@ async def _persist_turn_result(
         "risk_response_policy": assistant_result.get("risk_response_policy", {}),
         "conversation_move_policy": assistant_result.get("conversation_move_policy", {}),
         "conversation_quality_trace": assistant_result.get("conversation_quality_trace", {}),
+        "compact_context_pack": assistant_result.get("compact_context_pack", {}),
         "tool_gate_mode": assistant_result.get("tool_gate_mode", ""),
         "safety_context_summary": assistant_result.get("safety_context_pack", {}),
         "experience_validator_reasons": assistant_result.get("experience_validator_reasons", []),
@@ -639,6 +652,7 @@ async def process_message_turn(
             user_profile_digest=context.user_profile_digest,
             goal_state=context.goal_state,
             user_context_pack=context.user_context_pack,
+            compact_context_pack=context.compact_context_pack,
             memory_mode=context.memory_mode,
             memory_index=context.memory_index,
             retrieved_memories=context.retrieved_memories,
@@ -727,6 +741,7 @@ async def process_message_turn_stream(
             user_profile_digest=context.user_profile_digest,
             goal_state=context.goal_state,
             user_context_pack=context.user_context_pack,
+            compact_context_pack=context.compact_context_pack,
             memory_mode=context.memory_mode,
             companion_style=getattr(user.settings, "companion_style", "") if user.settings else "",
             nickname=getattr(user.profile, "nickname", None) if user.profile else None,
