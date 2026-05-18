@@ -26,7 +26,6 @@ async def save_onboarding(
 
     sync_companion_style_from_definition(db, current_user, payload.companion_style, commit=False)
     current_user.settings.memory_mode = payload.memory_mode.value
-    current_user.settings.voice_enabled = payload.voice_enabled
     current_user.settings.updated_at = utcnow()
 
     if payload.initial_mood_score is not None:

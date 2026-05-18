@@ -86,6 +86,3 @@ class CurrentUserResponse(BaseModel):
     onboarding_completed: bool
     memory_mode: MemoryMode
     companion_style: str
-    voice_enabled: bool
-    save_voice_audio: bool
-    save_transcript: bool

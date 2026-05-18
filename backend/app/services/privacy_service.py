@@ -19,7 +19,6 @@ from app.db.models import (
     User,
     UserFeedback,
     UserMemory,
-    VoiceSession,
     utcnow,
 )
 from app.schemas.privacy import PrivacyDataCounts, PrivacyMutationResponse, PrivacySettingsSnapshot, PrivacySummaryResponse
@@ -63,7 +62,6 @@ def build_privacy_summary(db: Session, user: User) -> PrivacySummaryResponse:
         db.scalar(select(func.max(MoodLog.created_at)).where(MoodLog.user_id == user.id)),
         db.scalar(select(func.max(TestHistory.completed_at)).where(TestHistory.user_id == user.id)),
         db.scalar(select(func.max(UserFeedback.created_at)).where(UserFeedback.user_id == user.id)),
-        db.scalar(select(func.max(VoiceSession.created_at)).where(VoiceSession.user_id == user.id)),
         db.scalar(select(func.max(RiskEvent.created_at)).where(RiskEvent.user_id == user.id)),
     ]
     latest_activity_at = max((value for value in latest_values if value is not None), default=None)
@@ -75,9 +73,6 @@ def build_privacy_summary(db: Session, user: User) -> PrivacySummaryResponse:
         user_mode=profile.user_mode if profile else "adult",
         settings=PrivacySettingsSnapshot(
             memory_mode=settings.memory_mode if settings else "summary_only",
-            voice_enabled=bool(settings.voice_enabled) if settings else False,
-            save_voice_audio=bool(settings.save_voice_audio) if settings else False,
-            save_transcript=bool(settings.save_transcript) if settings else True,
         ),
         data_counts=PrivacyDataCounts(
             memories=_active_visible_memory_count(db, user.id),
@@ -91,7 +86,6 @@ def build_privacy_summary(db: Session, user: User) -> PrivacySummaryResponse:
             mood_logs=_count(db, select(func.count(MoodLog.id)).where(MoodLog.user_id == user.id)),
             test_history=_count(db, select(func.count(TestHistory.id)).where(TestHistory.user_id == user.id)),
             feedback=_count(db, select(func.count(UserFeedback.id)).where(UserFeedback.user_id == user.id)),
-            voice_sessions=_count(db, select(func.count(VoiceSession.id)).where(VoiceSession.user_id == user.id)),
             risk_events=_count(db, select(func.count(RiskEvent.id)).where(RiskEvent.user_id == user.id)),
         ),
         latest_activity_at=latest_activity_at,
@@ -146,9 +140,6 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
     feedback = list(
         db.scalars(select(UserFeedback).where(UserFeedback.user_id == user.id).order_by(UserFeedback.created_at.desc()))
     )
-    voice_sessions = list(
-        db.scalars(select(VoiceSession).where(VoiceSession.user_id == user.id).order_by(VoiceSession.created_at.desc()))
-    )
     risk_summary = list(
         db.execute(
             select(RiskEvent.risk_level, func.count(RiskEvent.id))
@@ -176,9 +167,6 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
         "settings": {
             "memory_mode": settings.memory_mode if settings else "summary_only",
             "companion_style": normalize_custom_companion_style(settings.companion_style) if settings else "",
-            "voice_enabled": bool(settings.voice_enabled) if settings else False,
-            "save_voice_audio": bool(settings.save_voice_audio) if settings else False,
-            "save_transcript": bool(settings.save_transcript) if settings else True,
             "crisis_resource_region": settings.crisis_resource_region if settings else "CN",
         },
         "companion_styles": [
@@ -272,18 +260,6 @@ def build_user_data_export(db: Session, user: User) -> dict[str, Any]:
             }
             for item in feedback
         ],
-        "voice_sessions": [
-            {
-                "voice_session_id": item.id,
-                "thread_id": item.thread_id,
-                "status": item.status,
-                "mode": item.mode,
-                "save_transcript": item.save_transcript,
-                "created_at": _dt(item.created_at),
-                "ended_at": _dt(item.ended_at),
-            }
-            for item in voice_sessions
-        ],
         "risk_events_summary": {
             level: count
             for level, count in risk_summary
@@ -360,11 +336,6 @@ def _delete_feedback(db: Session, user_id: str) -> int:
     return int(rows.rowcount or 0)
 
 
-def _delete_voice(db: Session, user_id: str) -> int:
-    rows = db.execute(delete(VoiceSession).where(VoiceSession.user_id == user_id))
-    return int(rows.rowcount or 0)
-
-
 def _delete_tests(db: Session, user_id: str) -> dict[str, int]:
     history_rows = db.execute(delete(TestHistory).where(TestHistory.user_id == user_id))
     attempt_rows = db.execute(delete(TestAttempt).where(TestAttempt.user_id == user_id))
@@ -384,14 +355,11 @@ def delete_user_data(db: Session, user: User, *, scope: str) -> PrivacyMutationR
         affected["mood_logs"] = _delete_moods(db, user.id)
     elif scope == "feedback":
         affected["feedback"] = _delete_feedback(db, user.id)
-    elif scope == "voice":
-        affected["voice_sessions"] = _delete_voice(db, user.id)
     elif scope == "all_non_account":
         affected["memories"] = _delete_memories(db, user.id)
         affected.update(_delete_chat(db, user.id))
         affected["mood_logs"] = _delete_moods(db, user.id)
         affected["feedback"] = _delete_feedback(db, user.id)
-        affected["voice_sessions"] = _delete_voice(db, user.id)
         affected.update(_delete_tests(db, user.id))
     else:
         raise ValueError(f"Unsupported privacy data scope: {scope}")
@@ -418,9 +386,6 @@ def delete_account(db: Session, user: User) -> PrivacyMutationResponse:
     if user.settings is not None:
         user.settings.memory_mode = "off"
         user.settings.companion_style = ""
-        user.settings.voice_enabled = False
-        user.settings.save_voice_audio = False
-        user.settings.save_transcript = False
         user.settings.updated_at = utcnow()
 
     style_rows = db.execute(delete(CompanionStyle).where(CompanionStyle.user_id == user.id))

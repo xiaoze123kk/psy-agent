@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine
@@ -47,9 +48,6 @@ class ToolingIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     user_id=user.id,
                     memory_mode=memory_mode,
                     companion_style="",
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="US",
                 ),
             ]
@@ -108,7 +106,10 @@ class ToolingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch("app.graphs.nodes.rag_nodes.retrieve_counseling_examples", new=AsyncMock(return_value=[])),
+            patch(
+                "app.graphs.nodes.rag_nodes.retrieve_counseling_examples_with_trace",
+                new=AsyncMock(return_value=SimpleNamespace(examples=[], trace={"status": "skipped", "hit_count": 0})),
+            ),
             patch("app.services.tooling.run_dialogue_reply_with_tools", new=AsyncMock(return_value=fake_reply)),
         ):
             _, assistant_message, result = await chat_service.process_message_turn(

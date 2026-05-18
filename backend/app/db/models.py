@@ -59,9 +59,6 @@ class UserSettings(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     memory_mode: Mapped[str] = mapped_column(String(24), default="summary_only")
     companion_style: Mapped[str] = mapped_column(Text, default="")
-    voice_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    save_voice_audio: Mapped[bool] = mapped_column(Boolean, default=False)
-    save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)
     crisis_resource_region: Mapped[str] = mapped_column(String(12), default="CN")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -574,23 +571,6 @@ class TestHistory(Base):
     result_code: Mapped[str] = mapped_column(String(32))
     result_label: Mapped[str] = mapped_column(String(80))
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class VoiceSession(Base):
-    __tablename__ = "voice_sessions"
-
-    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
-    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    thread_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False),
-        ForeignKey("conversation_threads.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active / ended / error
-    mode: Mapped[str] = mapped_column(String(20), default="companion")
-    save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserFeedback(Base):

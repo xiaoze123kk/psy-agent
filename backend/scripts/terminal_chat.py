@@ -82,9 +82,6 @@ def ensure_terminal_user(
         user.settings = UserSettings(
             memory_mode=memory_mode,
             companion_style=companion_style,
-            voice_enabled=False,
-            save_voice_audio=False,
-            save_transcript=True,
             crisis_resource_region="CN",
         )
 
