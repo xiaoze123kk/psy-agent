@@ -5,7 +5,7 @@ from app.services.companion_style import normalize_custom_companion_style
 
 
 async def normalize_input(state: AgentState) -> AgentState:
-    normalized_text = (state.get("user_text") or state.get("voice_transcript") or "").strip()
+    normalized_text = (state.get("user_text") or "").strip()
     return {
         "normalized_text": normalized_text,
         "messages": state.get("recent_messages", []),

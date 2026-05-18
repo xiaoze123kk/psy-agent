@@ -23,7 +23,6 @@ class ThreadMode(str, Enum):
 
 class InputType(str, Enum):
     text = "text"
-    voice = "voice"
     test = "test"
     system = "system"
 

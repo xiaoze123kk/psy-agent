@@ -1,8 +1,5 @@
 BEGIN;
 
-ALTER TABLE user_settings
-    ADD COLUMN IF NOT EXISTS save_transcript BOOLEAN NOT NULL DEFAULT TRUE;
-
 CREATE TABLE IF NOT EXISTS privacy_action_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,

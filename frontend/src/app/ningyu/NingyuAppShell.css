@@ -152,6 +152,7 @@
 .ningyu-input button,
 .ningyu-new-chat,
 .ningyu-thread,
+.ningyu-thread-list__more,
 .ningyu-sidebar__bottom button,
 .ningyu-support-card,
 .ningyu-suggestions button {
@@ -187,6 +188,7 @@
 .ningyu-round-button:hover,
 .ningyu-new-chat:hover,
 .ningyu-thread:hover,
+.ningyu-thread-list__more:hover,
 .ningyu-support-card:hover,
 .ningyu-suggestions button:hover {
   transform: translateY(-1px);
@@ -397,8 +399,62 @@
   color: #94a3b8;
 }
 
+.ningyu-thread-group {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ningyu-thread-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 4px;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ningyu-thread-group__header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ningyu-thread-group__count {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.48);
+  color: rgba(15, 118, 110, 0.62);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ningyu-thread-list__meta {
+  margin: 8px 10px 10px;
+  color: rgba(17, 94, 89, 0.58);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ningyu-thread-list__more {
+  width: calc(100% - 20px);
+  min-height: 34px;
+  margin: 4px 10px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.28);
+  border-radius: 14px;
+  background: rgba(240, 253, 250, 0.24);
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .ningyu-thread {
   width: 100%;
+  display: flex;
   align-items: flex-start;
   gap: 10px;
   min-height: auto;
@@ -420,8 +476,36 @@
   box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.5);
 }
 
+.ningyu-thread--draft {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(240, 253, 250, 0.24);
+}
+
+.ningyu-thread--draft .ningyu-thread__dot {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 2px solid rgba(20, 184, 166, 0.55);
+}
+
 .ningyu-thread:disabled {
   cursor: default;
+}
+
+.ningyu-shell.is-night .ningyu-thread-group__header,
+.ningyu-shell.is-night .ningyu-thread-list__meta {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread-group__count {
+  background: rgba(30, 41, 59, 0.58);
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread-list__more {
+  border-color: rgba(51, 65, 85, 0.58);
+  background: rgba(30, 41, 59, 0.32);
+  color: #cbd5e1;
 }
 
 .ningyu-shell.is-night .ningyu-thread:hover {
@@ -433,6 +517,15 @@
   border-color: rgba(52, 211, 153, 0.36);
   background: rgba(20, 83, 45, 0.32);
   box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.5);
+}
+
+.ningyu-shell.is-night .ningyu-thread--draft {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(20, 83, 45, 0.18);
+}
+
+.ningyu-shell.is-night .ningyu-thread--draft .ningyu-thread__dot {
+  border-color: rgba(52, 211, 153, 0.55);
 }
 
 .ningyu-thread-list__state {
@@ -492,42 +585,42 @@
   color: #94a3b8;
 }
 
-.ningyu-thread strong,
-.ningyu-thread span,
-.ningyu-thread small {
+.ningyu-thread__content > strong,
+.ningyu-thread__content > span,
+.ningyu-thread__content > small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ningyu-thread strong {
+.ningyu-thread__content > strong {
   color: rgba(19, 78, 74, 0.96);
   font-size: 13px;
   line-height: 1.32;
 }
 
-.ningyu-thread span {
+.ningyu-thread__content > span {
   color: rgba(17, 94, 89, 0.72);
   font-size: 12px;
   line-height: 1.35;
 }
 
-.ningyu-thread small {
+.ningyu-thread__content > small {
   color: rgba(15, 118, 110, 0.5);
   font-size: 10px;
   line-height: 1.2;
 }
 
-.ningyu-shell.is-night .ningyu-thread strong {
+.ningyu-shell.is-night .ningyu-thread__content > strong {
   color: #e2e8f0;
 }
 
-.ningyu-shell.is-night .ningyu-thread span {
+.ningyu-shell.is-night .ningyu-thread__content > span {
   color: #94a3b8;
 }
 
-.ningyu-shell.is-night .ningyu-thread small {
+.ningyu-shell.is-night .ningyu-thread__content > small {
   color: #64748b;
 }
 
@@ -1144,8 +1237,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  opacity: 0;
-  transform: translateY(2px);
+  opacity: 0.78;
+  transform: translateY(0);
   transition: opacity 220ms ease, transform 220ms ease;
 }
 
@@ -1173,9 +1266,26 @@
   color: rgba(15, 118, 110, 0.9);
 }
 
+.ningyu-message-feedback button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
 .ningyu-message-feedback span {
   color: rgba(15, 118, 110, 0.42);
   font-size: 10px;
+}
+
+.ningyu-message-feedback.is-failed span {
+  color: #b91c1c;
+}
+
+.ningyu-trace-line {
+  display: block;
+  margin-top: 10px;
+  color: rgba(15, 118, 110, 0.48);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .ningyu-shell.is-night .ningyu-message-feedback button {
@@ -1192,6 +1302,14 @@
 }
 
 .ningyu-shell.is-night .ningyu-message-feedback span {
+  color: #64748b;
+}
+
+.ningyu-shell.is-night .ningyu-message-feedback.is-failed span {
+  color: #fca5a5;
+}
+
+.ningyu-shell.is-night .ningyu-trace-line {
   color: #64748b;
 }
 
@@ -1584,9 +1702,22 @@
   color: #94a3b8;
 }
 
-.ningyu-mood-checkin__footer {
+.ningyu-mood-checkin__footer,
+.ningyu-mood-checkin__recorded-state {
   display: grid;
   gap: 10px;
+}
+
+.ningyu-mood-checkin__recorded-state {
+  padding: 12px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: 16px;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__recorded-state {
+  border-color: rgba(134, 239, 172, 0.18);
+  background: rgba(34, 197, 94, 0.09);
 }
 
 .ningyu-mood-checkin__summary {
@@ -1616,7 +1747,8 @@
   color: #fca5a5;
 }
 
-.ningyu-mood-checkin__footer button {
+.ningyu-mood-checkin__footer button,
+.ningyu-mood-checkin__recorded-state button {
   min-height: 40px;
   border-radius: 15px;
   font-weight: 800;
@@ -1628,9 +1760,25 @@
   color: #ffffff;
 }
 
-.ningyu-mood-checkin__footer button:disabled {
-  cursor: progress;
+.ningyu-mood-checkin__footer button:disabled,
+.ningyu-mood-checkin__recorded-state button:disabled {
+  cursor: not-allowed;
   opacity: 0.68;
+}
+
+.ningyu-mood-checkin__footer button.is-recorded:disabled,
+.ningyu-mood-checkin__recorded-state button.is-recorded:disabled {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  opacity: 1;
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__footer button.is-recorded:disabled,
+.ningyu-shell.is-night .ningyu-mood-checkin__recorded-state button.is-recorded:disabled {
+  border-color: rgba(134, 239, 172, 0.22);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
 }
 
 .ningyu-mood-trend {

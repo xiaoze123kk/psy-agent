@@ -58,7 +58,6 @@ BLOCKED_KEYS = {
     "session_summary",
     "text",
     "user_text",
-    "voice_transcript",
 }
 
 SAFE_DIRECT_KEYS = {

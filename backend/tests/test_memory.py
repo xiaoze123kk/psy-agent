@@ -90,9 +90,6 @@ class MemoryApiTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode=memory_mode,
                     companion_style="gentle",
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]
@@ -355,8 +352,6 @@ class MemoryApiTests(unittest.TestCase):
             json={
                 "memory_mode": "long_term",
                 "companion_style": custom_style,
-                "voice_enabled": True,
-                "save_voice_audio": True,
             },
         )
         me_response = self.client.get("/api/v1/auth/me", headers=self.auth_headers(user))
@@ -367,8 +362,6 @@ class MemoryApiTests(unittest.TestCase):
         self.assertEqual(me_response.status_code, 200)
         self.assertEqual(me_response.json()["memory_mode"], "long_term")
         self.assertEqual(me_response.json()["companion_style"], custom_style)
-        self.assertTrue(me_response.json()["voice_enabled"])
-        self.assertTrue(me_response.json()["save_voice_audio"])
 
         restore_response = self.client.patch(
             "/api/v1/me/settings",
@@ -502,9 +495,6 @@ class ChatMemoryModeTests(unittest.IsolatedAsyncioTestCase):
                     user_id=user.id,
                     memory_mode=memory_mode,
                     companion_style="gentle",
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]
