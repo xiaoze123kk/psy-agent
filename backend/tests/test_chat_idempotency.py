@@ -388,6 +388,19 @@ class ChatIdempotencyTests(unittest.TestCase):
 
         self.assertEqual(state["user_context_pack"], pack)
 
+    def test_graph_runtime_input_state_includes_compact_context_pack(self) -> None:
+        runtime = object.__new__(GraphRuntime)
+        pack = {"schema_version": 1, "state": {"summary_for_prompt": "短期状态"}}
+
+        state = runtime._build_input_state(
+            thread_id="thread-1",
+            user_id="user-1",
+            content="继续",
+            compact_context_pack=pack,
+        )
+
+        self.assertEqual(state["compact_context_pack"], pack)
+
     def test_graph_runtime_input_state_includes_temporal_context(self) -> None:
         runtime = object.__new__(GraphRuntime)
 
@@ -436,6 +449,66 @@ class ChatIdempotencyTests(unittest.TestCase):
         self.assertEqual(len(recent_messages), 24)
         self.assertEqual(recent_messages[0]["content"], "历史消息 7")
         self.assertEqual(recent_messages[-1]["content"], "接着前面的任务边界聊")
+
+    def test_chat_turn_passes_compact_context_pack_to_graph_runtime(self) -> None:
+        user = self.create_user()
+        thread = self.create_thread(user)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+        for index, content in enumerate(
+            ["在轮下那个感觉", "我听到了这个锚点", "现在其实是很生气", "我不想一直讲那个词"]
+        ):
+            self.db.add(
+                Message(
+                    thread_id=thread.id,
+                    user_id=user.id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=content,
+                    input_type="text",
+                    created_at=base_time + timedelta(seconds=index),
+                )
+            )
+        self.db.commit()
+        quality_source = self.db.scalar(
+            select(Message)
+            .where(Message.thread_id == thread.id, Message.role == "assistant")
+            .order_by(Message.created_at)
+        )
+        assert quality_source is not None
+        quality_source.meta = {
+            "conversation_quality_trace": {
+                "turn_shape": {"question_count": 3},
+                "policy_snapshot": {
+                    "conversation_move": "continue_thread",
+                    "topic_anchor_type": "literary",
+                },
+                "validator_snapshot": {
+                    "severity": "repaired",
+                    "experience_reasons": ["too_many_questions"],
+                },
+                "user_signal": {
+                    "explicit_feedback": "none",
+                    "next_turn_signal": "corrected",
+                },
+            }
+        }
+        self.db.commit()
+        fake_runtime = FakeGraphRuntime()
+        chat_service.graph_runtime = fake_runtime
+
+        response = self.client.post(
+            f"/api/v1/chat/threads/{thread.id}/messages",
+            headers=self.auth_headers(user),
+            json={"client_message_id": "client-compact", "content": "我现在很生气"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        pack = fake_runtime.calls[0]["compact_context_pack"]
+        self.assertEqual(pack["schema_version"], 1)
+        self.assertEqual(pack["memory_candidates"], [])
+        self.assertEqual(pack["state"]["quality_signals"]["recent_over_questioning_risk"], "high")
+        self.assertIn("quality_over_questioning_risk", pack["event"]["trigger"]["reason"])
+        self.assertIn("state", pack)
+        self.assertIn("event", pack)
 
     def test_stream_completed_turn_can_be_replayed_by_send_message_fallback(self) -> None:
         user = self.create_user()
