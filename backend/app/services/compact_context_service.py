@@ -10,6 +10,33 @@ DEFAULT_MAX_CHARS = 6000
 DEFAULT_MAX_MESSAGES = 10
 TIMEZONE_NAME = "Asia/Wuhan"
 HIGH_RISK_LEVELS = {"L2", "L3"}
+COMPACT_MEMORY_CONFIRMATION_TERMS = (
+    "明确",
+    "以后",
+    "希望",
+    "不喜欢",
+    "更希望",
+    "记住",
+    "每次",
+    "总是",
+    "先听",
+    "少一点",
+)
+COMPACT_MEMORY_SENSITIVE_TERMS = (
+    "诊断",
+    "确诊",
+    "抑郁症",
+    "双相",
+    "人格障碍",
+    "ptsd",
+    "用药",
+    "处方",
+    "自杀",
+    "自伤",
+    "结束生命",
+    "具体工具",
+    "风险等级",
+)
 QUALITY_NEGATIVE_FEEDBACK = {"missed", "too_analytic", "too_generic", "too_many_questions"}
 QUALITY_OVER_QUESTIONING_REASONS = {"too_many_questions", "question_overload", "over_questioning"}
 QUALITY_REPETITION_REASONS = {"repetitive", "repetition", "fixed_opening", "too_generic"}
@@ -421,6 +448,84 @@ def _compact_range(messages: list[dict[str, Any]], *, max_recent_messages: int) 
     }
 
 
+def _compact_memory_source_texts(compact_state: dict[str, Any]) -> list[tuple[str, str]]:
+    texts: list[tuple[str, str]] = []
+    for field in ("user_boundaries", "interaction_preferences"):
+        values = compact_state.get(field)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = _compact_text(value, limit=160)
+            if text:
+                texts.append((field, text))
+    return texts
+
+
+def _is_explicit_compact_memory_candidate(text: str) -> bool:
+    return any(term in text for term in COMPACT_MEMORY_CONFIRMATION_TERMS)
+
+
+def _compact_memory_sensitive_reason(text: str) -> str:
+    lowered = text.lower()
+    for term in COMPACT_MEMORY_SENSITIVE_TERMS:
+        if term.lower() in lowered:
+            return f"sensitive_term:{term}"
+    return ""
+
+
+def _compact_memory_candidate(text: str, *, source_field: str) -> dict[str, Any]:
+    content = f"用户明确表达了陪伴偏好：{text}"
+    audit = {
+        "source": "compact_state",
+        "origin_field": source_field,
+        "stability": "explicit_user_preference",
+        "user_confirmation": "explicit",
+        "ethical_boundary": "passed",
+        "write_policy": "candidate_only_requires_review",
+    }
+    return {
+        "memory_type": "preference",
+        "title": "陪伴偏好候选",
+        "summary": _compact_text(content, limit=180),
+        "content": _compact_text(content, limit=260),
+        "importance": 4,
+        "visibility": "user_visible",
+        "tags": ["支持方式", "compact候选"],
+        "source": "compact_context",
+        "review_state": "candidate_review",
+        "structured_value": {
+            "compact_memory_audit": audit,
+        },
+    }
+
+
+def compact_memory_candidates_from_state(
+    compact_state: dict[str, Any],
+    *,
+    risk_level: str = "L0",
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    if not isinstance(compact_state, dict) or str(risk_level or "L0") in HIGH_RISK_LEVELS:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    seen_contents: set[str] = set()
+    for source_field, text in _compact_memory_source_texts(compact_state):
+        if len(candidates) >= limit:
+            break
+        if not _is_explicit_compact_memory_candidate(text):
+            continue
+        if _compact_memory_sensitive_reason(text):
+            continue
+        candidate = _compact_memory_candidate(text, source_field=source_field)
+        content = candidate["content"]
+        if content in seen_contents:
+            continue
+        seen_contents.add(content)
+        candidates.append(candidate)
+    return candidates
+
+
 def _safe_quality_signals(quality_signals: dict[str, Any], *, risk_level: str) -> dict[str, Any]:
     if risk_level in HIGH_RISK_LEVELS:
         return {"risk_continuity": "high_risk_details_filtered"}
@@ -488,6 +593,7 @@ def build_compact_context_pack(
         "time_context_policy": _time_policy(),
         "quality_signals": safe_quality_signals,
     }
+    memory_candidates = compact_memory_candidates_from_state(state, risk_level=risk_level)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -510,5 +616,5 @@ def build_compact_context_pack(
             "created_at": str(created_at or ""),
         },
         "state": state,
-        "memory_candidates": [],
+        "memory_candidates": memory_candidates,
     }

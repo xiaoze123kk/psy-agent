@@ -1,5 +1,6 @@
 from app.services.compact_context_service import (
     build_compact_context_pack,
+    compact_memory_candidates_from_state,
     estimate_context_budget,
     quality_signals_from_recent_messages,
     should_compact_context,
@@ -166,6 +167,70 @@ def test_build_pack_keeps_user_boundaries_and_time_policy_without_long_term_cand
     assert any("连着问" in item for item in pack["state"]["interaction_preferences"])
     assert pack["state"]["time_context_policy"]["timezone"] == "Asia/Wuhan"
     assert pack["memory_candidates"] == []
+
+
+def test_compact_memory_candidates_promote_explicit_preference_with_audit():
+    compact_state = {
+        "summary_for_prompt": "用户现在只是有点烦，这不该进入长期记忆。",
+        "active_threads": [{"topic": "当前生气", "next_move_hint": "先承接"}],
+        "stale_threads": [{"topic": "在轮下", "reuse_policy": "不要主动复用"}],
+        "user_boundaries": ["用户明确说：以后不要连续追问我。"],
+        "interaction_preferences": ["用户明确希望：先听我说完，再给一个小建议。"],
+        "safety_context": {"risk_level": "L0"},
+    }
+
+    candidates = compact_memory_candidates_from_state(compact_state, risk_level="L0")
+
+    assert len(candidates) == 2
+    serialized = str(candidates)
+    assert "以后不要连续追问我" in serialized
+    assert "先听我说完" in serialized
+    assert "当前生气" not in serialized
+    assert "在轮下" not in serialized
+    for candidate in candidates:
+        assert candidate["memory_type"] == "preference"
+        assert candidate["source"] == "compact_context"
+        assert candidate["review_state"] == "candidate_review"
+        audit = candidate["structured_value"]["compact_memory_audit"]
+        assert audit["stability"] == "explicit_user_preference"
+        assert audit["user_confirmation"] == "explicit"
+        assert audit["ethical_boundary"] == "passed"
+        assert audit["write_policy"] == "candidate_only_requires_review"
+
+
+def test_build_pack_adds_audited_memory_candidates_only_for_explicit_stable_preferences():
+    messages = [
+        _msg(1, "user", "今天很生气。"),
+        _msg(2, "assistant", "我听到了。"),
+        _msg(3, "user", "以后不要连续追问我，我更希望你先听我说完。"),
+    ]
+
+    pack = build_compact_context_pack(recent_messages=messages, risk_level="L0")
+
+    candidates = pack["memory_candidates"]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["memory_type"] == "preference"
+    assert "以后不要连续追问我" in candidate["content"]
+    assert "今天很生气" not in candidate["content"]
+    assert candidate["structured_value"]["compact_memory_audit"]["source"] == "compact_state"
+
+
+def test_compact_memory_candidates_filter_risk_and_diagnosis_details():
+    compact_state = {
+        "user_boundaries": [
+            "用户明确希望：记住我有抑郁症诊断。",
+            "用户明确希望：晚上如果我想自伤就提醒我具体工具。",
+        ],
+        "interaction_preferences": ["用户明确希望：以后少一点连续追问。"],
+    }
+
+    candidates = compact_memory_candidates_from_state(compact_state, risk_level="L0")
+
+    serialized = str(candidates)
+    assert "以后少一点连续追问" in serialized
+    assert "抑郁症" not in serialized
+    assert "自伤" not in serialized
 
 
 def test_build_pack_uses_asia_wuhan_policy_without_storing_current_time():
