@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.core.security import (
     decode_token,
     hash_token,
     hash_password,
+    validate_password_strength,
     verify_password,
 )
 from app.db.models import RefreshToken, User, UserProfile, UserSettings, utcnow
@@ -34,6 +35,7 @@ from app.schemas.auth import (
 from app.schemas.common import infer_user_mode
 from app.services.captcha_service import captcha_store
 from app.services.companion_style import normalize_custom_companion_style
+from app.services.login_attempt_service import login_attempt_store
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -167,6 +169,13 @@ async def register(
     db: Session = Depends(get_db_session),
 ) -> RegisterResponse:
     _verify_captcha(payload.captcha_id, payload.captcha_code)
+    try:
+        validate_password_strength(payload.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     username = _normalize_username(payload.username)
     existing = db.scalar(select(User).where(User.username == username, User.deleted_at.is_(None)))
     if existing is not None:
@@ -177,13 +186,11 @@ async def register(
 
     user_mode = infer_user_mode(payload.age_range)
     user = User(
+        id=str(uuid4()),
         username=username,
         email=_dev_email_placeholder(username),
         password_hash=hash_password(payload.password),
     )
-    db.add(user)
-    db.flush()
-
     profile = UserProfile(
         user_id=user.id,
         nickname=_default_nickname(username),
@@ -198,7 +205,7 @@ async def register(
         companion_style="",
         crisis_resource_region="CN",
     )
-    db.add_all([profile, user_settings])
+    db.add_all([user, profile, user_settings])
     access_token, refresh_token = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
@@ -209,17 +216,29 @@ async def register(
 @router.post("/login", response_model=LoginResponse)
 async def login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ) -> LoginResponse:
     _verify_captcha(payload.captcha_id, payload.captcha_code)
     username = _normalize_username(payload.username)
+    client_ip = request.client.host if request.client else "unknown"
+
+    blocked, block_reason = login_attempt_store.is_blocked(client_ip, username)
+    if blocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=block_reason,
+        )
+
     user = db.scalar(select(User).where(User.username == username, User.status == "active"))
     if user is None or not verify_password(payload.password, user.password_hash):
+        login_attempt_store.record_failure(client_ip, username, "invalid_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误。",
         )
 
+    login_attempt_store.clear(client_ip, username)
     access_token, refresh_token = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
@@ -232,8 +251,8 @@ async def refresh_token(
     db: Session = Depends(get_db_session),
 ) -> RefreshTokenResponse:
     token_record, user = _validate_refresh_token(db, payload.refresh_token)
-    _revoke_refresh_token(token_record, status_value="rotated")
     access_token, next_refresh_token = _issue_token_pair(db, user)
+    _revoke_refresh_token(token_record, status_value="rotated")
     db.commit()
     return RefreshTokenResponse(
         user_id=user.id,

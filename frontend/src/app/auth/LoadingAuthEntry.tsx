@@ -1,4 +1,4 @@
-import { Frown, Leaf, Lock, Meh, RefreshCw, Smile, User } from "lucide-react";
+﻿import { Frown, Leaf, Lock, Meh, RefreshCw, Smile, User } from "lucide-react";
 import type { FormEvent } from "react";
 
 import loginBack from "../../imports/login_back.png";
@@ -12,6 +12,8 @@ interface CaptchaView {
   imageDataUrl: string;
 }
 
+const PASSWORD_HINT = "需包含大写字母、小写字母和数字，至少 8 位";
+
 interface LoadingAuthEntryProps {
   authMode: AuthMode;
   username: string;
@@ -24,6 +26,7 @@ interface LoadingAuthEntryProps {
   canSubmit: boolean;
   error: string | null;
   captchaError: string | null;
+  passwordError: string | null;
   ageModeNote: string;
   onAuthModeChange: (mode: AuthMode) => void;
   onUsernameChange: (value: string) => void;
@@ -54,6 +57,7 @@ export function LoadingAuthEntry({
   canSubmit,
   error,
   captchaError,
+  passwordError,
   ageModeNote,
   onAuthModeChange,
   onUsernameChange,
@@ -128,6 +132,12 @@ export function LoadingAuthEntry({
                   autoComplete={isLogin ? "current-password" : "new-password"}
                 />
               </label>
+              {!isLogin && !passwordError ? (
+                <p className="loading-auth__password-hint">{PASSWORD_HINT}</p>
+              ) : null}
+              {passwordError ? (
+                <p className="loading-auth__password-error">{passwordError}</p>
+              ) : null}
 
               {!isLogin ? (
                 <>

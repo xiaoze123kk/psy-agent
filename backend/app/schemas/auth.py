@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
@@ -16,14 +16,14 @@ class CaptchaResponse(BaseModel):
 
 class CaptchaProtectedRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
 
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     age_range: AgeRange
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
