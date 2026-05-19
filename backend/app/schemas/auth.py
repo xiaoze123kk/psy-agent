@@ -25,6 +25,8 @@ class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
     password: str = Field(min_length=8)
     age_range: AgeRange
+    security_question: str = Field(min_length=1, max_length=200)
+    security_answer: str = Field(min_length=1, max_length=200)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
 
@@ -86,3 +88,26 @@ class CurrentUserResponse(BaseModel):
     onboarding_completed: bool
     memory_mode: MemoryMode
     companion_style: str
+
+
+class PasswordResetQuestionRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+
+
+class PasswordResetQuestionResponse(BaseModel):
+    username: str
+    security_question: str
+
+
+class PasswordResetVerifyRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+    answer: str = Field(min_length=1, max_length=200)
+
+
+class PasswordResetVerifyResponse(BaseModel):
+    reset_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=8)

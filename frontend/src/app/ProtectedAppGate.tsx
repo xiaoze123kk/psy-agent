@@ -9,6 +9,7 @@ import { markEntryTransitionSeenToday, shouldShowEntryTransitionToday } from "./
 import { GentleAppTransition } from "./auth/GentleAppTransition";
 import { LoadingAuthEntry } from "./auth/LoadingAuthEntry";
 import { OnboardingGuide } from "./auth/OnboardingGuide";
+import { PasswordResetPage } from "./auth/PasswordResetPage";
 import "./ningyu/NingyuAppShell.css";
 import { useSession } from "./session";
 
@@ -91,10 +92,13 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
 function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | null; onDebugEnterMain: () => void }) {
   const session = useSession();
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
+  const [isPasswordReset, setIsPasswordReset] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>(_persistedAuthMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [ageRange, setAgeRange] = useState<AgeRange>("16_17");
+  const [securityQuestion, setSecurityQuestion] = useState("");
+  const [securityAnswer, setSecurityAnswer] = useState("");
   const [captchaCode, setCaptchaCode] = useState("");
   const [captcha, setCaptcha] = useState<CaptchaState | null>(null);
   const [isCaptchaLoading, setIsCaptchaLoading] = useState(false);
@@ -135,7 +139,13 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
   }, [initialError]);
 
   const canSubmit = Boolean(
-    username.trim() && password && captcha?.id && captchaCode.trim() && !isSubmitting && !passwordError,
+    username.trim()
+    && password
+    && captcha?.id
+    && captchaCode.trim()
+    && !isSubmitting
+    && !passwordError
+    && (authMode === "login" ? true : securityQuestion.trim() && securityAnswer.trim()),
   );
   const ageModeProfile = buildAgeModeProfile(ageRange);
 
@@ -164,6 +174,20 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
     return <DebugOnboardingGuide onBack={() => setIsDebugOnboarding(false)} />;
   }
 
+  if (isPasswordReset) {
+    return (
+      <PasswordResetPage
+        onBack={() => setIsPasswordReset(false)}
+        onComplete={() => {
+          setIsPasswordReset(false);
+          setAuthMode("login");
+          _persistedAuthMode = "login";
+          setError(null);
+        }}
+      />
+    );
+  }
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!captcha || !canSubmit) return;
@@ -190,7 +214,12 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       };
 
       if (authMode === "register") {
-        await session.register({ ...payload, age_range: ageRange });
+        await session.register({
+          ...payload,
+          age_range: ageRange,
+          security_question: securityQuestion.trim(),
+          security_answer: securityAnswer.trim(),
+        });
       } else {
         await session.login(payload);
       }
@@ -209,6 +238,8 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       username={username}
       password={password}
       ageRange={ageRange}
+      securityQuestion={securityQuestion}
+      securityAnswer={securityAnswer}
       captchaCode={captchaCode}
       captcha={captcha}
       isCaptchaLoading={isCaptchaLoading}
@@ -222,9 +253,12 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       onUsernameChange={setUsername}
       onPasswordChange={handlePasswordChange}
       onAgeRangeChange={handleAgeRangeChange}
+      onSecurityQuestionChange={setSecurityQuestion}
+      onSecurityAnswerChange={setSecurityAnswer}
       onCaptchaCodeChange={setCaptchaCode}
       onRefreshCaptcha={() => void handleRefreshCaptcha()}
       onSubmit={handleSubmit}
+      onForgotPassword={() => setIsPasswordReset(true)}
       onDebugEnterMain={import.meta.env.DEV ? onDebugEnterMain : undefined}
       onDebugEnterOnboarding={import.meta.env.DEV ? () => setIsDebugOnboarding(true) : undefined}
     />
