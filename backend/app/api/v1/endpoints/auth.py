@@ -196,9 +196,6 @@ async def register(
         user_id=user.id,
         memory_mode="summary_only",
         companion_style="",
-        voice_enabled=False,
-        save_voice_audio=False,
-        save_transcript=True,
         crisis_resource_region="CN",
     )
     db.add_all([profile, user_settings])
@@ -279,7 +276,4 @@ async def me(current_user: User = Depends(get_current_user)) -> CurrentUserRespo
         onboarding_completed=profile.onboarding_completed,
         memory_mode=settings.memory_mode,
         companion_style=normalize_custom_companion_style(settings.companion_style),
-        voice_enabled=settings.voice_enabled,
-        save_voice_audio=settings.save_voice_audio,
-        save_transcript=settings.save_transcript,
     )

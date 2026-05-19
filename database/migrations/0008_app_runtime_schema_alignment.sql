@@ -58,23 +58,6 @@ CREATE INDEX IF NOT EXISTS idx_test_history_user_completed_at
 CREATE INDEX IF NOT EXISTS idx_test_history_attempt_id
     ON test_history (attempt_id);
 
-CREATE TABLE IF NOT EXISTS voice_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    thread_id UUID REFERENCES conversation_threads (id) ON DELETE SET NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    mode VARCHAR(20) NOT NULL DEFAULT 'companion',
-    save_transcript BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    ended_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_voice_sessions_user_created_at
-    ON voice_sessions (user_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_voice_sessions_thread_id
-    ON voice_sessions (thread_id);
-
 CREATE TABLE IF NOT EXISTS user_feedback (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,

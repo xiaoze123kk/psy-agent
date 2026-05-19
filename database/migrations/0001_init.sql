@@ -46,9 +46,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
         )
     ),
     companion_style VARCHAR(32) NOT NULL DEFAULT 'gentle',
-    voice_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    save_voice_audio BOOLEAN NOT NULL DEFAULT FALSE,
-    save_transcript BOOLEAN NOT NULL DEFAULT TRUE,
     crisis_resource_region VARCHAR(12) NOT NULL DEFAULT 'CN',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -79,7 +76,6 @@ CREATE TABLE IF NOT EXISTS messages (
     input_type VARCHAR(16) NOT NULL DEFAULT 'text' CHECK (
         input_type IN (
             'text',
-            'voice',
             'test',
             'system'
         )

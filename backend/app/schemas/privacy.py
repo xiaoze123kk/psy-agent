@@ -8,14 +8,11 @@ from pydantic import BaseModel
 from app.schemas.common import MemoryMode, UserMode
 
 
-PrivacyDataScope = Literal["memories", "chat", "moods", "feedback", "voice", "all_non_account"]
+PrivacyDataScope = Literal["memories", "chat", "moods", "feedback", "all_non_account"]
 
 
 class PrivacySettingsSnapshot(BaseModel):
     memory_mode: MemoryMode
-    voice_enabled: bool
-    save_voice_audio: bool
-    save_transcript: bool
 
 
 class PrivacyDataCounts(BaseModel):
@@ -25,7 +22,6 @@ class PrivacyDataCounts(BaseModel):
     mood_logs: int
     test_history: int
     feedback: int
-    voice_sessions: int
     risk_events: int
 
 

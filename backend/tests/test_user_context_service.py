@@ -51,9 +51,6 @@ class UserContextServiceTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode="long_term",
                     companion_style=companion_style,
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]

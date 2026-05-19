@@ -11,10 +11,9 @@ class AgentState(TypedDict, total=False):
     user_mode: Literal["teen", "adult"]
     locale: str
 
-    input_type: Literal["text", "voice", "test_result", "system"]
+    input_type: Literal["text", "test_result", "system"]
     user_text: str
     normalized_text: str
-    voice_transcript: str
 
     messages: list[dict]
     recent_messages: list[dict]

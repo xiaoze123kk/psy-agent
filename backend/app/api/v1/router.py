@@ -13,7 +13,6 @@ from app.api.v1.endpoints import (
     privacy,
     safety,
     tests,
-    voice,
 )
 
 api_router = APIRouter()
@@ -35,5 +34,4 @@ api_router.include_router(mood.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(tests.router)
 api_router.include_router(safety.router)
-api_router.include_router(voice.router)
 api_router.include_router(feedback.router)

@@ -5,10 +5,7 @@ description: |
   心理咨询 Agent 前端 API 契约。
 
   目标是支撑如下前端闭环：
-  登录/注册 -> 年龄模式落库 -> 首页情绪记录、趋势与周小结 -> 文本聊天 -> 语音 MVP -> 高风险时展示 SOS -> 记忆中心 -> 知识库搜索/详情/问答 -> 测试中心与结果回流对话 -> 分享卡与反馈。
 
-  Sprint 3 语音能力为文本模拟语音 MVP，仅验证协议、状态流转和安全分流；
-  不包含真 ASR/TTS/WebRTC、动漫人物测试 Beta、完整 RAG。
 
 client:
   className: CounselingApi
@@ -19,7 +16,6 @@ client:
     buildTool: vite
     language: TypeScript
   transport:
-    protocol: http
     implementation: fetch
   auth:
     type: bearer-token
@@ -36,8 +32,6 @@ client:
       - createMoodLog
       - getMoodTrend
       - getWeeklyMoodSummary
-      - createVoiceSession
-      - connectVoiceSession
       - submitFeedback
       - getPrivacySummary
       - exportPersonalData
@@ -70,11 +64,9 @@ scope:
     - safety
     - knowledge
     - tests
-    - voice
     - feedback
     - privacy
   excluded:
-    - true-audio-asr-tts
     - anime-character-test
     - full-rag
 
@@ -104,8 +96,6 @@ implementationStatus:
     - deleteAccount
   plannedSprint3Methods:
     - getWeeklyMoodSummary
-    - createVoiceSession
-    - connectVoiceSession
     - submitFeedback
     - buildTestShareCard
   note: 当前 `frontend/src/api/endpoints.ts` 已实现 Sprint 2 知识库、情绪趋势、记忆中心、SSE 和测试中心所需方法。
@@ -134,10 +124,6 @@ flows:
       when: 首页展示 7 天或 30 天趋势
     - step: getWeeklyMoodSummary
       when: 首页或我的页展示近 7 天情绪小结
-    - step: createVoiceSession
-      when: 用户从首页或对话页进入语音 MVP
-    - step: connectVoiceSession
-      when: createVoiceSession 返回 ws_url 后建立文本模拟语音通道
     - step: searchKnowledge
       when: 用户进入知识页或搜索主题
     - step: getKnowledgeArticle
@@ -403,29 +389,6 @@ methods:
       method: GET
       path: /api/v1/moods/weekly-summary
 
-  - methodName: createVoiceSession
-    summary: 创建语音 MVP 会话
-    requestType: CreateVoiceSessionRequest
-    responseType: CreateVoiceSessionResponse
-    authRequired: true
-    uiEntry:
-      - 首页语音入口
-      - 对话页语音入口
-    http:
-      method: POST
-      path: /api/v1/voice/sessions
-
-  - methodName: connectVoiceSession
-    summary: 连接文本模拟语音 WebSocket
-    requestType: VoiceSessionConnectionRequest
-    responseType: VoiceSessionWebSocketEvent
-    authRequired: true
-    uiEntry:
-      - 语音 MVP 页面
-    websocket:
-      pathTemplate: /api/v1/voice/sessions/{voice_session_id}/ws
-      protocol: text-simulated-voice-v1
-
   - methodName: submitFeedback
     summary: 提交内容评分反馈
     requestType: FeedbackRequest
@@ -680,7 +643,6 @@ types:
     type: enum
     values:
       - text
-      - voice
       - test
       - system
 
@@ -792,9 +754,6 @@ types:
       - onboarding_completed
       - memory_mode
       - companion_style
-      - voice_enabled
-      - save_voice_audio
-      - save_transcript
     fields:
       user_id: { type: string }
       username: { type: string }
@@ -807,10 +766,6 @@ types:
       onboarding_completed: { type: boolean }
       memory_mode: { type: MemoryMode }
       companion_style: { type: string }
-      voice_enabled: { type: boolean }
-      save_voice_audio: { type: boolean }
-      save_transcript: { type: boolean }
-
   UserSettingsUpdateRequest:
     type: object
     fields:
@@ -820,31 +775,12 @@ types:
       companion_style:
         type: string
         required: false
-      voice_enabled:
-        type: boolean
-        required: false
-      save_voice_audio:
-        type: boolean
-        required: false
-      save_transcript:
-        type: boolean
-        required: false
-
   UserSettingsResponse:
     type: object
     required:
       - memory_mode
-      - companion_style
-      - voice_enabled
-      - save_voice_audio
-      - save_transcript
     fields:
       memory_mode: { type: MemoryMode }
-      companion_style: { type: string }
-      voice_enabled: { type: boolean }
-      save_voice_audio: { type: boolean }
-      save_transcript: { type: boolean }
-
   PrivacyDataScope:
     type: enum
     values:
@@ -852,7 +788,6 @@ types:
       - chat
       - moods
       - feedback
-      - voice
       - all_non_account
 
   PrivacyDataCounts:
@@ -864,7 +799,6 @@ types:
       - mood_logs
       - test_history
       - feedback
-      - voice_sessions
       - risk_events
     fields:
       memories: { type: number }
@@ -873,7 +807,6 @@ types:
       mood_logs: { type: number }
       test_history: { type: number }
       feedback: { type: number }
-      voice_sessions: { type: number }
       risk_events: { type: number }
 
   PrivacySettingsSnapshot:
@@ -881,16 +814,9 @@ types:
     required:
       - memory_mode
       - companion_style
-      - voice_enabled
-      - save_voice_audio
-      - save_transcript
     fields:
       memory_mode: { type: MemoryMode }
       companion_style: { type: string }
-      voice_enabled: { type: boolean }
-      save_voice_audio: { type: boolean }
-      save_transcript: { type: boolean }
-
   PrivacySummaryResponse:
     type: object
     required:
@@ -949,7 +875,6 @@ types:
       chat_threads: { type: array, items: { type: object } }
       test_history: { type: array, items: { type: object } }
       feedback: { type: array, items: { type: object } }
-      voice_sessions: { type: array, items: { type: object } }
       risk_events_summary: { type: object }
 
   StartThreadRequest:
@@ -1363,77 +1288,6 @@ types:
           - llm
           - fallback
 
-  CreateVoiceSessionRequest:
-    type: object
-    fields:
-      thread_id:
-        type: string
-        required: false
-      mode:
-        type: ThreadMode
-        required: false
-        default: companion
-      save_transcript:
-        type: boolean
-        required: false
-        default: true
-
-  CreateVoiceSessionResponse:
-    type: object
-    required:
-      - voice_session_id
-      - thread_id
-      - ws_url
-      - protocol
-    fields:
-      voice_session_id: { type: string }
-      thread_id: { type: string }
-      ws_url: { type: string }
-      protocol:
-        type: enum
-        values:
-          - text-simulated-voice-v1
-
-  VoiceSessionConnectionRequest:
-    type: object
-    required:
-      - voice_session_id
-      - ws_url
-    fields:
-      voice_session_id: { type: string }
-      ws_url: { type: string }
-
-  VoiceSessionWebSocketEvent:
-    type: object
-    required:
-      - type
-    fields:
-      type:
-        type: enum
-        values:
-          - user_text
-          - interrupt
-          - end_session
-          - session_ready
-          - listening
-          - transcript
-          - assistant_delta
-          - assistant_final
-          - session_ended
-          - error
-      text:
-        type: string
-        required: false
-      client_event_id:
-        type: string
-        required: false
-      risk_level:
-        type: RiskLevel
-        required: false
-      suggested_actions:
-        type: array
-        required: false
-        items: { type: string }
 
   FeedbackTargetType:
     type: enum
@@ -2069,8 +1923,6 @@ integrationRules:
   - rule: 知识结果继续聊天时，应把标题或 article_id 带入对话上下文，但不得把知识回答包装成诊断。
   - rule: streamMessage 是对话页默认发送路径；收到 graph_update 时展示节点状态和风险等级，收到 final 时展示 suggested_actions。
   - rule: streamMessage 在首个 SSE 事件前失败时回退到 sendMessage；首个事件后中断时不得重发同一输入，只刷新服务端消息。
-  - rule: createVoiceSession 和 connectVoiceSession 仅用于文本模拟语音 MVP；前端不得向用户暗示已接入真实 ASR/TTS/WebRTC。
-  - rule: 语音 MVP 收到 risk_level 为 L2 或 L3 时，必须结束普通语音陪伴状态并打开 SOS/安全提示。
   - rule: getWeeklyMoodSummary 只展示观察、趋势和建议，不得展示诊断或治疗结论。
   - rule: submitFeedback 失败不得阻塞聊天、知识问答或测试结果主流程。
   - rule: buildTestShareCard 必须固定展示“结果仅供自我观察，不代表诊断”一类边界提示。

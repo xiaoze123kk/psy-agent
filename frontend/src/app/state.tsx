@@ -14,34 +14,18 @@ import type { AgeRange, CurrentUserResponse, MemoryMode, UserMode } from "../typ
 
 export type ThemeMode = "day" | "night";
 
-export interface VoiceSettingsState {
-  voiceEnabled: boolean;
-  saveVoiceAudio: boolean;
-  saveTranscript: boolean;
-  companionStyle: string;
-}
-
-export interface PrivacySettingsState {
-  saveVoiceAudio: boolean;
-  saveTranscript: boolean;
-}
-
 export interface AppStateContextValue {
   currentUser: CurrentUserResponse | null;
   ageRange: AgeRange;
   ageModeProfile: AgeModeProfile;
   userMode: UserMode;
   memoryMode: MemoryMode;
-  voiceSettings: VoiceSettingsState;
-  privacySettings: PrivacySettingsState;
   themeMode: ThemeMode;
   isNight: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   toggleThemeMode: () => void;
   setUserMode: (mode: UserMode) => void;
   setMemoryMode: (mode: MemoryMode) => void;
-  updateVoiceSettings: (patch: Partial<VoiceSettingsState>) => void;
-  updatePrivacySettings: (patch: Partial<PrivacySettingsState>) => void;
 }
 
 const AppStateContext = createContext<AppStateContextValue | undefined>(undefined);
@@ -61,32 +45,12 @@ function readInitialThemeMode(): ThemeMode {
   return isThemeMode(stored) ? stored : "day";
 }
 
-function buildVoiceSettings(currentUser: CurrentUserResponse | null): VoiceSettingsState {
-  return {
-    voiceEnabled: currentUser?.voice_enabled ?? true,
-    saveVoiceAudio: currentUser?.save_voice_audio ?? false,
-    saveTranscript: currentUser?.save_transcript ?? true,
-    companionStyle: currentUser?.companion_style ?? "gentle",
-  };
-}
-
-function buildPrivacySettings(currentUser: CurrentUserResponse | null): PrivacySettingsState {
-  return {
-    saveVoiceAudio: currentUser?.save_voice_audio ?? false,
-    saveTranscript: currentUser?.save_transcript ?? true,
-  };
-}
-
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useSession();
   const [themeMode, setThemeModeState] = useState<ThemeMode>(readInitialThemeMode);
   const [ageRange, setAgeRangeState] = useState<AgeRange>(currentUser?.age_range ?? "16_17");
   const [userMode, setUserModeState] = useState<UserMode>(currentUser?.user_mode ?? "teen");
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>(currentUser?.memory_mode ?? "off");
-  const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettingsState>(() => buildVoiceSettings(currentUser));
-  const [privacySettings, setPrivacySettingsState] = useState<PrivacySettingsState>(() =>
-    buildPrivacySettings(currentUser),
-  );
 
   useEffect(() => {
     if (!currentUser) {
@@ -96,8 +60,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setUserModeState(currentUser.user_mode);
     setAgeRangeState(currentUser.age_range);
     setMemoryModeState(currentUser.memory_mode);
-    setVoiceSettingsState(buildVoiceSettings(currentUser));
-    setPrivacySettingsState(buildPrivacySettings(currentUser));
   }, [currentUser]);
 
   useEffect(() => {
@@ -125,20 +87,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setMemoryModeState(mode);
   }, []);
 
-  const updateVoiceSettings = useCallback((patch: Partial<VoiceSettingsState>) => {
-    setVoiceSettingsState((current) => ({
-      ...current,
-      ...patch,
-    }));
-  }, []);
-
-  const updatePrivacySettings = useCallback((patch: Partial<PrivacySettingsState>) => {
-    setPrivacySettingsState((current) => ({
-      ...current,
-      ...patch,
-    }));
-  }, []);
-
   const value = useMemo<AppStateContextValue>(
     () => ({
       currentUser,
@@ -146,31 +94,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       ageModeProfile: buildAgeModeProfile(ageRange, userMode),
       userMode,
       memoryMode,
-      voiceSettings,
-      privacySettings,
       themeMode,
       isNight: themeMode === "night",
       setThemeMode,
       toggleThemeMode,
       setUserMode,
       setMemoryMode,
-      updateVoiceSettings,
-      updatePrivacySettings,
     }),
     [
       ageRange,
       currentUser,
       memoryMode,
-      privacySettings,
       setMemoryMode,
       setThemeMode,
       setUserMode,
       themeMode,
       toggleThemeMode,
-      updatePrivacySettings,
-      updateVoiceSettings,
       userMode,
-      voiceSettings,
     ],
   );
 

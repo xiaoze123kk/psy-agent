@@ -59,9 +59,6 @@ class CompanionStyleApiTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode="summary_only",
                     companion_style="",
-                    voice_enabled=True,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]

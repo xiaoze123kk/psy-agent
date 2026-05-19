@@ -85,9 +85,6 @@ class MemoryServiceTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode=memory_mode,
                     companion_style="gentle",
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]
