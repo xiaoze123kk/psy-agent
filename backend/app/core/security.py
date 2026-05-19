@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import hashlib
@@ -52,6 +52,20 @@ def verify_password(password: str, encoded_password: str) -> bool:
         int(iterations_str),
     )
     return hmac.compare_digest(computed_digest, expected_digest)
+
+
+MIN_PASSWORD_LENGTH = 8
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"密码至少需要 {MIN_PASSWORD_LENGTH} 个字符。")
+    if not any(c.isupper() for c in password):
+        raise ValueError("密码需要包含至少一个大写字母。")
+    if not any(c.islower() for c in password):
+        raise ValueError("密码需要包含至少一个小写字母。")
+    if not any(c.isdigit() for c in password):
+        raise ValueError("密码需要包含至少一个数字。")
 
 
 def _sign(message: bytes) -> str:

@@ -54,6 +54,11 @@ import type {
   UserSettingsResponse,
   UserSettingsUpdateRequest,
   WeeklySummaryResponse,
+  PasswordResetQuestionRequest,
+  PasswordResetQuestionResponse,
+  PasswordResetVerifyRequest,
+  PasswordResetVerifyResponse,
+  PasswordResetRequest,
 } from "../types/api";
 
 export class CounselingApi {
@@ -81,6 +86,23 @@ export class CounselingApi {
 
   getCurrentUser(): Promise<CurrentUserResponse> {
     return this.client.get<CurrentUserResponse>("/api/v1/auth/me");
+  }
+
+  getPasswordResetQuestion(query: PasswordResetQuestionRequest): Promise<PasswordResetQuestionResponse> {
+    return this.client.get<PasswordResetQuestionResponse>(
+      `/api/v1/auth/password-reset-question?username=${encodeURIComponent(query.username)}`,
+    );
+  }
+
+  verifyPasswordResetAnswer(payload: PasswordResetVerifyRequest): Promise<PasswordResetVerifyResponse> {
+    return this.client.post<PasswordResetVerifyResponse, PasswordResetVerifyRequest>(
+      "/api/v1/auth/password-reset-verify",
+      payload,
+    );
+  }
+
+  resetPassword(payload: PasswordResetRequest): Promise<{ ok: boolean }> {
+    return this.client.post<{ ok: boolean }, PasswordResetRequest>("/api/v1/auth/password-reset", payload);
   }
 
   startThread(payload: StartThreadRequest): Promise<StartThreadResponse> {

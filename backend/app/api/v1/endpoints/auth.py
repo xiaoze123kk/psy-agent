@@ -1,24 +1,26 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
+    create_token,
     decode_token,
     hash_token,
     hash_password,
+    validate_password_strength,
     verify_password,
 )
-from app.db.models import RefreshToken, User, UserProfile, UserSettings, utcnow
+from app.db.models import PasswordResetToken, RefreshToken, User, UserProfile, UserSettings, utcnow
 from app.db.session import get_db_session
 from app.schemas.auth import (
     CaptchaResponse,
@@ -26,17 +28,26 @@ from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
     LogoutRequest,
+    PasswordResetQuestionRequest,
+    PasswordResetQuestionResponse,
+    PasswordResetRequest,
+    PasswordResetVerifyRequest,
+    PasswordResetVerifyResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
     RegisterRequest,
     RegisterResponse,
 )
+from app.schemas.auth import USERNAME_PATTERN
 from app.schemas.common import infer_user_mode
 from app.services.captcha_service import captcha_store
 from app.services.companion_style import normalize_custom_companion_style
+from app.services.login_attempt_service import login_attempt_store
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+RESET_TOKEN_TTL_SECONDS = 300
 
 
 def _normalize_username(username: str) -> str:
@@ -167,6 +178,13 @@ async def register(
     db: Session = Depends(get_db_session),
 ) -> RegisterResponse:
     _verify_captcha(payload.captcha_id, payload.captcha_code)
+    try:
+        validate_password_strength(payload.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     username = _normalize_username(payload.username)
     existing = db.scalar(select(User).where(User.username == username, User.deleted_at.is_(None)))
     if existing is not None:
@@ -177,13 +195,11 @@ async def register(
 
     user_mode = infer_user_mode(payload.age_range)
     user = User(
+        id=str(uuid4()),
         username=username,
         email=_dev_email_placeholder(username),
         password_hash=hash_password(payload.password),
     )
-    db.add(user)
-    db.flush()
-
     profile = UserProfile(
         user_id=user.id,
         nickname=_default_nickname(username),
@@ -191,6 +207,8 @@ async def register(
         user_mode=user_mode.value,
         usage_goals=[],
         onboarding_completed=False,
+        security_question=payload.security_question.strip(),
+        security_answer_hash=hash_password(payload.security_answer.strip()),
     )
     user_settings = UserSettings(
         user_id=user.id,
@@ -198,7 +216,7 @@ async def register(
         companion_style="",
         crisis_resource_region="CN",
     )
-    db.add_all([profile, user_settings])
+    db.add_all([user, profile, user_settings])
     access_token, refresh_token = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
@@ -209,17 +227,29 @@ async def register(
 @router.post("/login", response_model=LoginResponse)
 async def login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ) -> LoginResponse:
     _verify_captcha(payload.captcha_id, payload.captcha_code)
     username = _normalize_username(payload.username)
+    client_ip = request.client.host if request.client else "unknown"
+
+    blocked, block_reason = login_attempt_store.is_blocked(client_ip, username)
+    if blocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=block_reason,
+        )
+
     user = db.scalar(select(User).where(User.username == username, User.status == "active"))
     if user is None or not verify_password(payload.password, user.password_hash):
+        login_attempt_store.record_failure(client_ip, username, "invalid_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误。",
         )
 
+    login_attempt_store.clear(client_ip, username)
     access_token, refresh_token = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
@@ -232,8 +262,8 @@ async def refresh_token(
     db: Session = Depends(get_db_session),
 ) -> RefreshTokenResponse:
     token_record, user = _validate_refresh_token(db, payload.refresh_token)
-    _revoke_refresh_token(token_record, status_value="rotated")
     access_token, next_refresh_token = _issue_token_pair(db, user)
+    _revoke_refresh_token(token_record, status_value="rotated")
     db.commit()
     return RefreshTokenResponse(
         user_id=user.id,
@@ -277,3 +307,115 @@ async def me(current_user: User = Depends(get_current_user)) -> CurrentUserRespo
         memory_mode=settings.memory_mode,
         companion_style=normalize_custom_companion_style(settings.companion_style),
     )
+
+
+@router.get("/password-reset-question", response_model=PasswordResetQuestionResponse)
+async def password_reset_question(
+    username: str = Query(min_length=3, max_length=24, pattern=USERNAME_PATTERN),
+    db: Session = Depends(get_db_session),
+) -> PasswordResetQuestionResponse:
+    normalized = _normalize_username(username)
+    user = db.scalar(
+        select(User).options(selectinload(User.profile)).where(User.username == normalized, User.status == "active")
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户名不存在。",
+        )
+    if user.profile is None or not user.profile.security_question:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该账号未设置密保问题，无法找回密码。",
+        )
+    return PasswordResetQuestionResponse(
+        username=normalized,
+        security_question=user.profile.security_question,
+    )
+
+
+@router.post("/password-reset-verify", response_model=PasswordResetVerifyResponse)
+async def password_reset_verify(
+    payload: PasswordResetVerifyRequest,
+    db: Session = Depends(get_db_session),
+) -> PasswordResetVerifyResponse:
+    username = _normalize_username(payload.username)
+    user = db.scalar(
+        select(User).options(selectinload(User.profile)).where(User.username == username, User.status == "active")
+    )
+    if user is None or user.profile is None or not user.profile.security_answer_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密保问题未设置。",
+        )
+
+    if not verify_password(payload.answer.strip(), user.profile.security_answer_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密保答案错误。",
+        )
+
+    token_id = str(uuid4())
+    raw_token = create_token(user.id, "password_reset", RESET_TOKEN_TTL_SECONDS, token_id=token_id)
+    db.add(
+        PasswordResetToken(
+            id=token_id,
+            user_id=user.id,
+            token_hash=hash_token(raw_token),
+            status="active",
+            expires_at=utcnow() + timedelta(seconds=RESET_TOKEN_TTL_SECONDS),
+        )
+    )
+    db.commit()
+    return PasswordResetVerifyResponse(reset_token=raw_token)
+
+
+@router.post("/password-reset")
+async def password_reset(
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db_session),
+) -> dict:
+    try:
+        token_payload = decode_token(payload.reset_token, expected_type="password_reset")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="重置链接无效或已过期。") from exc
+
+    token_id = token_payload.get("jti")
+    if not token_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的重置令牌。")
+
+    reset_record = db.scalar(select(PasswordResetToken).where(PasswordResetToken.id == token_id))
+    if reset_record is None or reset_record.status != "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="重置链接无效或已过期。")
+    expires_at = reset_record.expires_at
+    if expires_at.tzinfo is None:
+        from datetime import timezone as tz_info
+        expires_at = expires_at.replace(tzinfo=tz_info.utc)
+    if expires_at <= utcnow():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="重置链接无效或已过期。")
+
+    try:
+        validate_password_strength(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    user = db.scalar(select(User).where(User.id == token_payload["sub"], User.status == "active"))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户不存在。")
+
+    user.password_hash = hash_password(payload.new_password)
+    reset_record.status = "used"
+    reset_record.used_at = utcnow()
+
+    active_refresh_tokens = db.scalars(
+        select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
+    ).all()
+    for rt in active_refresh_tokens:
+        rt.status = "revoked"
+        rt.revoked_at = utcnow()
+
+    db.commit()
+    return {"ok": True}

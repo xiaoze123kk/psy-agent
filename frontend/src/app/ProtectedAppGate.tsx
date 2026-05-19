@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+﻿import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { api } from "../api";
 import { Spinner, VisuallyHidden } from "../components/ui";
@@ -9,10 +9,32 @@ import { markEntryTransitionSeenToday, shouldShowEntryTransitionToday } from "./
 import { GentleAppTransition } from "./auth/GentleAppTransition";
 import { LoadingAuthEntry } from "./auth/LoadingAuthEntry";
 import { OnboardingGuide } from "./auth/OnboardingGuide";
+import { PasswordResetPage } from "./auth/PasswordResetPage";
 import "./ningyu/NingyuAppShell.css";
 import { useSession } from "./session";
 
 type AuthMode = "login" | "register";
+
+const PASSWORD_MIN_LENGTH = 8;
+
+let _persistedAuthMode: AuthMode = "login";
+
+function validatePassword(password: string): string | null {
+  const errors: string[] = [];
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    errors.push(`密码至少需要 ${PASSWORD_MIN_LENGTH} 个字符`);
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push("密码需要包含至少一个大写字母");
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push("密码需要包含至少一个小写字母");
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push("密码需要包含至少一个数字");
+  }
+  return errors.length > 0 ? errors.join("\n") : null;
+}
 
 interface CaptchaState {
   id: string;
@@ -70,16 +92,20 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
 function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | null; onDebugEnterMain: () => void }) {
   const session = useSession();
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [isPasswordReset, setIsPasswordReset] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>(_persistedAuthMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [ageRange, setAgeRange] = useState<AgeRange>("16_17");
+  const [securityQuestion, setSecurityQuestion] = useState("");
+  const [securityAnswer, setSecurityAnswer] = useState("");
   const [captchaCode, setCaptchaCode] = useState("");
   const [captcha, setCaptcha] = useState<CaptchaState | null>(null);
   const [isCaptchaLoading, setIsCaptchaLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   const refreshCaptcha = async () => {
     setIsCaptchaLoading(true);
@@ -92,7 +118,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
         imageDataUrl: response.image_data_url,
       });
     } catch (loadError) {
-      setCaptchaError(getAuthErrorMessage(loadError, "验证码加载失败，请稍后再试。"));
+      setCaptchaError("验证码加载失败，请稍后再试。");
     } finally {
       setIsCaptchaLoading(false);
     }
@@ -112,13 +138,24 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
     setError(initialError);
   }, [initialError]);
 
-  const canSubmit = Boolean(username.trim() && password && captcha?.id && captchaCode.trim() && !isSubmitting);
+  const canSubmit = Boolean(
+    username.trim()
+    && password
+    && captcha?.id
+    && captchaCode.trim()
+    && !isSubmitting
+    && !passwordError
+    && (authMode === "login" ? true : securityQuestion.trim() && securityAnswer.trim()),
+  );
   const ageModeProfile = buildAgeModeProfile(ageRange);
 
   const handleAuthModeChange = (nextMode: AuthMode) => {
+    _persistedAuthMode = nextMode;
     setAuthMode(nextMode);
     setError(null);
+    setPasswordError(null);
     setCaptchaCode("");
+    void refreshCaptcha();
   };
 
   const handleAgeRangeChange = (nextAgeRange: AgeRange) => {
@@ -126,13 +163,44 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
     setError(null);
   };
 
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    if (passwordError) {
+      setPasswordError(null);
+    }
+  };
+
   if (isDebugOnboarding) {
     return <DebugOnboardingGuide onBack={() => setIsDebugOnboarding(false)} />;
+  }
+
+  if (isPasswordReset) {
+    return (
+      <PasswordResetPage
+        onBack={() => setIsPasswordReset(false)}
+        onComplete={() => {
+          setIsPasswordReset(false);
+          setAuthMode("login");
+          _persistedAuthMode = "login";
+          setError(null);
+        }}
+      />
+    );
   }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!captcha || !canSubmit) return;
+
+    if (authMode === "register") {
+      const errorMsg = validatePassword(password);
+      if (errorMsg) {
+        setPasswordError(errorMsg);
+        setCaptchaCode("");
+        await refreshCaptcha();
+        return;
+      }
+    }
 
     setIsSubmitting(true);
     setError(null);
@@ -146,13 +214,18 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       };
 
       if (authMode === "register") {
-        await session.register({ ...payload, age_range: ageRange });
+        await session.register({
+          ...payload,
+          age_range: ageRange,
+          security_question: securityQuestion.trim(),
+          security_answer: securityAnswer.trim(),
+        });
       } else {
         await session.login(payload);
       }
     } catch (submitError) {
       setCaptchaCode("");
-      setError(getAuthErrorMessage(submitError, authMode === "register" ? "注册失败，请检查输入。" : "登录失败，请检查输入。"));
+      setError(authMode === "register" ? "注册失败，请检查输入。" : "登录失败，请检查输入。");
       await refreshCaptcha();
     } finally {
       setIsSubmitting(false);
@@ -165,6 +238,8 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       username={username}
       password={password}
       ageRange={ageRange}
+      securityQuestion={securityQuestion}
+      securityAnswer={securityAnswer}
       captchaCode={captchaCode}
       captcha={captcha}
       isCaptchaLoading={isCaptchaLoading}
@@ -172,24 +247,20 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       canSubmit={canSubmit}
       error={error}
       captchaError={captchaError}
+      passwordError={passwordError}
       ageModeNote={`${ageModeProfile.ageLabel} · ${ageModeProfile.modeLabel}：${ageModeProfile.description}`}
       onAuthModeChange={handleAuthModeChange}
       onUsernameChange={setUsername}
-      onPasswordChange={setPassword}
+      onPasswordChange={handlePasswordChange}
       onAgeRangeChange={handleAgeRangeChange}
+      onSecurityQuestionChange={setSecurityQuestion}
+      onSecurityAnswerChange={setSecurityAnswer}
       onCaptchaCodeChange={setCaptchaCode}
       onRefreshCaptcha={() => void handleRefreshCaptcha()}
       onSubmit={handleSubmit}
+      onForgotPassword={() => setIsPasswordReset(true)}
       onDebugEnterMain={import.meta.env.DEV ? onDebugEnterMain : undefined}
       onDebugEnterOnboarding={import.meta.env.DEV ? () => setIsDebugOnboarding(true) : undefined}
     />
   );
-}
-
-function getAuthErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return fallback;
 }

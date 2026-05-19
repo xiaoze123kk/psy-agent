@@ -19,6 +19,8 @@ export interface RegisterRequest {
   username: string;
   password: string;
   age_range: AgeRange;
+  security_question: string;
+  security_answer: string;
   captcha_id: string;
   captcha_code: string;
 }
@@ -80,6 +82,29 @@ export interface CurrentUserResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+}
+
+export interface PasswordResetQuestionRequest {
+  username: string;
+}
+
+export interface PasswordResetQuestionResponse {
+  username: string;
+  security_question: string;
+}
+
+export interface PasswordResetVerifyRequest {
+  username: string;
+  answer: string;
+}
+
+export interface PasswordResetVerifyResponse {
+  reset_token: string;
+}
+
+export interface PasswordResetRequest {
+  reset_token: string;
+  new_password: string;
 }
 
 export interface StartThreadRequest {

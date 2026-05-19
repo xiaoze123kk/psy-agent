@@ -1,4 +1,4 @@
-import { Frown, Leaf, Lock, Meh, RefreshCw, Smile, User } from "lucide-react";
+﻿import { Frown, Leaf, Lock, Meh, RefreshCw, Shield, Smile, User } from "lucide-react";
 import type { FormEvent } from "react";
 
 import loginBack from "../../imports/login_back.png";
@@ -12,11 +12,15 @@ interface CaptchaView {
   imageDataUrl: string;
 }
 
+const PASSWORD_HINT = "需包含大写字母、小写字母和数字，至少 8 位";
+
 interface LoadingAuthEntryProps {
   authMode: AuthMode;
   username: string;
   password: string;
   ageRange: AgeRange;
+  securityQuestion: string;
+  securityAnswer: string;
   captchaCode: string;
   captcha: CaptchaView | null;
   isCaptchaLoading: boolean;
@@ -24,14 +28,18 @@ interface LoadingAuthEntryProps {
   canSubmit: boolean;
   error: string | null;
   captchaError: string | null;
+  passwordError: string | null;
   ageModeNote: string;
   onAuthModeChange: (mode: AuthMode) => void;
   onUsernameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onAgeRangeChange: (value: AgeRange) => void;
+  onSecurityQuestionChange: (value: string) => void;
+  onSecurityAnswerChange: (value: string) => void;
   onCaptchaCodeChange: (value: string) => void;
   onRefreshCaptcha: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onForgotPassword: () => void;
   onDebugEnterMain?: () => void;
   onDebugEnterOnboarding?: () => void;
 }
@@ -47,6 +55,8 @@ export function LoadingAuthEntry({
   username,
   password,
   ageRange,
+  securityQuestion,
+  securityAnswer,
   captchaCode,
   captcha,
   isCaptchaLoading,
@@ -54,14 +64,18 @@ export function LoadingAuthEntry({
   canSubmit,
   error,
   captchaError,
+  passwordError,
   ageModeNote,
   onAuthModeChange,
   onUsernameChange,
   onPasswordChange,
   onAgeRangeChange,
+  onSecurityQuestionChange,
+  onSecurityAnswerChange,
   onCaptchaCodeChange,
   onRefreshCaptcha,
   onSubmit,
+  onForgotPassword,
   onDebugEnterMain,
   onDebugEnterOnboarding,
 }: LoadingAuthEntryProps) {
@@ -128,9 +142,38 @@ export function LoadingAuthEntry({
                   autoComplete={isLogin ? "current-password" : "new-password"}
                 />
               </label>
+              {!isLogin && !passwordError ? (
+                <p className="loading-auth__password-hint">{PASSWORD_HINT}</p>
+              ) : null}
+              {passwordError ? (
+                <p className="loading-auth__password-error">{passwordError}</p>
+              ) : null}
 
               {!isLogin ? (
                 <>
+                  <p className="loading-auth__password-hint" style={{ marginBottom: 4 }}>
+                    设置密保问题，用于忘记密码时验证身份
+                  </p>
+                  <label className="loading-auth__field">
+                    <Shield aria-hidden="true" />
+                    <input
+                      value={securityQuestion}
+                      onChange={(event) => onSecurityQuestionChange(event.target.value)}
+                      type="text"
+                      placeholder="密保问题，例如：我第一只宠物叫什么？"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="loading-auth__field">
+                    <Lock aria-hidden="true" />
+                    <input
+                      value={securityAnswer}
+                      onChange={(event) => onSecurityAnswerChange(event.target.value)}
+                      type="text"
+                      placeholder="密保答案"
+                      autoComplete="off"
+                    />
+                  </label>
                   <div className="loading-auth__age" aria-label="年龄范围">
                     <button className={ageRange === "13_15" ? "is-active" : ""} type="button" onClick={() => onAgeRangeChange("13_15")}>
                       13-15
@@ -148,7 +191,7 @@ export function LoadingAuthEntry({
                 <div className="loading-auth__remember">
                   <span aria-hidden="true" />
                   <p>记住我</p>
-                  <button type="button">忘记密码?</button>
+                  <button type="button" onClick={onForgotPassword}>忘记密码?</button>
                 </div>
               )}
 
