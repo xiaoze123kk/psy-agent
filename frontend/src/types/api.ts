@@ -1,5 +1,5 @@
 ﻿export type UserMode = "teen" | "adult";
-export type InputType = "text" | "voice" | "test" | "system";
+export type InputType = "text" | "test" | "system";
 export type AgeRange = "13_15" | "16_17" | "18_plus";
 export type RiskLevel = "L0" | "L1" | "L2" | "L3";
 export type MemoryMode = "off" | "summary_only" | "long_term";
@@ -7,6 +7,7 @@ export type DeliveryStatus = "generated" | "failed_no_reply" | "safety_fallback"
 export type TurnStatus = "accepted" | "running" | "completed" | "failed";
 export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type ChatStreamEventName = "accepted" | "graph_update" | "heartbeat" | "token" | "final" | "error";
+export type ConversationFeedbackValue = "missed" | "too_analytic" | "too_generic" | "too_many_questions" | "good";
 
 export interface CaptchaResponse {
   captcha_id: string;
@@ -79,8 +80,6 @@ export interface CurrentUserResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
-  voice_enabled: boolean;
-  save_voice_audio: boolean;
   save_transcript: boolean;
 }
 
@@ -185,8 +184,11 @@ export interface ChatStreamGraphUpdateEvent {
   route_priority?: string;
   control_category?: string;
   retrieved_memory_count?: number;
+  retrieved_example_count?: number;
   rag_used?: boolean;
   rag_skipped_reason?: string;
+  rag_trace_summary?: Record<string, unknown>;
+  duration_ms?: number;
   validator_blocked?: boolean;
   delivery_status?: DeliveryStatus;
 }
@@ -217,6 +219,7 @@ export interface ChatStreamFinalEvent {
   memory_job_status?: MemoryJobStatus;
   risk_reasons?: string[];
   memory_candidates?: unknown[];
+  trace_summary?: Record<string, unknown>;
 }
 
 export interface ChatStreamErrorEvent {
@@ -280,7 +283,7 @@ export interface StatusResponse {
   status: string;
 }
 
-export type PrivacyDataScope = "memories" | "chat" | "moods" | "feedback" | "voice" | "all_non_account";
+export type PrivacyDataScope = "memories" | "chat" | "moods" | "feedback" | "all_non_account";
 
 export interface PrivacyDataCounts {
   memories: number;
@@ -289,7 +292,6 @@ export interface PrivacyDataCounts {
   mood_logs: number;
   test_history: number;
   feedback: number;
-  voice_sessions: number;
   risk_events: number;
 }
 
@@ -298,8 +300,6 @@ export interface PrivacySummaryResponse {
   user_mode: UserMode;
   settings: {
     memory_mode: MemoryMode;
-    voice_enabled: boolean;
-    save_voice_audio: boolean;
     save_transcript: boolean;
   };
   data_counts: PrivacyDataCounts;
@@ -325,16 +325,12 @@ export type PersonalDataExport = Record<string, unknown>;
 export interface UserSettingsUpdateRequest {
   memory_mode?: MemoryMode;
   companion_style?: string;
-  voice_enabled?: boolean;
-  save_voice_audio?: boolean;
   save_transcript?: boolean;
 }
 
 export interface UserSettingsResponse {
   memory_mode: MemoryMode;
   companion_style: string;
-  voice_enabled: boolean;
-  save_voice_audio: boolean;
   save_transcript: boolean;
 }
 
@@ -637,91 +633,47 @@ export interface KnowledgeQuizBankStatsResponse {
   by_topic: Record<string, number>;
 }
 
-// --- Sprint 3: Voice MVP ---
-
-export interface VoiceSessionResponse {
-  voice_session_id: string;
-  thread_id: string;
-  ws_url: string;
-  protocol: string;
-}
-
-export type VoiceState = "idle" | "connecting" | "ready" | "listening" | "processing" | "responding" | "error";
-
-export type WsServerEventType =
-  | "session_ready"
-  | "listening"
-  | "processing"
-  | "assistant_delta"
-  | "assistant_final"
-  | "session_ended"
-  | "error"
-  | "safety_escalation";
-
-export interface WsSessionReadyEvent {
-  type: "session_ready";
-  voice_session_id: string;
-  thread_id: string;
-}
-
-export interface WsListeningEvent {
-  type: "listening";
-  message: string;
-}
-
-export interface WsProcessingEvent {
-  type: "processing";
-  client_event_id: string;
-}
-
-export interface WsAssistantDeltaEvent {
-  type: "assistant_delta";
-  text: string;
-}
-
-export interface WsAssistantFinalEvent {
-  type: "assistant_final";
-  text: string;
-  risk_level: RiskLevel;
-  suggested_actions: string[];
-}
-
-export interface WsSessionEndedEvent {
-  type: "session_ended";
-  voice_session_id: string;
-}
-
-export interface WsErrorEvent {
-  type: "error";
-  error_code: string;
-  message: string;
-}
-
-export interface WsSafetyEscalationEvent {
-  type: "safety_escalation";
-  risk_level: RiskLevel;
-  message: string;
-}
-
-export type WsServerEvent =
-  | WsSessionReadyEvent
-  | WsListeningEvent
-  | WsProcessingEvent
-  | WsAssistantDeltaEvent
-  | WsAssistantFinalEvent
-  | WsSessionEndedEvent
-  | WsErrorEvent
-  | WsSafetyEscalationEvent;
-
 // --- Sprint 3: Feedback ---
 
-export interface FeedbackCreateRequest {
+export interface ConversationFeedbackRequest {
+  thread_id: string;
+  turn_id: string;
+  feedback: ConversationFeedbackValue;
+  optional_note?: string | null;
+}
+
+export interface ConversationQualitySummary {
+  total_turns: number;
+  limit: number;
+  thread_id: string | null;
+  feedback_counts: Record<string, number>;
+  next_turn_signal_counts: Record<string, number>;
+  conversation_move_counts: Record<string, number>;
+  voice_mode_counts: Record<string, number>;
+  validator_severity_counts: Record<string, number>;
+  validator_reason_counts: Record<string, number>;
+  experience_reason_counts: Record<string, number>;
+  negative_feedback_by_move: Record<string, number>;
+  question_count_buckets: Record<string, number>;
+}
+
+export interface LegacyFeedbackCreateRequest {
   target_type: "assistant_message" | "knowledge_answer" | "test_result";
   target_id: string;
   rating: number;
   tags?: string[];
   note?: string | null;
 }
+
+export type FeedbackCreateRequest =
+  | LegacyFeedbackCreateRequest
+  | (ConversationFeedbackRequest & {
+      target_type?: LegacyFeedbackCreateRequest["target_type"];
+      target_id?: string;
+      rating?: number;
+      tags?: string[];
+      note?: string | null;
+    });
 
 export interface FeedbackResponse {
   feedback_id: string;

@@ -1,6 +1,7 @@
 .ningyu-transition {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   position: relative;
   background: #e0f2f1;
@@ -9,6 +10,7 @@
 .ningyu-shell {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   position: relative;
   display: flex;
@@ -2515,6 +2517,309 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
+.ningyu-immersive {
+  --ningyu-safe-top: env(safe-area-inset-top, 0px);
+  --ningyu-safe-right: env(safe-area-inset-right, 0px);
+  --ningyu-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ningyu-safe-left: env(safe-area-inset-left, 0px);
+  --ningyu-floating-size: 48px;
+  --ningyu-floating-gap: 10px;
+  --ningyu-floating-offset: clamp(18px, 3vw, 34px);
+  --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 84px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: transparent;
+}
+
+.ningyu-immersive__topbar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: calc(18px + var(--ningyu-safe-top)) max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right)) 10px max(clamp(18px, 3vw, 34px), var(--ningyu-safe-left));
+  pointer-events: none;
+}
+
+.ningyu-immersive-brand,
+.ningyu-immersive-status {
+  pointer-events: auto;
+}
+
+.ningyu-immersive-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  color: rgba(19, 78, 74, 0.94);
+  box-shadow: 0 14px 34px -30px rgba(15, 118, 110, 0.46);
+}
+
+.ningyu-shell.is-night .ningyu-immersive-brand {
+  border-color: rgba(71, 85, 105, 0.44);
+  background: rgba(15, 23, 42, 0.56);
+  color: #e2e8f0;
+}
+
+.ningyu-immersive-brand img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.ningyu-immersive-brand h1,
+.ningyu-immersive-brand p,
+.ningyu-immersive-status strong,
+.ningyu-immersive-status small {
+  margin: 0;
+}
+
+.ningyu-immersive-brand h1 {
+  font-size: 17px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.ningyu-immersive-brand p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: rgba(17, 94, 89, 0.7);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-brand p {
+  color: #cbd5e1;
+}
+
+.ningyu-immersive-status {
+  max-width: min(420px, 42vw);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(19, 78, 74, 0.86);
+}
+
+.ningyu-shell.is-night .ningyu-immersive-status {
+  border-color: rgba(71, 85, 105, 0.42);
+  background: rgba(15, 23, 42, 0.5);
+  color: #e2e8f0;
+}
+
+.ningyu-immersive-status__tone {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #2dd4bf;
+  box-shadow: 0 0 0 5px rgba(45, 212, 191, 0.12);
+}
+
+.ningyu-immersive-status__tone.is-watch {
+  background: #f59e0b;
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.14);
+}
+
+.ningyu-immersive-status__tone.is-support {
+  background: #22c55e;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.14);
+}
+
+.ningyu-immersive-status__tone.is-error {
+  background: #ef4444;
+  box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.14);
+}
+
+.ningyu-immersive-status strong,
+.ningyu-immersive-status small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ningyu-immersive-status strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.ningyu-immersive-status small {
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.64;
+}
+
+.ningyu-immersive__main {
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 10px clamp(76px, 8vw, 128px) calc(28px + var(--ningyu-safe-bottom));
+}
+
+.ningyu-immersive-paper {
+  width: min(100%, 960px);
+  height: min(100%, 780px);
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 30px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.18) 1px, transparent 1px),
+    rgba(255, 255, 255, 0.42);
+  background-size: 100% 34px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 24px 54px -44px rgba(15, 118, 110, 0.5);
+  overflow: hidden;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-paper {
+  border-color: rgba(71, 85, 105, 0.44);
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    rgba(15, 23, 42, 0.54);
+  background-size: 100% 34px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(148, 163, 184, 0.1),
+    0 24px 54px -44px rgba(2, 6, 23, 0.86);
+}
+
+.ningyu-immersive .ningyu-chat {
+  width: 100%;
+  height: 100%;
+}
+
+.ningyu-immersive .ningyu-chat::before {
+  inset: 18px 18px 82px;
+  border-inline-color: rgba(20, 184, 166, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(240, 253, 250, 0.05) 56%, transparent);
+}
+
+.ningyu-immersive .ningyu-chat__scroll {
+  padding: clamp(20px, 3vw, 34px) clamp(18px, 4vw, 48px) 18px;
+}
+
+.ningyu-immersive .ningyu-chat__inner {
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ningyu-immersive .ningyu-chat__input {
+  padding: 14px clamp(18px, 4vw, 48px) 22px;
+}
+
+.ningyu-immersive .ningyu-chat__input > * {
+  width: 100%;
+}
+
+.ningyu-immersive-edge {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  display: grid;
+  gap: var(--ningyu-floating-gap);
+  transform: translateY(-50%);
+}
+
+.ningyu-immersive-edge--left {
+  left: max(var(--ningyu-floating-offset), var(--ningyu-safe-left));
+}
+
+.ningyu-immersive-edge--right {
+  right: max(var(--ningyu-floating-offset), var(--ningyu-safe-right));
+}
+
+.ningyu-immersive-edge button {
+  width: var(--ningyu-floating-size);
+  height: var(--ningyu-floating-size);
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.46);
+  color: rgba(17, 94, 89, 0.9);
+  line-height: 0;
+  box-shadow: 0 14px 30px -26px rgba(15, 118, 110, 0.44);
+  transition:
+    transform 220ms ease,
+    background 700ms ease,
+    border-color 700ms ease,
+    color 700ms ease,
+    box-shadow 260ms ease;
+}
+
+.ningyu-immersive-edge button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.ningyu-immersive-edge button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge button {
+  border-color: rgba(71, 85, 105, 0.46);
+  background: rgba(15, 23, 42, 0.54);
+  color: #e2e8f0;
+  box-shadow: 0 14px 30px -26px rgba(2, 6, 23, 0.84);
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge button:hover {
+  border-color: rgba(52, 211, 153, 0.34);
+  background: rgba(30, 41, 59, 0.68);
+}
+
+.ningyu-immersive-edge .is-safety {
+  color: #047857;
+}
+
+.ningyu-immersive-edge .is-safety.is-watch {
+  color: #b45309;
+}
+
+.ningyu-immersive-edge .is-safety.is-error {
+  color: #dc2626;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge .is-safety {
+  color: #86efac;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge .is-safety.is-watch {
+  color: #fbbf24;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge .is-safety.is-error {
+  color: #fca5a5;
+}
+
 @keyframes ningyuPulse {
   0%, 100% {
     opacity: 0.72;
@@ -2550,9 +2855,34 @@
   .ningyu-sidebar--right {
     display: none;
   }
+
+  .ningyu-immersive__main {
+    padding-inline: clamp(64px, 8vw, 86px);
+  }
+}
+
+@media (max-width: 900px) {
+  .ningyu-immersive {
+    --ningyu-floating-size: 46px;
+    --ningyu-floating-offset: clamp(16px, 2.4vw, 24px);
+  }
+
+  .ningyu-immersive__main {
+    padding-inline: clamp(62px, 9vw, 78px);
+  }
+
+  .ningyu-immersive-paper {
+    width: min(100%, 900px);
+  }
 }
 
 @media (max-width: 760px) {
+  .ningyu-immersive {
+    --ningyu-floating-size: 44px;
+    --ningyu-floating-gap: 8px;
+    --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 96px);
+  }
+
   .ningyu-header {
     padding: 12px 16px;
   }
@@ -2565,10 +2895,59 @@
     display: none;
   }
 
-  .ningyu-chat__scroll,
-  .ningyu-chat__input {
+  .ningyu-immersive__topbar {
+    padding: calc(12px + var(--ningyu-safe-top)) max(14px, var(--ningyu-safe-right)) 8px max(14px, var(--ningyu-safe-left));
+  }
+
+  .ningyu-immersive-brand {
+    max-width: calc(100vw - 28px - var(--ningyu-safe-left) - var(--ningyu-safe-right));
+    padding: 9px 12px;
+  }
+
+  .ningyu-immersive-status {
+    display: none;
+  }
+
+  .ningyu-immersive__main {
+    align-items: stretch;
+    padding: 8px max(14px, var(--ningyu-safe-right)) var(--ningyu-mobile-controls-space) max(14px, var(--ningyu-safe-left));
+  }
+
+  .ningyu-immersive-paper {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border-radius: 24px;
+  }
+
+  .ningyu-immersive-edge {
+    top: auto;
+    bottom: calc(14px + var(--ningyu-safe-bottom));
+    grid-auto-flow: column;
+    grid-auto-columns: var(--ningyu-floating-size);
+    transform: none;
+  }
+
+  .ningyu-immersive-edge--left {
+    left: max(16px, var(--ningyu-safe-left));
+  }
+
+  .ningyu-immersive-edge--right {
+    right: max(16px, var(--ningyu-safe-right));
+  }
+
+  .ningyu-immersive-edge button {
+    width: var(--ningyu-floating-size);
+    height: var(--ningyu-floating-size);
+  }
+
+  .ningyu-immersive .ningyu-chat__scroll {
     padding-left: 18px;
     padding-right: 18px;
+  }
+
+  .ningyu-immersive .ningyu-chat__input {
+    padding: 12px 16px 16px;
   }
 
   .ningyu-chat::before {
@@ -2610,5 +2989,638 @@
 
   .ningyu-message.is-user .ningyu-message__bubble {
     padding: 13px 18px 14px 16px;
+  }
+}
+
+.ningyu-immersive-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.ningyu-immersive-overlay__scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.ningyu-immersive-overlay__scrim:focus-visible {
+  outline: 3px solid rgba(20, 184, 166, 0.48);
+  outline-offset: -6px;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-overlay__scrim {
+  background: rgba(2, 6, 23, 0.34);
+}
+
+.ningyu-immersive-panel {
+  position: absolute;
+  top: 84px;
+  bottom: calc(26px + var(--ningyu-safe-bottom));
+  width: min(360px, calc(100vw - 36px));
+  display: flex;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 26px 64px -42px rgba(15, 118, 110, 0.58);
+  overflow: hidden;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ningyu-shell.is-night .ningyu-immersive-panel {
+  border-color: rgba(71, 85, 105, 0.48);
+  background: rgba(15, 23, 42, 0.68);
+  box-shadow: 0 26px 64px -42px rgba(2, 6, 23, 0.9);
+}
+
+.ningyu-immersive-panel--history {
+  left: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-left));
+}
+
+.ningyu-immersive-panel--tools {
+  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
+  width: min(336px, calc(100vw - 36px));
+}
+
+.ningyu-immersive-panel--toolsDashboard {
+  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
+  width: min(392px, calc(100vw - 36px));
+}
+
+.ningyu-immersive-panel > .ningyu-sidebar {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  display: flex;
+}
+
+.ningyu-immersive-panel > .ningyu-sidebar--right {
+  overflow-y: auto;
+}
+
+.ningyu-immersive-panel__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.52);
+  color: rgba(17, 94, 89, 0.86);
+  line-height: 0;
+}
+
+.ningyu-immersive-edge button:focus-visible,
+.ningyu-immersive-panel__close:focus-visible,
+.ningyu-tools-launcher__grid button:focus-visible,
+.ningyu-tool-detail__back:focus-visible,
+.ningyu-tool-detail__actions button:focus-visible {
+  outline: 3px solid rgba(20, 184, 166, 0.48);
+  outline-offset: 3px;
+}
+
+.ningyu-shell.is-night .ningyu-immersive-edge button:focus-visible,
+.ningyu-shell.is-night .ningyu-immersive-panel__close:focus-visible,
+.ningyu-shell.is-night .ningyu-tools-launcher__grid button:focus-visible,
+.ningyu-shell.is-night .ningyu-tool-detail__back:focus-visible,
+.ningyu-shell.is-night .ningyu-tool-detail__actions button:focus-visible {
+  outline-color: rgba(134, 239, 172, 0.52);
+}
+
+.ningyu-immersive-panel__close .ningyu-icon {
+  transform: rotate(45deg);
+}
+
+.ningyu-shell.is-night .ningyu-immersive-panel__close {
+  border-color: rgba(71, 85, 105, 0.48);
+  background: rgba(15, 23, 42, 0.62);
+  color: #e2e8f0;
+}
+
+.ningyu-immersive-panel .ningyu-sidebar__top,
+.ningyu-immersive-panel .ningyu-panel-section:first-child {
+  padding-right: 54px;
+}
+
+.ningyu-tools-launcher {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 24px;
+  color: rgba(19, 78, 74, 0.92);
+  overflow-y: auto;
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher {
+  color: #e2e8f0;
+}
+
+.ningyu-tools-launcher__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding-right: 40px;
+}
+
+.ningyu-tools-launcher__header > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(153, 246, 228, 0.36);
+  border-radius: 16px;
+  background: rgba(240, 253, 250, 0.32);
+  color: #0f766e;
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__header > span {
+  border-color: rgba(71, 85, 105, 0.52);
+  background: rgba(30, 41, 59, 0.38);
+  color: #86efac;
+}
+
+.ningyu-tools-launcher__header p,
+.ningyu-tools-launcher__header h2 {
+  margin: 0;
+}
+
+.ningyu-tools-launcher__header p {
+  color: rgba(17, 94, 89, 0.54);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__header p {
+  color: #94a3b8;
+}
+
+.ningyu-tools-launcher__header h2 {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.ningyu-tools-launcher__grid {
+  display: grid;
+  gap: 10px;
+}
+
+.ningyu-tools-launcher__grid button {
+  width: 100%;
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.26);
+  color: inherit;
+  text-align: left;
+  transition:
+    transform 180ms ease,
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.ningyu-tools-launcher__grid button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(45, 212, 191, 0.44);
+  background: rgba(240, 253, 250, 0.36);
+  box-shadow: 0 16px 30px -28px rgba(15, 118, 110, 0.5);
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__grid button {
+  border-color: rgba(71, 85, 105, 0.42);
+  background: rgba(15, 23, 42, 0.26);
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__grid button:hover {
+  border-color: rgba(52, 211, 153, 0.32);
+  background: rgba(30, 41, 59, 0.42);
+}
+
+.ningyu-tools-launcher__grid button > .ningyu-icon {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(240, 253, 250, 0.52);
+  color: #0f766e;
+}
+
+.ningyu-tools-launcher__grid button.is-safety > .ningyu-icon {
+  color: #047857;
+}
+
+.ningyu-tools-launcher__grid button.is-safety.is-watch > .ningyu-icon {
+  color: #b45309;
+}
+
+.ningyu-tools-launcher__grid button.is-safety.is-error > .ningyu-icon {
+  color: #dc2626;
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__grid button > .ningyu-icon {
+  background: rgba(15, 23, 42, 0.46);
+  color: #86efac;
+}
+
+.ningyu-tools-launcher__grid strong,
+.ningyu-tools-launcher__grid small {
+  display: block;
+}
+
+.ningyu-tools-launcher__grid strong {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.ningyu-tools-launcher__grid small {
+  margin-top: 4px;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-shell.is-night .ningyu-tools-launcher__grid small {
+  color: #94a3b8;
+}
+
+.ningyu-immersive-panel--toolDetail {
+  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
+  width: min(420px, calc(100vw - 36px));
+}
+
+.ningyu-tool-detail {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 18px;
+  padding: 24px;
+  color: rgba(19, 78, 74, 0.92);
+  overflow-y: auto;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail {
+  color: #e2e8f0;
+}
+
+.ningyu-tool-detail__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding-right: 40px;
+}
+
+.ningyu-tool-detail__back {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.26);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ningyu-tool-detail__back .ningyu-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.ningyu-tool-detail__icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(153, 246, 228, 0.36);
+  border-radius: 16px;
+  background: rgba(240, 253, 250, 0.32);
+  color: #0f766e;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail__icon,
+.ningyu-shell.is-night .ningyu-tool-detail__back {
+  border-color: rgba(71, 85, 105, 0.52);
+  background: rgba(30, 41, 59, 0.38);
+  color: #86efac;
+}
+
+.ningyu-tool-detail__header p,
+.ningyu-tool-detail__header h2,
+.ningyu-tool-detail__header small {
+  margin: 0;
+}
+
+.ningyu-tool-detail__header p {
+  color: rgba(17, 94, 89, 0.54);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ningyu-tool-detail__header h2 {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.ningyu-tool-detail__header small {
+  display: block;
+  margin-top: 7px;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail__header p,
+.ningyu-shell.is-night .ningyu-tool-detail__header small {
+  color: #94a3b8;
+}
+
+.ningyu-tool-detail__content {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.ningyu-tool-detail__actions,
+.ningyu-tool-detail__placeholder-list,
+.ningyu-tool-detail__status {
+  display: grid;
+  gap: 10px;
+}
+
+.ningyu-tool-detail__actions button,
+.ningyu-tool-detail__placeholder-list > div {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid rgba(153, 246, 228, 0.3);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.26);
+  color: inherit;
+  text-align: left;
+}
+
+.ningyu-tool-detail__actions button:hover {
+  border-color: rgba(45, 212, 191, 0.44);
+  background: rgba(240, 253, 250, 0.36);
+}
+
+.ningyu-tool-detail__actions button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail__actions button,
+.ningyu-shell.is-night .ningyu-tool-detail__placeholder-list > div {
+  border-color: rgba(71, 85, 105, 0.42);
+  background: rgba(15, 23, 42, 0.26);
+}
+
+.ningyu-tool-detail__actions strong,
+.ningyu-tool-detail__placeholder-list strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.ningyu-tool-detail__actions small,
+.ningyu-tool-detail__placeholder-list small {
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail__actions small,
+.ningyu-shell.is-night .ningyu-tool-detail__placeholder-list small {
+  color: #94a3b8;
+}
+
+.ningyu-tool-detail__status {
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+}
+
+.ningyu-tool-detail__status span {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.42);
+  color: rgba(17, 94, 89, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.ningyu-shell.is-night .ningyu-tool-detail__status span {
+  background: rgba(15, 23, 42, 0.42);
+  color: #cbd5e1;
+}
+
+@media (max-width: 760px) {
+  .ningyu-immersive-panel {
+    top: calc(70px + var(--ningyu-safe-top));
+    right: max(14px, var(--ningyu-safe-right));
+    bottom: var(--ningyu-mobile-controls-space);
+    left: max(14px, var(--ningyu-safe-left));
+    width: auto;
+    border-radius: 24px;
+  }
+
+  .ningyu-immersive-panel--history,
+  .ningyu-immersive-panel--tools,
+  .ningyu-immersive-panel--toolsDashboard,
+  .ningyu-immersive-panel--toolDetail {
+    right: max(14px, var(--ningyu-safe-right));
+    left: max(14px, var(--ningyu-safe-left));
+    width: auto;
+  }
+
+  .ningyu-immersive-panel > .ningyu-sidebar,
+  .ningyu-immersive-panel > .ningyu-sidebar--left,
+  .ningyu-immersive-panel > .ningyu-sidebar--right {
+    display: flex;
+  }
+
+  .ningyu-tools-launcher {
+    padding: 20px;
+  }
+
+  .ningyu-tool-detail {
+    padding: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ningyu-immersive {
+    --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 104px);
+  }
+
+  .ningyu-immersive-brand img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .ningyu-immersive-brand h1 {
+    font-size: 16px;
+  }
+
+  .ningyu-immersive-brand p {
+    max-width: 66vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ningyu-immersive__main {
+    padding-top: 6px;
+    padding-inline: max(10px, var(--ningyu-safe-left)) max(10px, var(--ningyu-safe-right));
+  }
+
+  .ningyu-immersive-paper {
+    border-radius: 20px;
+  }
+
+  .ningyu-immersive .ningyu-chat__scroll {
+    padding: 16px 14px 12px;
+  }
+
+  .ningyu-immersive .ningyu-chat__inner {
+    padding: 16px 10px;
+  }
+
+  .ningyu-input textarea {
+    min-height: 54px;
+    padding: 15px 64px 13px 18px;
+    font-size: 14px;
+  }
+
+  .ningyu-input button {
+    right: 8px;
+  }
+
+  .ningyu-message {
+    max-width: 92%;
+  }
+
+  .ningyu-tools-launcher {
+    padding: 18px;
+  }
+
+  .ningyu-tools-launcher__header {
+    gap: 10px;
+  }
+
+  .ningyu-tools-launcher__header h2 {
+    font-size: 17px;
+  }
+
+  .ningyu-tools-launcher__grid button {
+    min-height: 72px;
+    padding: 12px;
+  }
+}
+
+@media (max-height: 680px) {
+  .ningyu-immersive__topbar {
+    padding-top: calc(10px + var(--ningyu-safe-top));
+  }
+
+  .ningyu-immersive-brand {
+    padding-block: 8px;
+  }
+
+  .ningyu-immersive__main {
+    padding-top: 6px;
+    padding-bottom: calc(18px + var(--ningyu-safe-bottom));
+  }
+
+  .ningyu-immersive-paper {
+    height: 100%;
+  }
+
+  .ningyu-immersive .ningyu-chat__scroll {
+    padding-top: 16px;
+  }
+
+  .ningyu-immersive .ningyu-chat__input {
+    padding-top: 10px;
+    padding-bottom: 14px;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 680px) {
+  .ningyu-immersive__main {
+    padding-bottom: calc(var(--ningyu-safe-bottom) + 82px);
+  }
+
+  .ningyu-immersive-panel {
+    top: calc(62px + var(--ningyu-safe-top));
+    bottom: calc(var(--ningyu-safe-bottom) + 76px);
+  }
+}
+
+@media (max-width: 760px) and (orientation: landscape) {
+  .ningyu-immersive-status {
+    display: none;
+  }
+
+  .ningyu-immersive__topbar {
+    padding-bottom: 4px;
+  }
+
+  .ningyu-immersive-brand p {
+    display: none;
+  }
+
+  .ningyu-immersive__main {
+    padding-bottom: calc(var(--ningyu-safe-bottom) + 72px);
+  }
+
+  .ningyu-immersive-edge {
+    bottom: calc(10px + var(--ningyu-safe-bottom));
+  }
+
+  .ningyu-immersive-panel {
+    top: calc(56px + var(--ningyu-safe-top));
+    bottom: calc(var(--ningyu-safe-bottom) + 64px);
   }
 }

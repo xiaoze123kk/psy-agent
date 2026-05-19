@@ -92,6 +92,15 @@
   --glass-surface: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.62);
   --glass-blur: blur(24px);
+  --ningyu-immersive-paper: rgba(255, 255, 255, 0.72);
+  --ningyu-immersive-paper-border: rgba(255, 255, 255, 0.58);
+  --ningyu-immersive-paper-shadow: 0 18px 48px rgba(22, 36, 30, 0.16);
+  --ningyu-floating-surface: rgba(255, 255, 255, 0.84);
+  --ningyu-floating-border: rgba(255, 255, 255, 0.66);
+  --ningyu-overlay-scrim: rgba(15, 23, 18, 0.36);
+  --ningyu-overlay-blur: blur(28px);
+  --ningyu-day-ambient: rgba(215, 247, 234, 0.62);
+  --ningyu-night-ambient: rgba(25, 36, 57, 0.72);
 
   /* State layers and motion. */
   --state-hover-opacity: 0.08;
@@ -100,6 +109,8 @@
   --motion-duration-short: 150ms;
   --motion-duration-medium: 220ms;
   --motion-duration-long: 300ms;
+  --ningyu-motion-breath: 3200ms;
+  --ningyu-motion-float: 520ms;
   --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
   --motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
 
@@ -110,4 +121,7 @@
   --z-sheet: 30;
   --z-dialog: 40;
   --z-toast: 50;
+  --ningyu-z-floating: 24;
+  --ningyu-z-drawer: 32;
+  --ningyu-z-safety: 42;
 }

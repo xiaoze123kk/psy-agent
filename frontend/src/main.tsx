@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { I18nProvider } from "@heroui/react/rac";
 
 import { SessionProvider } from "./app/session";
 import { AppStateProvider } from "./app/state";
@@ -14,10 +15,12 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <SessionProvider>
-      <AppStateProvider>
-        <App />
-      </AppStateProvider>
-    </SessionProvider>
+    <I18nProvider locale="zh-CN">
+      <SessionProvider>
+        <AppStateProvider>
+          <App />
+        </AppStateProvider>
+      </SessionProvider>
+    </I18nProvider>
   </StrictMode>,
 );

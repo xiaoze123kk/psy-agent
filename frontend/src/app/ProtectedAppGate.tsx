@@ -5,6 +5,7 @@ import { Spinner, VisuallyHidden } from "../components/ui";
 import type { AgeRange } from "../types/api";
 import { buildAgeModeProfile } from "./ageMode";
 import { DebugOnboardingGuide } from "./auth/DebugOnboardingGuide";
+import { markEntryTransitionSeenToday, shouldShowEntryTransitionToday } from "./auth/entryTransitionFrequency";
 import { GentleAppTransition } from "./auth/GentleAppTransition";
 import { LoadingAuthEntry } from "./auth/LoadingAuthEntry";
 import { OnboardingGuide } from "./auth/OnboardingGuide";
@@ -22,7 +23,7 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   const session = useSession();
   const [isDebugMainEntered, setIsDebugMainEntered] = useState(false);
   const [hasEnteredAppLocally, setHasEnteredAppLocally] = useState(false);
-  const [hasPlayedEntryTransition, setHasPlayedEntryTransition] = useState(false);
+  const [hasPlayedEntryTransition, setHasPlayedEntryTransition] = useState(() => !shouldShowEntryTransitionToday());
 
   if (import.meta.env.DEV && isDebugMainEntered) {
     return <>{children}</>;
@@ -55,7 +56,16 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   }
 
   if (!hasPlayedEntryTransition) {
-    return <GentleAppTransition onFinished={() => setHasPlayedEntryTransition(true)}>{children}</GentleAppTransition>;
+    return (
+      <GentleAppTransition
+        onFinished={() => {
+          markEntryTransitionSeenToday();
+          setHasPlayedEntryTransition(true);
+        }}
+      >
+        {children}
+      </GentleAppTransition>
+    );
   }
 
   return <>{children}</>;

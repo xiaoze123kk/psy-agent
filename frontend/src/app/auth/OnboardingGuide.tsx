@@ -1,9 +1,10 @@
-﻿import { ArrowRight, Battery, Ear, Heart, Moon, ShieldAlert, Sparkles, User, Wind } from "lucide-react";
+﻿import { ArrowRight, Battery, Heart, Moon, ShieldAlert, Sparkles, User, Wind } from "lucide-react";
 import { useState } from "react";
 
 import logGuide from "../../imports/log_guide.png";
 import wcbg from "../../imports/wcbg.png";
 import type { MemoryMode } from "../../types/api";
+import { getOnboardingSafetyNoteCopy } from "./onboardingSafetyNotice";
 import "./DebugOnboardingGuide.css";
 
 export type OnboardingTone = "gentle" | "direct" | "encourage" | "listen";
@@ -17,8 +18,6 @@ export interface OnboardingDraft {
   activeness: number;
   memoryMode: MemoryMode;
   saveTranscript: boolean;
-  voiceEnabled: boolean;
-  saveVoiceAudio: boolean;
   moodScore: number;
   anxietyScore: number;
   energyScore: number;
@@ -39,7 +38,7 @@ const tones = [
   { id: "gentle", label: "温柔一点", icon: Wind },
   { id: "direct", label: "直接一点", icon: Sparkles },
   { id: "encourage", label: "多鼓励我", icon: Heart },
-  { id: "listen", label: "先安静听", icon: Ear },
+  { id: "listen", label: "先安静听", icon: Heart },
 ] satisfies Array<{ id: OnboardingTone; label: string; icon: typeof Wind }>;
 
 const defaultDraft: OnboardingDraft = {
@@ -51,8 +50,6 @@ const defaultDraft: OnboardingDraft = {
   activeness: 3,
   memoryMode: "summary_only",
   saveTranscript: true,
-  voiceEnabled: true,
-  saveVoiceAudio: false,
   moodScore: 3,
   anxietyScore: 3,
   energyScore: 3,
@@ -63,6 +60,7 @@ const defaultDraft: OnboardingDraft = {
 export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录", completeLabel = "完成设置" }: OnboardingGuideProps) {
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState<OnboardingDraft>(defaultDraft);
+  const safetyNote = getOnboardingSafetyNoteCopy();
 
   const toggleGoal = (goal: string) => {
     setDraft((current) => ({
@@ -105,10 +103,11 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                 </div>
                 <div className="debug-guide__note-card">
                   <ul>
-                    <li>这不是医疗诊断，不能替代专业医生。</li>
-                    <li>你可以随时退出或跳过问题。</li>
-                    <li>如有危险想法，宁语会引导联系专业帮助。</li>
-                  </ul>`r`n                  <p className="debug-guide__boundary-note">`r`n                    宁语只提供陪伴、记录和自助支持，不做诊断。你可以选择让它记住摘要、关闭记忆，或之后在设置里重新调整。`r`n                  </p>
+                    {safetyNote.bullets.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <p className="debug-guide__boundary-note">{safetyNote.boundaryNote}</p>
                 </div>
               </div>
             ) : null}
@@ -185,7 +184,7 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                   <h1>隐私设置</h1>
                   <p>决定宁语能记住什么，之后可在设置里修改。</p>
                 </div>
-                <div className="debug-guide__privacy">`r`n                  <p className="debug-guide__privacy-note">`r`n                    语音入口当前是文本模拟的 MVP；开启语音只代表允许出现语音陪伴入口，麦克风/音频保存会单独征求同意。`r`n                  </p>
+                <div className="debug-guide__privacy">
                   <button className={draft.memoryMode === "off" ? "is-active" : ""} type="button" onClick={() => updateDraft("memoryMode", "off")}>
                     关闭记忆
                   </button>
@@ -199,18 +198,6 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                     <span>保存文字记录</span>
                     <button aria-pressed={draft.saveTranscript} className={draft.saveTranscript ? "is-active" : ""} type="button" onClick={() => updateDraft("saveTranscript", !draft.saveTranscript)}>
                       {draft.saveTranscript ? "开" : "关"}
-                    </button>
-                  </label>
-                  <label>
-                    <span>开启语音功能</span>
-                    <button aria-pressed={draft.voiceEnabled} className={draft.voiceEnabled ? "is-active" : ""} type="button" onClick={() => updateDraft("voiceEnabled", !draft.voiceEnabled)}>
-                      {draft.voiceEnabled ? "开" : "关"}
-                    </button>
-                  </label>
-                  <label>
-                    <span>保存语音音频</span>
-                    <button aria-pressed={draft.saveVoiceAudio} className={draft.saveVoiceAudio ? "is-active" : ""} type="button" onClick={() => updateDraft("saveVoiceAudio", !draft.saveVoiceAudio)}>
-                      {draft.saveVoiceAudio ? "开" : "关"}
                     </button>
                   </label>
                 </div>
