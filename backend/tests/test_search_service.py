@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from app.services.search_service import SearchResult, search_web
+from app.services.search_service import SearchResult, _generic_anchor_results, _http_get_with_retries, _plain_text_search_summary, search_web
+
+
+os.environ["SEARCH_PROVIDER"] = "ddg"
 
 
 _SEARCH_RESULT_MISSING_URL = {
@@ -337,7 +342,198 @@ class SearchServiceLowInfoFilterTests(unittest.TestCase):
         self.assertEqual(len(results), 0)
 
 
+class SearchServiceRelevanceTests(unittest.TestCase):
+    def test_filters_irrelevant_cjk_results_before_returning(self) -> None:
+        irrelevant = {
+            "title": "张（汉语汉字）_百度百科",
+            "href": "https://baike.baidu.com/item/张/31793",
+            "body": "形声字。从弓，长声。这里介绍汉字张的字义。",
+        }
+        relevant = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang-xuefeng",
+            "body": "张雪峰因心源性猝死抢救无效去世。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant, relevant]):
+            results, _ = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://example.com/zhang-xuefeng")
+
+    def test_time_sensitive_cjk_query_drops_all_irrelevant_results(self) -> None:
+        irrelevant = {
+            "title": "张（汉语汉字）_百度百科",
+            "href": "https://baike.baidu.com/item/张/31793",
+            "body": "形声字。从弓，长声。这里介绍汉字张的字义。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]):
+            results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertEqual(results, [])
+
+    def test_time_sensitive_cjk_query_ignores_year_only_matches(self) -> None:
+        irrelevant = {
+            "title": "hancibao.comhttps://www.hancibao.com › zi",
+            "href": "https://www.hancibao.com/zi/5f20",
+            "body": "2026年5月13日 · 【张】字Unicode码为U+5F20，位于Unicode编码中日韩统一表意文字区。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]):
+            results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertEqual(results, [])
+
+
+class SearchServiceSummaryExtractionTests(unittest.TestCase):
+    def test_extracts_date_rich_plaintext_summary(self) -> None:
+        html = """
+        <html><body>
+        <script>var q = "张雪峰 去世 时间";</script>
+        <section>
+        张雪峰于2026年3月24日15时50分因心源性猝死，经抢救无效在苏州去世。
+        </section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "张雪峰 去世 时间")
+
+        self.assertIn("2026年3月24日15时50分", summary)
+        self.assertIn("张雪峰", summary)
+
+    def test_time_query_summary_ignores_pages_without_dates(self) -> None:
+        html = """
+        <html><body>
+        <script>window.__sam_async=true;</script>
+        <nav>网页 图片 微信 视频 知乎 医疗</nav>
+        <section>张雪峰去世时间是什么? 推荐您搜索 张雪峰去世时间是什么。</section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "张雪峰去世时间是什么？")
+
+        self.assertEqual(summary, "")
+
+    def test_generic_anchor_results_filter_search_navigation_links(self) -> None:
+        html = """
+        <a href="https://www.sogou.com/aimode/search?query=x">AI</a>
+        <div>网页 图片 微信 视频 知乎 医疗</div>
+        <a href="https://www.spp.gov.cn/spp/zdgz/202605/t20260511.html">外交部介绍美国总统特朗普访华安排</a>
+        <p>新华社北京5月11日电，应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。</p>
+        """
+
+        results = _generic_anchor_results(html, max_results=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["href"], "https://www.spp.gov.cn/spp/zdgz/202605/t20260511.html")
+        self.assertIn("5月13日至15日", results[0]["body"])
+
+
 class SearchServiceErrorTests(unittest.TestCase):
+    def test_http_search_requests_do_not_inherit_environment_proxy(self) -> None:
+        class FakeResponse:
+            text = "<html></html>"
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service.httpx.get", return_value=FakeResponse()) as http_get:
+            _http_get_with_retries("https://www.sogou.com/web", params={"query": "x"}, timeout_seconds=1)
+
+        self.assertEqual(http_get.call_args.kwargs["trust_env"], False)
+
+    def test_http_search_retries_https_with_verify_false(self) -> None:
+        class FakeResponse:
+            text = "<html></html>"
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        calls: list[bool] = []
+
+        def fake_get(*args, **kwargs):
+            calls.append(bool(kwargs.get("verify", True)))
+            if kwargs.get("verify", True):
+                raise OSError("tls failed")
+            return FakeResponse()
+
+        with patch("app.services.search_service.httpx.get", side_effect=fake_get):
+            response = _http_get_with_retries("https://www.bing.com/search", params={"q": "x"}, timeout_seconds=1)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [True, True, False])
+
+    def test_search_web_does_not_write_ad_hoc_debug_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            debug_path = os.path.join(tmpdir, "debug_search.log")
+            with patch("app.services.search_service._DLOG_PATH", debug_path, create=True), patch(
+                "app.services.search_service._ddg_text",
+                return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
+            ):
+                results, err = search_web("test", max_results=3)
+
+            self.assertEqual(len(results), 1)
+            self.assertIsNone(err)
+            self.assertFalse(os.path.exists(debug_path))
+
+    def test_bing_web_falls_back_to_ddg_when_primary_fails(self) -> None:
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "Fallback", "href": "https://x.com", "body": "Fallback content body."}],
+        ):
+            results, err = search_web("crisis hotline", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Fallback")
+
+    def test_chinese_query_uses_sogou_before_baidu_or_ddg(self) -> None:
+        sogou_item = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang",
+            "body": "张雪峰于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._sogou_web_search",
+            return_value=[sogou_item],
+        ), patch("app.services.search_service._baidu_mobile_search") as baidu, patch("app.services.search_service._ddg_text") as ddg:
+            results, err = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        baidu.assert_not_called()
+        ddg.assert_not_called()
+
+    def test_chinese_query_falls_through_to_baidu_when_sogou_is_empty(self) -> None:
+        baidu_item = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang",
+            "body": "张雪峰于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._sogou_web_search",
+            return_value=[],
+        ), patch(
+            "app.services.search_service._baidu_mobile_search",
+            return_value=[baidu_item],
+        ), patch("app.services.search_service._ddg_text") as ddg:
+            results, err = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        ddg.assert_not_called()
+
     def test_network_error_returns_empty_and_error_message(self) -> None:
         with patch(
             "app.services.search_service._ddg_text",

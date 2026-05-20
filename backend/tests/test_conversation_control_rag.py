@@ -1548,6 +1548,27 @@ class ConversationControlRagTests(unittest.TestCase):
             validator_reasons("在中国大陆可以拨打 12356；紧急时拨打 120 或 110。", [], []),
             [],
         )
+        self.assertEqual(
+            validator_reasons("特朗普访华时间是2026年5月13日至15日。", [], []),
+            [],
+        )
+        self.assertEqual(
+            validator_reasons("特朗普于 2026 年5月13日至15日对中国进行国事访问。", [], []),
+            [],
+        )
+        self.assertEqual(
+            validator_reasons("来源：https://www.spp.gov.cn/t20260511.html，时间为2026年5月13日至15日。", [], []),
+            [],
+        )
+        self.assertEqual(
+            validator_reasons(
+                "来源：https://www.sogou.com/web?query=%E7%89%B9%E6%9C%97%E6%99%AE+2026&ie=utf8",
+                [],
+                [],
+            ),
+            [],
+        )
+        self.assertIn("unverified_resource", validator_reasons("可以拨打 4001619995。", [], []))
         self.assertIn(
             "absolute_confidentiality",
             validator_reasons("你放心，我会为你绝对保密，不会让任何人知道。", [], []),

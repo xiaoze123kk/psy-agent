@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from collections.abc import Mapping
@@ -9,6 +10,8 @@ from typing import Any
 
 from app.core.config import settings
 from app.schemas.common import SafetyAudience
+
+logger = logging.getLogger(__name__)
 from app.services.deepseek_client import (
     DEFAULT_MAX_TOOL_ROUNDS,
     ToolChatResult,
@@ -30,6 +33,11 @@ SAFETY_CONTEXT_TOOL_NAMES = frozenset({"search_memories", "get_safety_resources"
 BLOCKED_CONTEXT_TOOL_NAMES = frozenset({"get_current_time", "summarize_session"})
 MAX_TOOL_PREVIEWS = 5
 DEFAULT_DIALOGUE_REPLY_MAX_TOKENS = 900
+CURRENT_FACT_QUERY_RE = re.compile(
+    r"(去世|逝世|死亡|访华|访美|访中|最新|新闻|什么时候|哪天|日期|时间|今天|昨天|今年|现任|总统|首相|CEO|发生|是否|了吗)"
+)
+FACT_DATE_RE = re.compile(r"(?:20\d{2}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|\d{1,2}时\d{1,2}分)")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s*")
 
 VISIBLE_MEMORY_TYPES = {
     "profile",
@@ -332,14 +340,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="web_search",
-        description="Search the web for real-time information about psychological support resources, hotlines, and professional mental health information.",
+        description="Search the web for real-time facts, current events, and information beyond your knowledge cutoff, including psychological support resources and professional mental health information.",
         allowed_risk_levels=LOW_RISK_LEVELS,
         parameters={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search keywords for finding psychological support resources or professional health information.",
+                    "description": "Search keywords for finding current information on the web.",
                 },
                 "max_results": {
                     "type": "integer",
@@ -687,6 +695,7 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
             "query": query,
             "count": len(items),
             "items": items,
+            "status": status,
         }
         if error:
             output["error"] = error
@@ -959,7 +968,7 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "search_memories": "search_memories: search only the available user-visible memory index; return references, not raw private content.",
         "save_memory_summary": "save_memory_summary: produce safe summaries/candidate memories for the backend memory pipeline; it does not write directly.",
         "get_safety_resources": "get_safety_resources: return minimal safety resources by region/audience when real-world support is relevant.",
-        "web_search": "web_search: search the web for real-time psychological support resources; return title, url, and snippet.",
+        "web_search": "web_search: search the web for real-time facts, current events, and information beyond your knowledge; return title, url, and snippet.",
         "safe_web_search": "safe_web_search: search trusted public support resources using backend-generated queries; never include user personal details or unsafe method terms.",
         "get_current_time": "get_current_time: return current UTC/local time, weekday, timezone, and session elapsed seconds.",
         "get_weather": "get_weather: get current weather for a city via wttr.in; use sparingly, only when weather context helps understand user's mood or situation.",
@@ -969,11 +978,13 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "",
         "[Tool policy]",
         "Use tools only when they materially improve this turn. Do not call tools that are not listed.",
+        "IMPORTANT: When a user asks about real-world facts, news, current events, historical dates, or any verifiable information you are not certain about, you MUST call web_search. Do NOT rely on memory or training data for time-sensitive or factual claims.",
     ]
     lines.extend(f"- {descriptions[name]}" for name in tool_names if name in descriptions)
     if "web_search" in tool_names:
-        lines.append("- web_search: Only search for psychological support resources or professional mental health information. Do NOT include any user personal information in the search query.")
+        lines.append("- web_search: Use for real-time facts, current events, professional resources, or any information beyond your knowledge cutoff. Do NOT include any user personal information in the search query.")
     lines.append("Never claim a memory was permanently saved; the backend reviews candidates asynchronously.")
+    lines.append("Never say you have 'checked', 'searched', 'looked up', or 'queried' something unless you actually called the corresponding tool. Making up search actions is dishonest and harmful.")
     return "\n".join(lines)
 
 
@@ -982,7 +993,8 @@ def build_dialogue_tool_plan(
     *,
     knowledge_enabled: bool = False,
 ) -> DialogueToolPlan:
-    if state.get("tooling_enabled") is not True:
+    tooling_enabled = state.get("tooling_enabled")
+    if tooling_enabled is not True:
         return DialogueToolPlan(
             tools=[],
             tool_handlers={},
@@ -1062,6 +1074,180 @@ def summarize_tool_events(
     return summary
 
 
+def _current_turn_text(state: Mapping[str, Any], user_prompt: str) -> str:
+    return _clean_text(
+        state.get("normalized_text") or state.get("user_text") or user_prompt,
+        limit=180,
+    )
+
+
+def _prefetch_search_query(text: str) -> str:
+    cleaned = _clean_text(text, limit=160)
+    if not cleaned:
+        return ""
+    current_year = str(datetime.now().year)
+    if any(term in cleaned for term in ("去世", "逝世", "死亡")) and any(
+        term in cleaned for term in ("时间", "什么时候", "哪天", "日期", "最新")
+    ):
+        return f"{cleaned} 最新 {current_year} 讣告"
+    for action in ("访华", "访中"):
+        if action not in cleaned:
+            continue
+        subject = re.split(rf"{action}|是什么|什么时候|哪天|日期|时间|[？?，,。；;：:\s]+", cleaned, maxsplit=1)[0]
+        subject = _clean_text(subject, limit=40)
+        if subject:
+            return f"{subject} {action} {current_year} 国事访问 外交部"
+        return f"{cleaned} {current_year} 国事访问 外交部"
+    return cleaned
+
+
+def _should_prefetch_web_search(state: Mapping[str, Any], user_prompt: str, plan: DialogueToolPlan) -> bool:
+    if "web_search" not in plan.tool_handlers:
+        return False
+    text = _current_turn_text(state, user_prompt)
+    return bool(text and CURRENT_FACT_QUERY_RE.search(text))
+
+
+def _format_prefetched_web_context(query: str, output: Mapping[str, Any]) -> str:
+    status = _clean_text(output.get("status"), limit=40) or "unknown"
+    error = _clean_text(output.get("error"), limit=80)
+    items = output.get("items") if isinstance(output.get("items"), list) else []
+    lines = [
+        "",
+        "[Pre-fetched web_search result]",
+        f"Query: {query}",
+        f"Status: {status}",
+        "Use this web context for current or factual claims. Extract concrete dates and facts present in snippets; prefer named sources in snippets. If it is empty or errored, say what could not be verified.",
+    ]
+    if error:
+        lines.append(f"Error: {error}")
+    for index, raw_item in enumerate(items[:5], start=1):
+        item = raw_item if isinstance(raw_item, Mapping) else {}
+        title = _clean_text(item.get("title"), limit=120)
+        url = _clean_text(item.get("url"), limit=220)
+        snippet = _clean_text(item.get("snippet"), limit=360)
+        lines.extend(
+            [
+                f"[{index}] {title}",
+                f"URL: {url}",
+                f"Snippet: {snippet}",
+            ]
+        )
+    lines.append("[/Pre-fetched web_search result]")
+    return "\n".join(lines)
+
+
+def _prefetch_web_search_for_turn(
+    state: Mapping[str, Any],
+    user_prompt: str,
+    plan: DialogueToolPlan,
+) -> tuple[list[ToolExecutionEvent], str, Mapping[str, Any]]:
+    query = _prefetch_search_query(_current_turn_text(state, user_prompt))
+    if not query:
+        return [], "", {}
+    arguments = {"query": query, "max_results": 5}
+    handler = plan.tool_handlers.get("web_search")
+    if handler is None:
+        return [], "", {}
+
+    try:
+        output = handler(arguments)
+        if not isinstance(output, Mapping):
+            output = {"status": "error", "error": "invalid_tool_output", "items": []}
+    except Exception as exc:
+        logger.warning("Prefetched web_search failed: %s", exc)
+        output = {"status": "error", "error": "handler_error", "items": []}
+
+    status = "completed" if output.get("status") == "completed" else "error"
+    event = ToolExecutionEvent(
+        tool_call_id="prefetch-web-search",
+        name="web_search",
+        arguments=arguments,
+        status=status,
+        error=_clean_text(output.get("error"), limit=80) or None,
+    )
+    return [event], _format_prefetched_web_context(query, output), output
+
+
+def _best_prefetched_web_item(output: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    items = output.get("items") if isinstance(output.get("items"), list) else []
+    candidates: list[tuple[int, str, str, str]] = []
+    for raw_item in items:
+        item = raw_item if isinstance(raw_item, Mapping) else {}
+        title = _clean_text(item.get("title"), limit=120)
+        url = _clean_text(item.get("url"), limit=220)
+        snippet = _clean_text(item.get("snippet"), limit=500)
+        if not snippet:
+            continue
+        sentences = [part.strip() for part in SENTENCE_SPLIT_RE.split(snippet) if part.strip()]
+        if not sentences:
+            sentences = [snippet]
+        for sentence in sentences:
+            score = len(FACT_DATE_RE.findall(sentence)) * 5
+            score += 2 if title and title in sentence else 0
+            score += min(len(sentence), 180) // 60
+            candidates.append((score, sentence, title, url))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    _score, sentence, title, url = candidates[0]
+    return sentence, title, url
+
+
+def _clean_prefetched_fact_sentence(sentence: str, query: str) -> str:
+    cleaned = _clean_text(sentence, limit=500)
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"(\d{4})\s+年\s*", r"\1年", cleaned)
+    cleaned = re.sub(r"(\d{1,2})\s+月\s*", r"\1月", cleaned)
+    cleaned = re.sub(r"(\d{1,2})\s+日", r"\1日", cleaned)
+    cleaned = re.sub(r"([\u4e00-\u9fff])\s+([\u4e00-\u9fff])", r"\1\2", cleaned)
+    cleaned = re.sub(r"\s+([，,。；;：:])", r"\1", cleaned)
+    markers = ["根据", "新华社"]
+    for action in ("去世", "逝世", "死亡", "访华", "访中", "访美"):
+        if action not in query:
+            continue
+        subject = query.split(action, 1)[0].strip()
+        if len(subject) >= 2:
+            markers.append(subject)
+        markers.append(action)
+    starts = [cleaned.find(marker) for marker in markers if marker and cleaned.find(marker) > 0]
+    if starts:
+        cleaned = cleaned[min(starts):].lstrip("，,。；;：: ")
+    return cleaned
+
+
+def _fallback_answer_from_prefetched_web(query: str, output: Mapping[str, Any]) -> str:
+    if int(output.get("count") or 0) <= 0:
+        return ""
+    best = _best_prefetched_web_item(output)
+    if best is None:
+        return ""
+    sentence, title, url = best
+    sentence = _clean_prefetched_fact_sentence(sentence, query)
+    if not sentence:
+        return ""
+    source = f"\n\n来源：{title}".strip() if title else ""
+    return f"我查到的搜索结果显示：{sentence}{source}"
+
+
+def _should_prefer_prefetched_fact(assistant_text: str, fallback_answer: str) -> bool:
+    if not fallback_answer:
+        return False
+    if not assistant_text.strip():
+        return True
+    if not FACT_DATE_RE.search(fallback_answer):
+        return False
+    if not FACT_DATE_RE.search(assistant_text):
+        return True
+    fallback_dates = set(FACT_DATE_RE.findall(fallback_answer))
+    assistant_dates = set(FACT_DATE_RE.findall(assistant_text))
+    if fallback_dates and assistant_dates and not (fallback_dates & assistant_dates):
+        return True
+    contradiction_markers = ("还健在", "没有去世", "没查到", "没有查到", "没有找到", "没有确认", "未确认")
+    return any(marker in assistant_text for marker in contradiction_markers)
+
+
 def _parse_actions_reply(text: str | None) -> tuple[str, list[str]]:
     if not text:
         return "", []
@@ -1096,6 +1282,14 @@ async def run_dialogue_reply_with_tools(
     system_content = system_prompt
     if plan.prompt_hint:
         system_content = f"{system_content}\n{plan.prompt_hint}"
+    prefetched_events: list[ToolExecutionEvent] = []
+    prefetched_output: Mapping[str, Any] = {}
+    prefetched_query = ""
+    if _should_prefetch_web_search(state, user_prompt, plan):
+        prefetched_query = _prefetch_search_query(_current_turn_text(state, user_prompt))
+        prefetched_events, prefetched_context, prefetched_output = _prefetch_web_search_for_turn(state, user_prompt, plan)
+        if prefetched_context:
+            system_content = f"{system_content}\n{prefetched_context}"
     reply_messages = messages or [
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_prompt},
@@ -1113,9 +1307,16 @@ async def run_dialogue_reply_with_tools(
         max_tokens=max(int(settings.deepseek_chat_max_tokens), DEFAULT_DIALOGUE_REPLY_MAX_TOKENS),
         max_tool_rounds=DEFAULT_MAX_TOOL_ROUNDS,
     )
+    combined_tool_events = [*prefetched_events, *tool_result.tool_events]
+    if not combined_tool_events:
+        logger.debug("No tool calls were made by the model.")
     assistant_text, suggested_actions = _parse_actions_reply(tool_result.content)
-    tool_events = [_event_dict(event) for event in tool_result.tool_events]
-    tool_trace_summary = summarize_tool_events(tool_result.tool_events, previews=plan.audit_capture.previews)
+    if prefetched_output:
+        prefetched_answer = _fallback_answer_from_prefetched_web(prefetched_query, prefetched_output)
+        if _should_prefer_prefetched_fact(assistant_text, prefetched_answer):
+            assistant_text = prefetched_answer
+    tool_events = [_event_dict(event) for event in combined_tool_events]
+    tool_trace_summary = summarize_tool_events(combined_tool_events, previews=plan.audit_capture.previews)
     result: dict[str, Any] = {
         "assistant_text": assistant_text,
         "suggested_actions": suggested_actions,
