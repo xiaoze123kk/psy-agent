@@ -29,8 +29,15 @@ export interface RegisterResponse {
   user_id: string;
   access_token: string;
   token_type: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
   user_mode: UserMode;
+  usage_goals: string[];
   onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface LoginRequest {
@@ -45,8 +52,15 @@ export interface LoginResponse {
   user_id: string;
   access_token: string;
   token_type: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
   user_mode: UserMode;
+  usage_goals: string[];
   onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface RefreshTokenRequest {}
@@ -55,8 +69,15 @@ export interface RefreshTokenResponse {
   user_id: string;
   access_token: string;
   token_type: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
   user_mode: UserMode;
+  usage_goals: string[];
   onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface LogoutRequest {}
@@ -95,6 +116,26 @@ export interface PasswordResetVerifyResponse {
 export interface PasswordResetRequest {
   reset_token: string;
   new_password: string;
+}
+
+export interface ChangePasswordRequest {
+  old_password: string;
+  new_password: string;
+}
+
+export interface ChangePasswordResponse {
+  user_id: string;
+  access_token: string;
+  token_type: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
+  user_mode: UserMode;
+  usage_goals: string[];
+  onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface StartThreadRequest {

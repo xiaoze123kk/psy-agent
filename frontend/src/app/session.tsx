@@ -103,10 +103,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       try {
         const refreshResponse = await api.refreshToken();
         tokenStore.setAccessToken(refreshResponse.access_token);
-        const currentUser = await api.getCurrentUser();
         setSession({
           status: "authenticated",
-          currentUser,
+          currentUser: refreshResponse,
           error: null,
         });
       } catch {
@@ -139,10 +138,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         tokenStore.setAccessToken(response.access_token);
         setRememberedUsername(payload.username);
         setRememberedAutoLogin(payload.auto_login);
-        const currentUser = await api.getCurrentUser();
         setSession({
           status: "authenticated",
-          currentUser,
+          currentUser: response,
           error: null,
         });
       } catch (error) {
@@ -171,10 +169,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         tokenStore.setAccessToken(response.access_token);
         setRememberedUsername(payload.username);
         setRememberedAutoLogin(false);
-        const currentUser = await api.getCurrentUser();
         setSession({
           status: "authenticated",
-          currentUser,
+          currentUser: response,
           error: null,
         });
       } catch (error) {

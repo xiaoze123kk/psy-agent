@@ -24,6 +24,8 @@ from app.db.models import PasswordResetToken, RefreshToken, User, UserProfile, U
 from app.db.session import get_db_session
 from app.schemas.auth import (
     CaptchaResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
     CurrentUserResponse,
     LoginRequest,
     LoginResponse,
@@ -171,12 +173,21 @@ def _revoke_refresh_token(token_record: RefreshToken, *, status_value: str) -> N
 
 
 def _session_user_response(user: User, access_token: str) -> dict:
+    profile = user.profile
+    user_settings = user.settings
     return {
         "user_id": user.id,
         "access_token": access_token,
         "token_type": "Bearer",
+        "username": user.username,
+        "email": user.email,
+        "nickname": profile.nickname if profile else "",
+        "age_range": profile.age_range if profile else "",
         "user_mode": _profile_user_mode(user),
+        "usage_goals": list(profile.usage_goals or []) if profile else [],
         "onboarding_completed": _profile_onboarding_completed(user),
+        "memory_mode": user_settings.memory_mode if user_settings else "summary_only",
+        "companion_style": normalize_custom_companion_style(user_settings.companion_style) if user_settings else "",
     }
 
 
@@ -462,3 +473,53 @@ async def password_reset(
 
     db.commit()
     return {"ok": True}
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Response:
+    if not verify_password(payload.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="当前密码错误。",
+        )
+
+    try:
+        validate_password_strength(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    user = db.scalar(
+        select(User).options(selectinload(User.profile), selectinload(User.settings)).where(
+            User.id == current_user.id, User.status == "active"
+        )
+    )
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在。")
+
+    user.password_hash = hash_password(payload.new_password)
+
+    active_refresh_tokens = db.scalars(
+        select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
+    ).all()
+    for rt in active_refresh_tokens:
+        rt.status = "revoked"
+        rt.revoked_at = utcnow()
+
+    access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
+    db.commit()
+    db.refresh(user)
+
+    response_body = _session_user_response(user, access_token)
+    response = Response(
+        content=ChangePasswordResponse(**response_body).model_dump_json(),
+        media_type="application/json",
+    )
+    _set_refresh_cookie(response, refresh_token, auto_login=False)
+    return response

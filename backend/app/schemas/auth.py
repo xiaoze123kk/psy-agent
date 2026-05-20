@@ -35,8 +35,15 @@ class RegisterResponse(BaseModel):
     user_id: str
     access_token: str
     token_type: str = "Bearer"
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
     user_mode: UserMode
+    usage_goals: list[str]
     onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class LoginRequest(BaseModel):
@@ -51,8 +58,15 @@ class LoginResponse(BaseModel):
     user_id: str
     access_token: str
     token_type: str = "Bearer"
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
     user_mode: UserMode
+    usage_goals: list[str]
     onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class RefreshTokenRequest(BaseModel):
@@ -63,8 +77,15 @@ class RefreshTokenResponse(BaseModel):
     user_id: str
     access_token: str
     token_type: str = "Bearer"
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
     user_mode: UserMode
+    usage_goals: list[str]
     onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class LogoutRequest(BaseModel):
@@ -105,3 +126,23 @@ class PasswordResetVerifyResponse(BaseModel):
 class PasswordResetRequest(BaseModel):
     reset_token: str
     new_password: str = Field(min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordResponse(BaseModel):
+    user_id: str
+    access_token: str
+    token_type: str = "Bearer"
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
+    user_mode: UserMode
+    usage_goals: list[str]
+    onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str

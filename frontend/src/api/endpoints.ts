@@ -57,6 +57,8 @@ import type {
   PasswordResetVerifyRequest,
   PasswordResetVerifyResponse,
   PasswordResetRequest,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
 } from "../types/api";
 
 export class CounselingApi {
@@ -101,6 +103,10 @@ export class CounselingApi {
 
   resetPassword(payload: PasswordResetRequest): Promise<{ ok: boolean }> {
     return this.client.post<{ ok: boolean }, PasswordResetRequest>("/api/v1/auth/password-reset", payload);
+  }
+
+  changePassword(payload: ChangePasswordRequest): Promise<ChangePasswordResponse> {
+    return this.client.post<ChangePasswordResponse, ChangePasswordRequest>("/api/v1/auth/change-password", payload);
   }
 
   startThread(payload: StartThreadRequest): Promise<StartThreadResponse> {
