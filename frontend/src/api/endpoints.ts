@@ -21,7 +21,6 @@ import type {
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
-  LogoutRequest,
   MemoryMutationResponse,
   MessageListResponse,
   MoodLogRequest,
@@ -32,7 +31,6 @@ import type {
   PersonalDataExport,
   PrivacyMutationResponse,
   PrivacySummaryResponse,
-  RefreshTokenRequest,
   RefreshTokenResponse,
   RegisterRequest,
   RegisterResponse,
@@ -59,6 +57,8 @@ import type {
   PasswordResetVerifyRequest,
   PasswordResetVerifyResponse,
   PasswordResetRequest,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
 } from "../types/api";
 
 export class CounselingApi {
@@ -76,12 +76,12 @@ export class CounselingApi {
     return this.client.post<LoginResponse, LoginRequest>("/api/v1/auth/login", payload);
   }
 
-  refreshToken(payload: RefreshTokenRequest): Promise<RefreshTokenResponse> {
-    return this.client.post<RefreshTokenResponse, RefreshTokenRequest>("/api/v1/auth/refresh", payload);
+  refreshToken(): Promise<RefreshTokenResponse> {
+    return this.client.post<RefreshTokenResponse>("/api/v1/auth/refresh");
   }
 
-  logout(payload: LogoutRequest): Promise<void> {
-    return this.client.post<void, LogoutRequest>("/api/v1/auth/logout", payload);
+  logout(): Promise<void> {
+    return this.client.post<void>("/api/v1/auth/logout");
   }
 
   getCurrentUser(): Promise<CurrentUserResponse> {
@@ -103,6 +103,10 @@ export class CounselingApi {
 
   resetPassword(payload: PasswordResetRequest): Promise<{ ok: boolean }> {
     return this.client.post<{ ok: boolean }, PasswordResetRequest>("/api/v1/auth/password-reset", payload);
+  }
+
+  changePassword(payload: ChangePasswordRequest): Promise<ChangePasswordResponse> {
+    return this.client.post<ChangePasswordResponse, ChangePasswordRequest>("/api/v1/auth/change-password", payload);
   }
 
   startThread(payload: StartThreadRequest): Promise<StartThreadResponse> {

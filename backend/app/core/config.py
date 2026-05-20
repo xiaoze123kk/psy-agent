@@ -46,6 +46,7 @@ class Settings:
     secret_key: str
     access_token_ttl_seconds: int
     refresh_token_ttl_seconds: int
+    cookie_secure: bool
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -108,8 +109,9 @@ def load_settings() -> Settings:
         app_title=os.getenv("APP_TITLE", "Counseling Agent API"),
         database_url=os.getenv("DATABASE_URL", _default_database_url()),
         secret_key=os.getenv("APP_SECRET_KEY", "dev-only-change-me"),
-        access_token_ttl_seconds=int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")),
+        access_token_ttl_seconds=int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "900")),
         refresh_token_ttl_seconds=int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", "2592000")),
+        cookie_secure=os.getenv("COOKIE_SECURE", "0").lower() in {"1", "true", "yes", "on"},
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),

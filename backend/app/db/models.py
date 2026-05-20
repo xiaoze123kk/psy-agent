@@ -8,7 +8,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 def generate_uuid() -> str:
@@ -27,6 +27,7 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text)
+    token_version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -541,6 +542,7 @@ class RefreshToken(Base):
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    auto_login: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

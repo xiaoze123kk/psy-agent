@@ -1,4 +1,4 @@
-.ningyu-transition {
+﻿.ningyu-transition {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -2085,6 +2085,33 @@
   border-color: rgba(71, 85, 105, 0.6);
   background: rgba(30, 41, 59, 0.42);
   color: #e2e8f0;
+}
+
+.ningyu-logout-button {
+  margin-top: 14px;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(185, 28, 28, 0.25);
+  border-radius: 14px;
+  background: rgba(254, 242, 242, 0.24);
+  color: rgba(185, 28, 28, 0.82);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ningyu-logout-button:hover {
+  background: rgba(254, 242, 242, 0.46);
+}
+
+.ningyu-shell.is-night .ningyu-logout-button {
+  border-color: rgba(248, 113, 113, 0.22);
+  background: rgba(127, 29, 29, 0.18);
+  color: rgba(252, 165, 165, 0.88);
+}
+
+.ningyu-shell.is-night .ningyu-logout-button:hover {
+  background: rgba(127, 29, 29, 0.32);
 }
 
 .ningyu-safety-entry {

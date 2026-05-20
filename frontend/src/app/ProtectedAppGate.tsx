@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState, type ReactNode } from "react";
+﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { api } from "../api";
 import { Spinner, VisuallyHidden } from "../components/ui";
@@ -11,7 +11,7 @@ import { LoadingAuthEntry } from "./auth/LoadingAuthEntry";
 import { OnboardingGuide } from "./auth/OnboardingGuide";
 import { PasswordResetPage } from "./auth/PasswordResetPage";
 import "./ningyu/NingyuAppShell.css";
-import { useSession } from "./session";
+import { getRememberedAutoLogin, getRememberedUsername, useSession } from "./session";
 
 type AuthMode = "login" | "register";
 
@@ -94,7 +94,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
   const [isPasswordReset, setIsPasswordReset] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>(_persistedAuthMode);
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => getRememberedUsername() ?? "");
   const [password, setPassword] = useState("");
   const [ageRange, setAgeRange] = useState<AgeRange>("16_17");
   const [securityQuestion, setSecurityQuestion] = useState("");
@@ -106,6 +106,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
   const [error, setError] = useState<string | null>(initialError);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [autoLogin, setAutoLogin] = useState(() => getRememberedAutoLogin());
 
   const refreshCaptcha = async () => {
     setIsCaptchaLoading(true);
@@ -211,6 +212,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
         password,
         captcha_id: captcha.id,
         captcha_code: captchaCode.trim(),
+        auto_login: autoLogin,
       };
 
       if (authMode === "register") {
@@ -248,6 +250,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       error={error}
       captchaError={captchaError}
       passwordError={passwordError}
+      autoLogin={autoLogin}
       ageModeNote={`${ageModeProfile.ageLabel} · ${ageModeProfile.modeLabel}：${ageModeProfile.description}`}
       onAuthModeChange={handleAuthModeChange}
       onUsernameChange={setUsername}
@@ -259,6 +262,7 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       onRefreshCaptcha={() => void handleRefreshCaptcha()}
       onSubmit={handleSubmit}
       onForgotPassword={() => setIsPasswordReset(true)}
+      onAutoLoginChange={() => setAutoLogin((prev) => !prev)}
       onDebugEnterMain={import.meta.env.DEV ? onDebugEnterMain : undefined}
       onDebugEnterOnboarding={import.meta.env.DEV ? () => setIsDebugOnboarding(true) : undefined}
     />
