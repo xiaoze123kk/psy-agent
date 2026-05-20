@@ -34,10 +34,7 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
     user_mode: UserMode
     onboarding_completed: bool
 
@@ -47,34 +44,31 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=6)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
+    auto_login: bool = False
 
 
 class LoginResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
     user_mode: UserMode
     onboarding_completed: bool
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    pass
 
 
 class RefreshTokenResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
+    user_mode: UserMode
+    onboarding_completed: bool
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    pass
 
 
 class CurrentUserResponse(BaseModel):

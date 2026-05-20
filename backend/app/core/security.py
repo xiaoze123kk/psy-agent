@@ -99,8 +99,8 @@ def create_access_token(subject: str) -> str:
     return create_token(subject, "access", settings.access_token_ttl_seconds)
 
 
-def create_refresh_token(subject: str, token_id: str) -> str:
-    return create_token(subject, "refresh", settings.refresh_token_ttl_seconds, token_id=token_id)
+def create_refresh_token(subject: str, token_id: str, ttl_seconds: int) -> str:
+    return create_token(subject, "refresh", ttl_seconds, token_id=token_id)
 
 
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:

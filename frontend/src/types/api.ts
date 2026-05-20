@@ -28,10 +28,7 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
   user_mode: UserMode;
   onboarding_completed: boolean;
 }
@@ -41,35 +38,28 @@ export interface LoginRequest {
   password: string;
   captcha_id: string;
   captcha_code: string;
+  auto_login: boolean;
 }
 
 export interface LoginResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
   user_mode: UserMode;
   onboarding_completed: boolean;
 }
 
-export interface RefreshTokenRequest {
-  refresh_token: string;
-}
+export interface RefreshTokenRequest {}
 
 export interface RefreshTokenResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
+  user_mode: UserMode;
+  onboarding_completed: boolean;
 }
 
-export interface LogoutRequest {
-  refresh_token: string;
-}
+export interface LogoutRequest {}
 
 export interface CurrentUserResponse {
   user_id: string;

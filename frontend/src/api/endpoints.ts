@@ -21,7 +21,6 @@ import type {
   ListMemoriesResponse,
   LoginRequest,
   LoginResponse,
-  LogoutRequest,
   MemoryMutationResponse,
   MessageListResponse,
   MoodLogRequest,
@@ -32,7 +31,6 @@ import type {
   PersonalDataExport,
   PrivacyMutationResponse,
   PrivacySummaryResponse,
-  RefreshTokenRequest,
   RefreshTokenResponse,
   RegisterRequest,
   RegisterResponse,
@@ -76,12 +74,12 @@ export class CounselingApi {
     return this.client.post<LoginResponse, LoginRequest>("/api/v1/auth/login", payload);
   }
 
-  refreshToken(payload: RefreshTokenRequest): Promise<RefreshTokenResponse> {
-    return this.client.post<RefreshTokenResponse, RefreshTokenRequest>("/api/v1/auth/refresh", payload);
+  refreshToken(): Promise<RefreshTokenResponse> {
+    return this.client.post<RefreshTokenResponse>("/api/v1/auth/refresh");
   }
 
-  logout(payload: LogoutRequest): Promise<void> {
-    return this.client.post<void, LogoutRequest>("/api/v1/auth/logout", payload);
+  logout(): Promise<void> {
+    return this.client.post<void>("/api/v1/auth/logout");
   }
 
   getCurrentUser(): Promise<CurrentUserResponse> {

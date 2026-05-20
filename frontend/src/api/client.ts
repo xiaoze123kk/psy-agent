@@ -1,4 +1,4 @@
-export interface ApiClientConfig {
+﻿export interface ApiClientConfig {
   baseUrl: string;
   getAccessToken?: () => string | undefined;
   onUnauthorized?: () => Promise<boolean>;
@@ -61,6 +61,7 @@ export class ApiClient {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
       headers: this.createJsonHeaders(),
+      credentials: "include",
     });
 
     if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {
@@ -103,6 +104,7 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: this.createJsonHeaders(init.headers),
+      credentials: "include",
     });
 
     if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {
@@ -125,6 +127,7 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: this.createTextHeaders(init.headers),
+      credentials: "include",
     });
 
     if (allowAuthRefresh && response.status === 401 && (await this.tryRefreshAuth())) {

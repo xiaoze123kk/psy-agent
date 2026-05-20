@@ -206,11 +206,17 @@
   letter-spacing: 0.08em;
 }
 
-.loading-auth__remember span {
+.loading-auth__remember input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  border: 1.5px solid rgba(83, 122, 102, 0.6);
-  border-radius: 4px;
+  margin: 0;
+  accent-color: #3a5a4a;
+  cursor: pointer;
+}
+
+.loading-auth__remember label {
+  cursor: pointer;
+  user-select: none;
 }
 
 .loading-auth__remember button {

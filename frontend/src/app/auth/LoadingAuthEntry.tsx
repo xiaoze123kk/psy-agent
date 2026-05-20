@@ -29,6 +29,7 @@ interface LoadingAuthEntryProps {
   error: string | null;
   captchaError: string | null;
   passwordError: string | null;
+  autoLogin: boolean;
   ageModeNote: string;
   onAuthModeChange: (mode: AuthMode) => void;
   onUsernameChange: (value: string) => void;
@@ -40,6 +41,7 @@ interface LoadingAuthEntryProps {
   onRefreshCaptcha: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onForgotPassword: () => void;
+  onAutoLoginChange: () => void;
   onDebugEnterMain?: () => void;
   onDebugEnterOnboarding?: () => void;
 }
@@ -65,6 +67,7 @@ export function LoadingAuthEntry({
   error,
   captchaError,
   passwordError,
+  autoLogin,
   ageModeNote,
   onAuthModeChange,
   onUsernameChange,
@@ -76,6 +79,7 @@ export function LoadingAuthEntry({
   onRefreshCaptcha,
   onSubmit,
   onForgotPassword,
+  onAutoLoginChange,
   onDebugEnterMain,
   onDebugEnterOnboarding,
 }: LoadingAuthEntryProps) {
@@ -189,8 +193,13 @@ export function LoadingAuthEntry({
                 </>
               ) : (
                 <div className="loading-auth__remember">
-                  <span aria-hidden="true" />
-                  <p>记住我</p>
+                  <input
+                    type="checkbox"
+                    checked={autoLogin}
+                    onChange={onAutoLoginChange}
+                    id="auto-login"
+                  />
+                  <label htmlFor="auto-login">7天自动登录</label>
                   <button type="button" onClick={onForgotPassword}>忘记密码?</button>
                 </div>
               )}

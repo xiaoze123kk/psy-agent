@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -199,6 +199,11 @@ def _apply_sqlite_compat_migrations() -> None:
                 connection.execute(text("ALTER TABLE user_profiles ADD COLUMN security_question VARCHAR(200)"))
             if "security_answer_hash" not in profile_columns:
                 connection.execute(text("ALTER TABLE user_profiles ADD COLUMN security_answer_hash TEXT"))
+
+        if "refresh_tokens" in inspector.get_table_names():
+            rt_columns = {column["name"] for column in inspector.get_columns("refresh_tokens")}
+            if "auto_login" not in rt_columns:
+                connection.execute(text("ALTER TABLE refresh_tokens ADD COLUMN auto_login BOOLEAN NOT NULL DEFAULT 0"))
 
 
 def get_db_session():

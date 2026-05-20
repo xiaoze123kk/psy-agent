@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import bgDay from "../../imports/wcbg.png";
 import bgNight from "../../imports/wcbg_night.png";
 import logo from "../../imports/wind-chat-logo.png";
 import { api } from "../../api";
 import { useAppState } from "../state";
+import { useSession } from "../session";
 import {
   conversationFeedbackOptions,
   formatDuration,
@@ -250,6 +251,7 @@ export function NingyuAppShell() {
     isNight,
     toggleThemeMode,
   } = useAppState();
+  const { clearSession } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
   const [shellPhase, setShellPhase] = useState<ShellPhase>("loading");
   const [isSafetyEntryOpen, setIsSafetyEntryOpen] = useState(false);
@@ -576,6 +578,10 @@ export function NingyuAppShell() {
       setShellPhase("ready");
     }, 720);
   };
+
+  const handleLogout = useCallback(async () => {
+    clearSession();
+  }, [clearSession]);
 
   const handleHighRiskChatResponse = useCallback(
     async ({
@@ -1178,6 +1184,7 @@ export function NingyuAppShell() {
             onQuickAction={handleQuickAction}
             onToggleSafetyEntry={handleToggleSafetyEntry}
             onRetrySafetyState={handleRetrySafetyState}
+            onLogout={handleLogout}
           />
         </div>
       </div>
@@ -1741,6 +1748,7 @@ function RightPanel({
   onQuickAction,
   onToggleSafetyEntry,
   onRetrySafetyState,
+  onLogout,
 }: {
   isNight: boolean;
   currentUserLabel: string;
@@ -1777,6 +1785,7 @@ function RightPanel({
   onQuickAction: (action: QuickAction) => void;
   onToggleSafetyEntry: () => void;
   onRetrySafetyState: () => void;
+  onLogout: () => void;
 }) {
   const shouldShowGuidance = isSafetyEntryOpen || Boolean(highRiskSafety);
 
@@ -1824,6 +1833,9 @@ function RightPanel({
             <span key={tag}>{tag}</span>
           ))}
         </div>
+        <button className="ningyu-logout-button" type="button" onClick={onLogout}>
+          退出登录
+        </button>
       </section>
 
       <section className="ningyu-panel-section ningyu-panel-section--mood">

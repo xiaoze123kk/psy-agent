@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import decode_token
 from app.db.models import User
@@ -32,7 +32,9 @@ def get_current_user(
         ) from exc
 
     user = db.scalar(
-        select(User).where(
+        select(User)
+        .options(selectinload(User.profile), selectinload(User.settings))
+        .where(
             User.id == payload["sub"],
             User.status == "active",
             User.deleted_at.is_(None),

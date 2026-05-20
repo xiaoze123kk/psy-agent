@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useCallback,
   useContext,
@@ -8,8 +8,40 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, clearAuthTokens, persistAuthTokens, tokenStore } from "../api";
+import { api, tokenStore } from "../api";
 import type { CurrentUserResponse, LoginRequest, RegisterRequest } from "../types/api";
+
+const REMEMBERED_USERNAME_KEY = "warp_te.remembered_username";
+const REMEMBERED_AUTO_LOGIN_KEY = "warp_te.remembered_auto_login";
+
+export function getRememberedUsername(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(REMEMBERED_USERNAME_KEY) ?? null;
+}
+
+function setRememberedUsername(username: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+}
+
+function clearRememberedUsername(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+}
+
+export function getRememberedAutoLogin(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(REMEMBERED_AUTO_LOGIN_KEY) === "true";
+}
+
+function setRememberedAutoLogin(value: boolean): void {
+  if (typeof window === "undefined") return;
+  if (value) {
+    window.localStorage.setItem(REMEMBERED_AUTO_LOGIN_KEY, "true");
+  } else {
+    window.localStorage.removeItem(REMEMBERED_AUTO_LOGIN_KEY);
+  }
+}
 
 export type SessionStatus = "checking" | "authenticated" | "anonymous" | "error";
 
@@ -21,24 +53,21 @@ export interface SessionState {
 
 export interface SessionContextValue extends SessionState {
   restoreSession: () => Promise<void>;
-  clearSession: () => void;
+  clearSession: () => Promise<void>;
   login: (payload: LoginRequest) => Promise<void>;
   register: (payload: RegisterRequest) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
 
-function hasStoredTokens(): boolean {
-  return Boolean(tokenStore.getAccessToken() || tokenStore.getRefreshToken());
+function getFriendlyAuthError(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const match = error.message.match(/API (\d+):/);
+  if (!match) return fallback;
+  return fallback;
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Session restore failed.";
-}
+let _restoringPromise: Promise<void> | null = null;
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SessionState>({
@@ -47,8 +76,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     error: null,
   });
 
-  const clearSession = useCallback(() => {
-    clearAuthTokens();
+  const clearSession = useCallback(async () => {
+    tokenStore.clearAccessToken();
+    try {
+      await api.logout();
+    } catch {
+      // 即使后端调用失败也清除本地状态
+    }
     setSession({
       status: "anonymous",
       currentUser: null,
@@ -57,35 +91,38 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const restoreSession = useCallback(async () => {
-    if (!hasStoredTokens()) {
-      setSession({
-        status: "anonymous",
-        currentUser: null,
-        error: null,
-      });
-      return;
-    }
+    if (_restoringPromise) return _restoringPromise;
 
-    setSession((current) => ({
-      ...current,
-      status: "checking",
-      error: null,
-    }));
+    _restoringPromise = (async () => {
+      setSession((current) => ({
+        ...current,
+        status: "checking",
+        error: null,
+      }));
+
+      try {
+        const refreshResponse = await api.refreshToken();
+        tokenStore.setAccessToken(refreshResponse.access_token);
+        const currentUser = await api.getCurrentUser();
+        setSession({
+          status: "authenticated",
+          currentUser,
+          error: null,
+        });
+      } catch {
+        tokenStore.clearAccessToken();
+        setSession({
+          status: "anonymous",
+          currentUser: null,
+          error: null,
+        });
+      }
+    })();
 
     try {
-      const currentUser = await api.getCurrentUser();
-      setSession({
-        status: "authenticated",
-        currentUser,
-        error: null,
-      });
-    } catch (error) {
-      clearAuthTokens();
-      setSession({
-        status: "error",
-        currentUser: null,
-        error: getErrorMessage(error),
-      });
+      await _restoringPromise;
+    } finally {
+      _restoringPromise = null;
     }
   }, []);
 
@@ -99,22 +136,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       try {
         const response = await api.login(payload);
-        persistAuthTokens({
-          accessToken: response.access_token,
-          refreshToken: response.refresh_token,
+        tokenStore.setAccessToken(response.access_token);
+        setRememberedUsername(payload.username);
+        setRememberedAutoLogin(payload.auto_login);
+        const currentUser = await api.getCurrentUser();
+        setSession({
+          status: "authenticated",
+          currentUser,
+          error: null,
         });
-        await restoreSession();
       } catch (error) {
-        clearAuthTokens();
+        tokenStore.clearAccessToken();
         setSession({
           status: "anonymous",
           currentUser: null,
-          error: getErrorMessage(error),
+          error: getFriendlyAuthError(error, "登录失败，请检查输入。"),
         });
         throw error;
       }
     },
-    [restoreSession],
+    [],
   );
 
   const register = useCallback(
@@ -127,22 +168,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       try {
         const response = await api.register(payload);
-        persistAuthTokens({
-          accessToken: response.access_token,
-          refreshToken: response.refresh_token,
+        tokenStore.setAccessToken(response.access_token);
+        setRememberedUsername(payload.username);
+        setRememberedAutoLogin(false);
+        const currentUser = await api.getCurrentUser();
+        setSession({
+          status: "authenticated",
+          currentUser,
+          error: null,
         });
-        await restoreSession();
       } catch (error) {
-        clearAuthTokens();
+        tokenStore.clearAccessToken();
         setSession({
           status: "anonymous",
           currentUser: null,
-          error: getErrorMessage(error),
+          error: getFriendlyAuthError(error, "注册失败，请检查输入。"),
         });
         throw error;
       }
     },
-    [restoreSession],
+    [],
   );
 
   useEffect(() => {
