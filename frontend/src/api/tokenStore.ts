@@ -5,6 +5,7 @@ export interface AuthTokens {
 
 const ACCESS_TOKEN_KEY = "warp_te.access_token";
 const REFRESH_TOKEN_KEY = "warp_te.refresh_token";
+export const AUTH_TOKENS_CLEARED_EVENT = "warp_te.auth_tokens_cleared";
 
 function getStorage(): Storage | undefined {
   if (typeof window === "undefined") {
@@ -39,7 +40,11 @@ export const tokenStore = {
       return;
     }
 
+    const hadTokens = Boolean(storage.getItem(ACCESS_TOKEN_KEY) || storage.getItem(REFRESH_TOKEN_KEY));
     storage.removeItem(ACCESS_TOKEN_KEY);
     storage.removeItem(REFRESH_TOKEN_KEY);
+    if (hadTokens && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_TOKENS_CLEARED_EVENT));
+    }
   },
 };

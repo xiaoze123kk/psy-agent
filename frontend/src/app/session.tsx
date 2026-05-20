@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { api, clearAuthTokens, persistAuthTokens, tokenStore } from "../api";
+import { AUTH_TOKENS_CLEARED_EVENT } from "../api/tokenStore";
 import type { CurrentUserResponse, LoginRequest, RegisterRequest } from "../types/api";
 
 export type SessionStatus = "checking" | "authenticated" | "anonymous" | "error";
@@ -24,6 +25,7 @@ export interface SessionContextValue extends SessionState {
   clearSession: () => void;
   login: (payload: LoginRequest) => Promise<void>;
   register: (payload: RegisterRequest) => Promise<void>;
+  startDebugSession: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
@@ -145,9 +147,47 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [restoreSession],
   );
 
+  const startDebugSession = useCallback(async () => {
+    setSession((current) => ({
+      ...current,
+      status: "checking",
+      error: null,
+    }));
+
+    try {
+      const response = await api.devSession();
+      persistAuthTokens({
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token,
+      });
+      await restoreSession();
+    } catch (error) {
+      clearAuthTokens();
+      setSession({
+        status: "anonymous",
+        currentUser: null,
+        error: getErrorMessage(error),
+      });
+      throw error;
+    }
+  }, [restoreSession]);
+
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
+
+  useEffect(() => {
+    const handleTokensCleared = () => {
+      setSession({
+        status: "anonymous",
+        currentUser: null,
+        error: null,
+      });
+    };
+
+    window.addEventListener(AUTH_TOKENS_CLEARED_EVENT, handleTokensCleared);
+    return () => window.removeEventListener(AUTH_TOKENS_CLEARED_EVENT, handleTokensCleared);
+  }, []);
 
   const value = useMemo<SessionContextValue>(
     () => ({
@@ -156,8 +196,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       clearSession,
       login,
       register,
+      startDebugSession,
     }),
-    [clearSession, login, register, restoreSession, session],
+    [clearSession, login, register, restoreSession, session, startDebugSession],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

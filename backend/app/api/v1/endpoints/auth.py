@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -37,6 +37,9 @@ from app.services.companion_style import normalize_custom_companion_style
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+DEV_SESSION_USERNAME = "local_debug_user"
+DEV_SESSION_PASSWORD_MARKER = "dev-session-only"
+DEV_SESSION_ALLOWED_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 def _normalize_username(username: str) -> str:
@@ -53,6 +56,11 @@ def _dev_email_placeholder(username: str) -> str | None:
     return f"{username}@local.invalid"
 
 
+def _is_dev_session_allowed(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return settings.secret_key == "dev-only-change-me" and host in DEV_SESSION_ALLOWED_HOSTS
+
+
 def _verify_captcha(captcha_id: str, captcha_code: str) -> None:
     if not captcha_store.verify(captcha_id, captcha_code):
         raise HTTPException(
@@ -67,6 +75,47 @@ def _profile_user_mode(user: User) -> str:
 
 def _profile_onboarding_completed(user: User) -> bool:
     return bool(getattr(user.profile, "onboarding_completed", False)) if user.profile else False
+
+
+def _ensure_dev_session_user(db: Session) -> User:
+    user = db.scalar(select(User).where(User.username == DEV_SESSION_USERNAME, User.deleted_at.is_(None)))
+    if user is None:
+        user = User(
+            username=DEV_SESSION_USERNAME,
+            email=_dev_email_placeholder(DEV_SESSION_USERNAME),
+            password_hash=hash_password(DEV_SESSION_PASSWORD_MARKER),
+        )
+        db.add(user)
+        db.flush()
+
+    if user.profile is None:
+        db.add(
+            UserProfile(
+                user_id=user.id,
+                nickname="本地调试用户",
+                age_range="18_plus",
+                user_mode="adult",
+                usage_goals=[],
+                onboarding_completed=True,
+            )
+        )
+    else:
+        user.profile.nickname = user.profile.nickname or "本地调试用户"
+        user.profile.age_range = user.profile.age_range or "18_plus"
+        user.profile.user_mode = user.profile.user_mode or "adult"
+        user.profile.onboarding_completed = True
+
+    if user.settings is None:
+        db.add(
+            UserSettings(
+                user_id=user.id,
+                memory_mode="summary_only",
+                companion_style="",
+                crisis_resource_region="CN",
+            )
+        )
+
+    return user
 
 
 def _issue_refresh_token(db: Session, user: User) -> str:
@@ -220,6 +269,21 @@ async def login(
             detail="用户名或密码错误。",
         )
 
+    access_token, refresh_token = _issue_token_pair(db, user)
+    db.commit()
+    db.refresh(user)
+    return _login_response(user, access_token, refresh_token)
+
+
+@router.post("/dev-session", response_model=LoginResponse)
+async def dev_session(
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> LoginResponse:
+    if not _is_dev_session_allowed(request):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+    user = _ensure_dev_session_user(db)
     access_token, refresh_token = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
