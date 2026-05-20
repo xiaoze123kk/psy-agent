@@ -14,13 +14,6 @@ class CaptchaResponse(BaseModel):
     expires_in: int
 
 
-class CaptchaProtectedRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=8)
-    captcha_id: str
-    captcha_code: str = Field(min_length=4, max_length=8)
-
-
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
     password: str = Field(min_length=8)
@@ -72,10 +65,6 @@ class LoginResponse(BaseModel):
     companion_style: str
 
 
-class RefreshTokenRequest(BaseModel):
-    pass
-
-
 class RefreshTokenResponse(BaseModel):
     user_id: str
     access_token: str
@@ -89,10 +78,6 @@ class RefreshTokenResponse(BaseModel):
     onboarding_completed: bool
     memory_mode: MemoryMode
     companion_style: str
-
-
-class LogoutRequest(BaseModel):
-    pass
 
 
 class CurrentUserResponse(BaseModel):

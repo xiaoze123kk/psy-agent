@@ -63,8 +63,6 @@ export interface LoginResponse {
   companion_style: string;
 }
 
-export interface RefreshTokenRequest {}
-
 export interface RefreshTokenResponse {
   user_id: string;
   access_token: string;
@@ -79,8 +77,6 @@ export interface RefreshTokenResponse {
   memory_mode: MemoryMode;
   companion_style: string;
 }
-
-export interface LogoutRequest {}
 
 export interface CurrentUserResponse {
   user_id: string;

@@ -404,14 +404,13 @@ async def logout(
     db: Session = Depends(get_db_session),
 ) -> Response:
     rt = request.cookies.get(REFRESH_COOKIE_KEY)
-    if not rt:
-        response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        _clear_refresh_cookie(response)
-        return response
-    token_record, _ = _validate_refresh_token(db, rt)
-    _revoke_refresh_token(token_record, status_value="revoked")
-    db.commit()
-
+    if rt:
+        try:
+            token_record, _ = _validate_refresh_token(db, rt)
+            _revoke_refresh_token(token_record, status_value="revoked")
+            db.commit()
+        except HTTPException:
+            pass
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _clear_refresh_cookie(response)
     return response
