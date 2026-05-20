@@ -126,7 +126,7 @@ def _issue_refresh_token(db: Session, user: User, ttl_seconds: int, auto_login: 
             _revoke_refresh_token(oldest, status_value="revoked")
 
     token_id = str(uuid4())
-    refresh_token = create_refresh_token(user.id, token_id=token_id, ttl_seconds=ttl_seconds)
+    refresh_token = create_refresh_token(user.id, token_id=token_id, ttl_seconds=ttl_seconds, token_version=user.token_version)
     db.add(
         RefreshToken(
             id=token_id,
@@ -142,7 +142,7 @@ def _issue_refresh_token(db: Session, user: User, ttl_seconds: int, auto_login: 
 
 def _issue_token_pair(db: Session, user: User, auto_login: bool) -> tuple[str, str]:
     ttl = AUTO_LOGIN_TTL_SECONDS if auto_login else SESSION_TTL_SECONDS
-    return create_access_token(user.id), _issue_refresh_token(db, user, ttl, auto_login=auto_login)
+    return create_access_token(user.id, token_version=user.token_version), _issue_refresh_token(db, user, ttl, auto_login=auto_login)
 
 
 def _validate_refresh_token(db: Session, refresh_token: str) -> tuple[RefreshToken, User]:
@@ -187,6 +187,14 @@ def _revoke_refresh_token(token_record: RefreshToken, *, status_value: str) -> N
     token_record.status = status_value
     token_record.last_used_at = utcnow()
     token_record.revoked_at = utcnow()
+
+
+def _revoke_all_user_tokens(db: Session, user: User) -> None:
+    active_tokens = db.scalars(
+        select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
+    ).all()
+    for rt in active_tokens:
+        _revoke_refresh_token(rt, status_value="revoked")
 
 
 def _session_user_response(user: User, access_token: str) -> dict:
@@ -481,12 +489,7 @@ async def password_reset(
     reset_record.status = "used"
     reset_record.used_at = utcnow()
 
-    active_refresh_tokens = db.scalars(
-        select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
-    ).all()
-    for rt in active_refresh_tokens:
-        rt.status = "revoked"
-        rt.revoked_at = utcnow()
+    _revoke_all_user_tokens(db, user)
 
     db.commit()
     return {"ok": True}
@@ -521,13 +524,9 @@ async def change_password(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在。")
 
     user.password_hash = hash_password(payload.new_password)
+    user.token_version += 1
 
-    active_refresh_tokens = db.scalars(
-        select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
-    ).all()
-    for rt in active_refresh_tokens:
-        rt.status = "revoked"
-        rt.revoked_at = utcnow()
+    _revoke_all_user_tokens(db, user)
 
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
     db.commit()
