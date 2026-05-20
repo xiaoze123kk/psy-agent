@@ -48,6 +48,9 @@ class RegisterResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+    # min_length=6 是为了兼容密码强度升级前（P0安全加固前）注册的旧账号，
+    # 它们的密码长度可能是 6-7 位。实际业务校验由 security.validate_password_strength 完成（要求 ≥8）。
+    # 移除该兼容标记前请确认所有旧账号已通过密码重置升级。
     password: str = Field(min_length=6)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)

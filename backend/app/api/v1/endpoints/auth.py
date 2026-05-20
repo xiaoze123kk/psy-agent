@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
@@ -137,6 +137,7 @@ def _issue_refresh_token(db: Session, user: User, ttl_seconds: int, auto_login: 
             expires_at=utcnow() + timedelta(seconds=ttl_seconds),
         )
     )
+    _sweep_expired_tokens(db, user.id)
     return refresh_token
 
 
@@ -180,6 +181,8 @@ def _validate_refresh_token(db: Session, refresh_token: str) -> tuple[RefreshTok
     )
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive.")
+    if payload.get("ver") != user.token_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
     return token_record, user
 
 
@@ -195,6 +198,52 @@ def _revoke_all_user_tokens(db: Session, user: User) -> None:
     ).all()
     for rt in active_tokens:
         _revoke_refresh_token(rt, status_value="revoked")
+
+
+def _rotate_password(db: Session, user: User, new_password: str) -> None:
+    user.password_hash = hash_password(new_password)
+    user.token_version += 1
+    _revoke_all_user_tokens(db, user)
+
+
+STALE_TOKEN_RETENTION_DAYS = 30
+
+
+def _sweep_expired_tokens(db: Session, user_id: str) -> None:
+    now = utcnow()
+    cutoff = now - timedelta(days=STALE_TOKEN_RETENTION_DAYS)
+
+    active_but_expired = db.scalars(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.status == "active",
+            RefreshToken.expires_at <= now,
+        )
+    ).all()
+    for rt in active_but_expired:
+        _revoke_refresh_token(rt, status_value="revoked")
+
+    db.execute(
+        delete(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.isnot(None),
+            RefreshToken.revoked_at <= cutoff,
+        )
+    )
+
+    db.execute(
+        delete(PasswordResetToken).where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.expires_at <= now,
+        )
+    )
+
+    db.execute(
+        delete(PasswordResetToken).where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.status == "used",
+        )
+    )
 
 
 def _session_user_response(user: User, access_token: str) -> dict:
@@ -485,11 +534,9 @@ async def password_reset(
     if user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户不存在。")
 
-    user.password_hash = hash_password(payload.new_password)
+    _rotate_password(db, user, payload.new_password)
     reset_record.status = "used"
     reset_record.used_at = utcnow()
-
-    _revoke_all_user_tokens(db, user)
 
     db.commit()
     return {"ok": True}
@@ -523,10 +570,7 @@ async def change_password(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在。")
 
-    user.password_hash = hash_password(payload.new_password)
-    user.token_version += 1
-
-    _revoke_all_user_tokens(db, user)
+    _rotate_password(db, user, payload.new_password)
 
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
     db.commit()

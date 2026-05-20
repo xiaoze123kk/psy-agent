@@ -64,7 +64,16 @@ function getFriendlyAuthError(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback;
   const match = error.message.match(/API (\d+):/);
   if (!match) return fallback;
-  return fallback;
+  const statusCode = parseInt(match[1], 10);
+  const map: Record<number, string> = {
+    400: "请求参数有误，请检查输入。",
+    401: "用户名或密码错误。",
+    404: "用户不存在。",
+    409: "用户名已被使用。",
+    422: "密码不符合要求，请检查密码规则。",
+    429: "登录尝试过于频繁，请稍后再试。",
+  };
+  return map[statusCode] ?? fallback;
 }
 
 let _restoringPromise: Promise<void> | null = null;
