@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
@@ -51,6 +51,7 @@ REFRESH_COOKIE_KEY = "rt"
 RESET_TOKEN_TTL_SECONDS = 300
 AUTO_LOGIN_TTL_SECONDS = 604800
 SESSION_TTL_SECONDS = 3600
+MAX_ACTIVE_SESSIONS = 5
 
 
 def _normalize_username(username: str) -> str:
@@ -108,6 +109,22 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 
 def _issue_refresh_token(db: Session, user: User, ttl_seconds: int, auto_login: bool) -> str:
+    active_count = db.scalar(
+        select(func.count(RefreshToken.id)).where(
+            RefreshToken.user_id == user.id,
+            RefreshToken.status == "active",
+        )
+    )
+    if active_count and active_count >= MAX_ACTIVE_SESSIONS:
+        oldest = db.scalars(
+            select(RefreshToken)
+            .where(RefreshToken.user_id == user.id, RefreshToken.status == "active")
+            .order_by(RefreshToken.created_at.asc())
+            .limit(1)
+        ).first()
+        if oldest:
+            _revoke_refresh_token(oldest, status_value="revoked")
+
     token_id = str(uuid4())
     refresh_token = create_refresh_token(user.id, token_id=token_id, ttl_seconds=ttl_seconds)
     db.add(
