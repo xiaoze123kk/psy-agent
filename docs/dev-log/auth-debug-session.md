@@ -34,3 +34,29 @@
 ### 后续事项
 
 - dev-session 只适合本地开发调试；生产环境必须设置非默认 `APP_SECRET_KEY`，使该入口返回 404。
+
+## 2026-05-21 MR 冲突处理（dev-session 与 cookie refresh 兼容）
+
+### 背景 / 问题
+
+- 当前分支与 `main` 在认证链路发生冲突：`main` 已切换为 refresh token cookie（`rt`）方案，而本分支仍保留了 dev-session 调试入口改动。
+- 直接冲突会导致前后端签名不一致（前端/测试还在期待 response body 中 `refresh_token`），影响 MR 合并。
+
+### 关键改动
+
+- 合并 `backend/app/api/v1/endpoints/auth.py`：保留 `main` 的 cookie refresh 流程，同时保留 `POST /api/v1/auth/dev-session`。
+- `dev-session` 响应调整为与登录一致：返回 `LoginResponse`（含 access token），refresh token 通过 `Set-Cookie` 下发。
+- 合并前端冲突文件：
+  - `frontend/src/api/endpoints.ts` 同时保留 `devSession()` 与无参 `refreshToken()`。
+  - `frontend/src/api/tokenStore.ts`、`frontend/src/app/session.tsx` 对齐 cookie refresh 新流程，并保留 `startDebugSession()`。
+  - `frontend/src/app/ProtectedAppGate.tsx` 保留“调试进入主页面”走真实 dev-session 的行为，移除冲突重复属性。
+- 更新 `backend/tests/test_auth_dev_session.py`，改为断言 `Set-Cookie` 中存在 `rt=`，不再断言 body 的 `refresh_token` 字段。
+
+### 验证结果
+
+- 后端定向测试：`pytest -q tests/test_auth_dev_session.py`，`2 passed`。
+- 前端类型检查：`npm run check` 通过。
+
+### 后续事项
+
+- 后续如继续演进认证链路，需保持 dev-session、登录、refresh 三者在 token 传递方式上的一致性（body vs cookie）。

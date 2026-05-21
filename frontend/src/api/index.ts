@@ -1,6 +1,6 @@
-import { ApiClient } from "./client";
+﻿import { ApiClient } from "./client";
 import { CounselingApi } from "./endpoints";
-import { tokenStore, type AuthTokens } from "./tokenStore";
+import { tokenStore } from "./tokenStore";
 import type { RefreshTokenResponse } from "../types/api";
 
 const DEFAULT_API_BASE_URL = "";
@@ -10,46 +10,26 @@ function getApiBaseUrl(): string {
 }
 
 async function refreshAuthToken(baseUrl: string): Promise<boolean> {
-  const refreshToken = tokenStore.getRefreshToken();
-  if (!refreshToken) {
-    tokenStore.clearTokens();
-    return false;
-  }
-
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/v1/auth/refresh`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
   });
 
   if (!response.ok) {
-    tokenStore.clearTokens();
+    tokenStore.clearAccessToken();
     return false;
   }
 
   const contentType = response.headers.get("Content-Type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
-    tokenStore.clearTokens();
+    tokenStore.clearAccessToken();
     return false;
   }
 
-  const nextTokens = (await response.json()) as RefreshTokenResponse;
-  tokenStore.setTokens({
-    accessToken: nextTokens.access_token,
-    refreshToken: nextTokens.refresh_token,
-  });
-
+  const result = (await response.json()) as RefreshTokenResponse;
+  tokenStore.setAccessToken(result.access_token);
   return true;
-}
-
-export function persistAuthTokens(tokens: AuthTokens): void {
-  tokenStore.setTokens(tokens);
-}
-
-export function clearAuthTokens(): void {
-  tokenStore.clearTokens();
 }
 
 export function createCounselingApi(baseUrl = getApiBaseUrl()): CounselingApi {

@@ -19,6 +19,8 @@ export interface RegisterRequest {
   username: string;
   password: string;
   age_range: AgeRange;
+  security_question: string;
+  security_answer: string;
   captcha_id: string;
   captcha_code: string;
 }
@@ -26,12 +28,16 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
   user_mode: UserMode;
+  usage_goals: string[];
   onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface LoginRequest {
@@ -39,38 +45,84 @@ export interface LoginRequest {
   password: string;
   captcha_id: string;
   captcha_code: string;
+  auto_login: boolean;
 }
 
 export interface LoginResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
   user_mode: UserMode;
+  usage_goals: string[];
   onboarding_completed: boolean;
-}
-
-export interface RefreshTokenRequest {
-  refresh_token: string;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface RefreshTokenResponse {
   user_id: string;
   access_token: string;
-  refresh_token: string;
   token_type: string;
-  access_expires_in: number;
-  refresh_expires_in: number;
-}
-
-export interface LogoutRequest {
-  refresh_token: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
+  user_mode: UserMode;
+  usage_goals: string[];
+  onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
 }
 
 export interface CurrentUserResponse {
   user_id: string;
+  username: string;
+  email: string | null;
+  nickname: string;
+  age_range: AgeRange;
+  user_mode: UserMode;
+  usage_goals: string[];
+  onboarding_completed: boolean;
+  memory_mode: MemoryMode;
+  companion_style: string;
+}
+
+export interface PasswordResetQuestionRequest {
+  username: string;
+}
+
+export interface PasswordResetQuestionResponse {
+  username: string;
+  security_question: string;
+}
+
+export interface PasswordResetVerifyRequest {
+  username: string;
+  answer: string;
+}
+
+export interface PasswordResetVerifyResponse {
+  reset_token: string;
+}
+
+export interface PasswordResetRequest {
+  reset_token: string;
+  new_password: string;
+}
+
+export interface ChangePasswordRequest {
+  old_password: string;
+  new_password: string;
+}
+
+export interface ChangePasswordResponse {
+  user_id: string;
+  access_token: string;
+  token_type: string;
   username: string;
   email: string | null;
   nickname: string;
