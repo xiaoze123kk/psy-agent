@@ -91,6 +91,10 @@ class Settings:
     dashscope_base_url: str
     embedding_timeout_seconds: float
     embedding_query_cache_size: int
+    search_provider: str
+    bing_search_api_key: str | None
+    bing_search_endpoint: str
+    search_proxy: str | None
     counseling_rerank_enabled: bool
     counseling_rerank_model: str
     counseling_recall_top_n: int
@@ -169,6 +173,10 @@ def load_settings() -> Settings:
         dashscope_base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         embedding_timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30")),
         embedding_query_cache_size=int(os.getenv("EMBEDDING_QUERY_CACHE_SIZE", "128")),
+        search_provider=os.getenv("SEARCH_PROVIDER", "bing_web"),
+        bing_search_api_key=os.getenv("BING_SEARCH_API_KEY") or None,
+        bing_search_endpoint=os.getenv("BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/search"),
+        search_proxy=os.getenv("SEARCH_PROXY") or None,
         counseling_rerank_enabled=os.getenv("COUNSELING_RERANK_ENABLED", "0").lower()
         in {"1", "true", "yes", "on"},
         counseling_rerank_model=os.getenv("COUNSELING_RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),

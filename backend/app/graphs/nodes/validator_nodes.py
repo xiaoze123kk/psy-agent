@@ -34,6 +34,16 @@ VALIDATOR_FORBIDDEN_PATTERNS = [
 ]
 UNSAFE_ACTION_TERMS = ("自杀", "自残", "报复", "弄死", "杀", "停药", "催吐", "联系他", "去找他", "搜索方法")
 ALLOWED_RESOURCE_NUMBERS = {"110", "120", "119", "12356", "988", "911"}
+URL_RE = re.compile(r"https?://\S+", flags=re.IGNORECASE)
+
+
+def _is_allowed_number_in_response(number: str) -> bool:
+    if number in ALLOWED_RESOURCE_NUMBERS:
+        return True
+    if len(number) == 4 and number.isdigit():
+        year = int(number)
+        return 1900 <= year <= 2099
+    return False
 
 
 def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> list[str]:
@@ -41,8 +51,9 @@ def validator_reasons(text: str, actions: list[str], examples: list[dict]) -> li
     for label, pattern in VALIDATOR_FORBIDDEN_PATTERNS:
         if re.search(pattern, text, flags=re.IGNORECASE):
             reasons.append(label)
-    for number in re.findall(r"\b\d{3,}\b", text):
-        if number not in ALLOWED_RESOURCE_NUMBERS:
+    number_scan_text = URL_RE.sub("", text)
+    for number in re.findall(r"\b\d{3,}\b", number_scan_text):
+        if not _is_allowed_number_in_response(number):
             reasons.append("unverified_resource")
             break
     for action in actions:

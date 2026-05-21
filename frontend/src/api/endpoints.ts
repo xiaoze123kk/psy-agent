@@ -76,6 +76,10 @@ export class CounselingApi {
     return this.client.post<LoginResponse, LoginRequest>("/api/v1/auth/login", payload);
   }
 
+  devSession(): Promise<LoginResponse> {
+    return this.client.post<LoginResponse, Record<string, never>>("/api/v1/auth/dev-session", {});
+  }
+
   refreshToken(): Promise<RefreshTokenResponse> {
     return this.client.post<RefreshTokenResponse>("/api/v1/auth/refresh");
   }

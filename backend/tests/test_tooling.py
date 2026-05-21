@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from app.services.tooling import ALL_RISK_LEVELS, LOW_RISK_LEVELS, TOOL_SPEC_BY_NAME, ToolGate, build_dialogue_tool_plan, summarize_tool_events
+from app.services.deepseek_client import ToolChatResult
+from app.services.search_service import SearchResult
+from app.services.tooling import (
+    ALL_RISK_LEVELS,
+    LOW_RISK_LEVELS,
+    TOOL_SPEC_BY_NAME,
+    ToolGate,
+    build_dialogue_tool_plan,
+    _fallback_answer_from_prefetched_web,
+    _prefetch_search_query,
+    run_dialogue_reply_with_tools,
+    summarize_tool_events,
+)
 
 
 def make_state(
@@ -379,6 +393,243 @@ class WebSearchToolTests(unittest.TestCase):
         previews = plan.audit_capture.previews
         self.assertEqual(previews[0]["status"], "error")
         self.assertEqual(previews[0]["error"], "search_failed: timeout")
+
+    def test_tool_plan_and_handler_do_not_write_ad_hoc_debug_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            debug_path = os.path.join(tmpdir, "debug_tooling.log")
+            with patch("app.services.tooling._DEBUG_LOG_PATH", debug_path, create=True), patch(
+                "app.services.search_service.search_web",
+                return_value=([], None),
+            ):
+                plan = build_dialogue_tool_plan(make_state())
+                plan.tool_handlers["web_search"]({"query": "help"})
+
+            self.assertFalse(os.path.exists(debug_path))
+
+    def test_prefetch_visit_china_query_uses_current_year_dynamically(self) -> None:
+        with patch("app.services.tooling.datetime") as fake_datetime:
+            fake_datetime.now.return_value.year = 2027
+
+            query = _prefetch_search_query("特朗普访华是什么时候？")
+
+        self.assertIn("特朗普", query)
+        self.assertIn("访华", query)
+        self.assertIn("2027", query)
+        self.assertIn("国事访问", query)
+        self.assertIn("外交部", query)
+        self.assertNotIn("是什么时候", query)
+        self.assertNotIn("2026", query)
+
+    def test_prefetch_death_time_query_adds_current_year_and_obituary_terms(self) -> None:
+        with patch("app.services.tooling.datetime") as fake_datetime:
+            fake_datetime.now.return_value.year = 2027
+
+            query = _prefetch_search_query("张雪峰去世时间是什么？")
+
+        self.assertIn("张雪峰去世时间是什么？", query)
+        self.assertIn("最新", query)
+        self.assertIn("2027", query)
+        self.assertIn("讣告", query)
+        self.assertNotIn("2026", query)
+
+    def test_prefetched_fallback_answer_omits_raw_url_and_normalizes_date_spacing(self) -> None:
+        answer = _fallback_answer_from_prefetched_web(
+            "特朗普 访华 2026 国事访问 外交部",
+            {
+                "count": 1,
+                "items": [
+                    {
+                        "title": "特朗普 访华 2026 国事访问 外交部 - 搜索摘要",
+                        "url": "https://www.sogou.com/web?query=trump+2026",
+                        "snippet": "特朗普 于 2026 年5月13日至15日对中国进行 国事访问 ，",
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("2026年5月13日至15日", answer)
+        self.assertNotIn("2026 年", answer)
+        self.assertNotIn("https://", answer)
+
+
+class WebSearchPrefetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_current_fact_question_prefetches_web_search_before_model_reply(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "张雪峰去世时间是什么？"
+        plan = build_dialogue_tool_plan(state)
+        fake_tool_result = ToolChatResult(
+            content="查到的公开信息显示，张雪峰于2026年3月24日15时50分在苏州逝世。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="张雪峰去世",
+            url="https://example.com/zhang",
+            snippet="张雪峰于2026年3月24日15时50分在苏州逝世。",
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ) as search_web, patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=fake_tool_result),
+        ) as chat_with_tools:
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        search_web.assert_called_once()
+        self.assertEqual(result["assistant_text"], fake_tool_result.content)
+        self.assertEqual(result["tool_events"][0]["name"], "web_search")
+        self.assertEqual(result["tool_events"][0]["status"], "completed")
+        sent_messages = chat_with_tools.call_args.args[0]
+        self.assertIn("Pre-fetched web_search result", sent_messages[0]["content"])
+        self.assertIn("2026年3月24日15时50分", sent_messages[0]["content"])
+
+    async def test_prefetched_web_search_supplies_fallback_when_model_is_empty(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "张雪峰去世时间是什么？"
+        plan = build_dialogue_tool_plan(state)
+        empty_tool_result = ToolChatResult(
+            content=None,
+            tool_events=[],
+            finish_reason="request_failed",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="张雪峰去世",
+            url="https://example.com/zhang",
+            snippet="张雪峰于2026年3月24日15时50分因心源性猝死，经抢救无效在苏州逝世。",
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ), patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=empty_tool_result),
+        ):
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        self.assertIn("2026年3月24日15时50分", result["assistant_text"])
+        self.assertEqual(result["tool_trace_summary"]["status_counts"]["completed"], 1)
+
+    async def test_prefetched_fact_overrides_model_when_model_contradicts_search(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "张雪峰去世时间是什么？"
+        plan = build_dialogue_tool_plan(state)
+        wrong_tool_result = ToolChatResult(
+            content="张雪峰老师还健在，没有去世的消息。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="张雪峰去世时间是什么？ 最新 2026 讣告 - 搜索摘要",
+            url="https://www.sogou.com/web?query=zhangxuefeng+2026",
+            snippet=(
+                "推荐您搜索 年仅 最新 资讯 根据张雪峰官方账号在3月24日晚间发布的讣告，"
+                "张雪峰因突发心源性猝死，经全力抢救无效，于2026年3月24日15时50分在苏州逝世。"
+            ),
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ), patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=wrong_tool_result),
+        ):
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        self.assertIn("2026年3月24日15时50分", result["assistant_text"])
+        self.assertNotIn("健在", result["assistant_text"])
+
+    async def test_prefetched_fact_overrides_stale_model_date(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "特朗普访华是什么时候？"
+        plan = build_dialogue_tool_plan(state)
+        stale_tool_result = ToolChatResult(
+            content="特朗普上一次访华是在2017年11月8日至10日。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="特朗普访华是什么时候？ 最新 2026 - 搜索摘要",
+            url="https://www.sogou.com/web?query=trump+2026",
+            snippet="美国总统特朗普将于2026年5月13日至15日对中国进行国事访问。",
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ), patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=stale_tool_result),
+        ):
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        self.assertIn("2026年5月13日至15日", result["assistant_text"])
+        self.assertNotIn("2017年", result["assistant_text"])
+
+    async def test_visit_china_question_searches_latest_current_year_context(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "特朗普访华是什么时候？"
+        plan = build_dialogue_tool_plan(state)
+        fake_tool_result = ToolChatResult(
+            content="特朗普最近一次访华是2026年5月13日至15日。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=(
+                [
+                    SearchResult(
+                        title="特朗普访华",
+                        url="https://example.com/trump",
+                        snippet="特朗普于2026年5月13日至15日对中国进行国事访问。",
+                    )
+                ],
+                None,
+            ),
+        ) as search_web, patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=fake_tool_result),
+        ):
+            await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        query = search_web.call_args.args[0]
+        self.assertIn("2026", query)
+        self.assertIn("国事访问", query)
 
 
 class GetCurrentTimeToolTests(unittest.TestCase):

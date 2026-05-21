@@ -1,4 +1,4 @@
-﻿import {
+import {
   createContext,
   useCallback,
   useContext,
@@ -56,6 +56,7 @@ export interface SessionContextValue extends SessionState {
   clearSession: () => Promise<void>;
   login: (payload: LoginRequest) => Promise<void>;
   register: (payload: RegisterRequest) => Promise<void>;
+  startDebugSession: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
@@ -87,6 +88,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(async () => {
     tokenStore.clearAccessToken();
+    clearRememberedUsername();
+    setRememberedAutoLogin(false);
     try {
       await api.logout();
     } catch {
@@ -196,6 +199,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const startDebugSession = useCallback(async () => {
+    setSession((current) => ({
+      ...current,
+      status: "checking",
+      error: null,
+    }));
+
+    try {
+      const response = await api.devSession();
+      tokenStore.setAccessToken(response.access_token);
+      setSession({
+        status: "authenticated",
+        currentUser: response,
+        error: null,
+      });
+    } catch (error) {
+      tokenStore.clearAccessToken();
+      setSession({
+        status: "anonymous",
+        currentUser: null,
+        error: getFriendlyAuthError(error, "本地调试登录失败，请先用账号登录或注册。"),
+      });
+      throw error;
+    }
+  }, []);
+
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
@@ -207,8 +236,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       clearSession,
       login,
       register,
+      startDebugSession,
     }),
-    [clearSession, login, register, restoreSession, session],
+    [clearSession, login, register, restoreSession, session, startDebugSession],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

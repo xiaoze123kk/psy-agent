@@ -43,7 +43,6 @@ interface CaptchaState {
 
 export function ProtectedAppGate({ children }: { children: ReactNode }) {
   const session = useSession();
-  const [isDebugMainEntered, setIsDebugMainEntered] = useState(false);
   const [hasEnteredAppLocally, setHasEnteredAppLocally] = useState(false);
   const [hasPlayedEntryTransition, setHasPlayedEntryTransition] = useState(() => !shouldShowEntryTransitionToday());
 
@@ -51,10 +50,6 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
     markEntryTransitionSeenToday();
     setHasPlayedEntryTransition(true);
   }, []);
-
-  if (import.meta.env.DEV && isDebugMainEntered) {
-    return <>{children}</>;
-  }
 
   if (session.status === "checking") {
     return (
@@ -68,7 +63,7 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   }
 
   if (session.status !== "authenticated") {
-    return <AuthGate initialError={session.error} onDebugEnterMain={() => setIsDebugMainEntered(true)} />;
+    return <AuthGate initialError={session.error} />;
   }
 
   if (session.currentUser?.onboarding_completed === false && !hasEnteredAppLocally) {
@@ -89,7 +84,7 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | null; onDebugEnterMain: () => void }) {
+function AuthGate({ initialError }: { initialError: string | null }) {
   const session = useSession();
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
   const [isPasswordReset, setIsPasswordReset] = useState(false);
@@ -234,6 +229,20 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
     }
   };
 
+  const handleDebugEnterMain = async () => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await session.startDebugSession();
+    } catch (debugError) {
+      setError("本地调试登录失败，请先用账号登录或注册。");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <LoadingAuthEntry
       authMode={authMode}
@@ -261,9 +270,9 @@ function AuthGate({ initialError, onDebugEnterMain }: { initialError: string | n
       onCaptchaCodeChange={setCaptchaCode}
       onRefreshCaptcha={() => void handleRefreshCaptcha()}
       onSubmit={handleSubmit}
+      onDebugEnterMain={import.meta.env.DEV ? () => void handleDebugEnterMain() : undefined}
       onForgotPassword={() => setIsPasswordReset(true)}
       onAutoLoginChange={() => setAutoLogin((prev) => !prev)}
-      onDebugEnterMain={import.meta.env.DEV ? onDebugEnterMain : undefined}
       onDebugEnterOnboarding={import.meta.env.DEV ? () => setIsDebugOnboarding(true) : undefined}
     />
   );

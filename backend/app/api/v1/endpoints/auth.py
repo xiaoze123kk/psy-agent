@@ -46,6 +46,9 @@ from app.services.login_attempt_service import login_attempt_store
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+DEV_SESSION_USERNAME = "local_debug_user"
+DEV_SESSION_PASSWORD_MARKER = "dev-session-only"
+DEV_SESSION_ALLOWED_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 REFRESH_COOKIE_KEY = "rt"
 RESET_TOKEN_TTL_SECONDS = 300
@@ -68,6 +71,11 @@ def _dev_email_placeholder(username: str) -> str | None:
     return f"{username}@local.invalid"
 
 
+def _is_dev_session_allowed(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return settings.secret_key == "dev-only-change-me" and host in DEV_SESSION_ALLOWED_HOSTS
+
+
 def _verify_captcha(captcha_id: str, captcha_code: str) -> None:
     if not captcha_store.verify(captcha_id, captcha_code):
         raise HTTPException(
@@ -82,6 +90,47 @@ def _profile_user_mode(user: User) -> str:
 
 def _profile_onboarding_completed(user: User) -> bool:
     return bool(getattr(user.profile, "onboarding_completed", False)) if user.profile else False
+
+
+def _ensure_dev_session_user(db: Session) -> User:
+    user = db.scalar(select(User).where(User.username == DEV_SESSION_USERNAME, User.deleted_at.is_(None)))
+    if user is None:
+        user = User(
+            username=DEV_SESSION_USERNAME,
+            email=_dev_email_placeholder(DEV_SESSION_USERNAME),
+            password_hash=hash_password(DEV_SESSION_PASSWORD_MARKER),
+        )
+        db.add(user)
+        db.flush()
+
+    if user.profile is None:
+        db.add(
+            UserProfile(
+                user_id=user.id,
+                nickname="本地调试用户",
+                age_range="18_plus",
+                user_mode="adult",
+                usage_goals=[],
+                onboarding_completed=True,
+            )
+        )
+    else:
+        user.profile.nickname = user.profile.nickname or "本地调试用户"
+        user.profile.age_range = user.profile.age_range or "18_plus"
+        user.profile.user_mode = user.profile.user_mode or "adult"
+        user.profile.onboarding_completed = True
+
+    if user.settings is None:
+        db.add(
+            UserSettings(
+                user_id=user.id,
+                memory_mode="summary_only",
+                companion_style="",
+                crisis_resource_region="CN",
+            )
+        )
+
+    return user
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str, auto_login: bool) -> None:
@@ -124,7 +173,6 @@ def _issue_refresh_token(db: Session, user: User, ttl_seconds: int, auto_login: 
         ).first()
         if oldest:
             _revoke_refresh_token(oldest, status_value="revoked")
-
     token_id = str(uuid4())
     refresh_token = create_refresh_token(user.id, token_id=token_id, ttl_seconds=ttl_seconds, token_version=user.token_version)
     db.add(
@@ -368,12 +416,24 @@ async def login(
     db.commit()
     db.refresh(user)
 
+@router.post("/dev-session", response_model=LoginResponse)
+async def dev_session(
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> Response:
+    if not _is_dev_session_allowed(request):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+    user = _ensure_dev_session_user(db)
+    access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
+    db.commit()
+    db.refresh(user)
     response_body = _session_user_response(user, access_token)
     response = Response(
         content=LoginResponse(**response_body).model_dump_json(),
         media_type="application/json",
     )
-    _set_refresh_cookie(response, refresh_token, auto_login=payload.auto_login)
+    _set_refresh_cookie(response, refresh_token, auto_login=False)
     return response
 
 
