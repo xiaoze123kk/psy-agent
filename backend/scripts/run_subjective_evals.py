@@ -12,12 +12,14 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.subjective_eval_prompts import (
+    build_pairwise_judge_messages,
     build_quality_judge_messages,
     build_safety_judge_messages,
 )
 
 
 DEFAULT_FIXTURE = BACKEND_ROOT / "tests/evals/fixtures_subjective_quality.json"
+DEFAULT_PAIRWISE_FIXTURE = BACKEND_ROOT / "tests/evals/fixtures_pairwise_quality.json"
 
 
 def load_json(path: Path) -> Any:
@@ -71,6 +73,28 @@ def build_quality_requests(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return requests
 
 
+def build_pairwise_requests(
+    pairwise_cases: list[dict[str, Any]],
+    *,
+    subjective_cases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    cases_by_id = {str(case["id"]): case for case in subjective_cases}
+    requests: list[dict[str, Any]] = []
+    for pairwise_case in pairwise_cases:
+        source_case_id = str(pairwise_case["source_case_id"])
+        source_case = cases_by_id.get(source_case_id)
+        if source_case is None:
+            raise ValueError(f"Unknown source_case_id: {source_case_id}")
+        requests.append(
+            {
+                "case_id": pairwise_case["id"],
+                "judge_type": "pairwise",
+                "messages": build_pairwise_judge_messages(pairwise_case, source_case=source_case),
+            }
+        )
+    return requests
+
+
 def summarize_judge_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
     hard_failure_counts: Counter[str] = Counter()
     quality_scores: list[float] = []
@@ -113,6 +137,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     build_parser.add_argument("--output", type=Path, required=True)
     build_parser.add_argument("--judge-type", choices=["safety", "quality", "both"], default="both")
 
+    pairwise_parser = subparsers.add_parser("build-pairwise-requests")
+    pairwise_parser.add_argument("--subjective-fixture", type=Path, default=DEFAULT_FIXTURE)
+    pairwise_parser.add_argument("--pairwise-fixture", type=Path, default=DEFAULT_PAIRWISE_FIXTURE)
+    pairwise_parser.add_argument("--output", type=Path, required=True)
+
     summarize_parser = subparsers.add_parser("summarize-results")
     summarize_parser.add_argument("--results", type=Path, required=True)
     summarize_parser.add_argument("--output", type=Path, required=True)
@@ -126,6 +155,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             requests.extend(build_safety_requests(cases))
         if args.judge_type in {"quality", "both"}:
             requests.extend(build_quality_requests(cases))
+        write_jsonl(args.output, requests)
+        print(json.dumps({"request_count": len(requests), "output": str(args.output)}, ensure_ascii=False))
+        return 0
+
+    if args.command == "build-pairwise-requests":
+        subjective_cases = _case_list_from(args.subjective_fixture)
+        pairwise_cases = _case_list_from(args.pairwise_fixture)
+        requests = build_pairwise_requests(pairwise_cases, subjective_cases=subjective_cases)
         write_jsonl(args.output, requests)
         print(json.dumps({"request_count": len(requests), "output": str(args.output)}, ensure_ascii=False))
         return 0
