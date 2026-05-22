@@ -16,6 +16,12 @@ from app.services.subjective_eval_prompts import (
     build_quality_judge_messages,
     build_safety_judge_messages,
 )
+from app.services.subjective_eval_results import (
+    build_eval_summary,
+    render_markdown_report,
+    validate_human_review_result,
+    validate_judge_result,
+)
 
 
 DEFAULT_FIXTURE = BACKEND_ROOT / "tests/evals/fixtures_subjective_quality.json"
@@ -32,12 +38,28 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text(content + ("\n" if content else ""), encoding="utf-8")
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+def read_jsonl(path: Path) -> list[Any]:
+    rows: list[Any] = []
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def validate_rows(rows: list[Any], *, source: Path) -> list[str]:
+    errors: list[str] = []
+    for line_number, row in enumerate(rows, start=1):
+        for error in validate_judge_result(row):
+            errors.append(f"{source}:{line_number} {error}")
+    return errors
+
+
+def validate_human_review_rows(rows: list[Any], *, source: Path, known_case_ids: set[str]) -> list[str]:
+    errors: list[str] = []
+    for line_number, row in enumerate(rows, start=1):
+        for error in validate_human_review_result(row, known_case_ids=known_case_ids):
+            errors.append(f"{source}:{line_number} {error}")
+    return errors
 
 
 def _answer_for_case(case: dict[str, Any]) -> str:
@@ -146,6 +168,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     summarize_parser.add_argument("--results", type=Path, required=True)
     summarize_parser.add_argument("--output", type=Path, required=True)
 
+    validate_parser = subparsers.add_parser("validate-results")
+    validate_parser.add_argument("--results", type=Path, required=True)
+
+    report_parser = subparsers.add_parser("summarize-report")
+    report_parser.add_argument("--results", type=Path, required=True)
+    report_parser.add_argument("--human-review", type=Path)
+    report_parser.add_argument("--json-output", type=Path, required=True)
+    report_parser.add_argument("--markdown-output", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "build-requests":
@@ -172,6 +203,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = summarize_judge_results(rows)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False))
+        return 0
+
+    if args.command == "validate-results":
+        rows = read_jsonl(args.results)
+        errors = validate_rows(rows, source=args.results)
+        if errors:
+            print(json.dumps({"valid": False, "errors": errors}, ensure_ascii=False, indent=2))
+            return 1
+        print(json.dumps({"valid": True, "result_count": len(rows)}, ensure_ascii=False))
+        return 0
+
+    if args.command == "summarize-report":
+        rows = read_jsonl(args.results)
+        errors = validate_rows(rows, source=args.results)
+        human_reviews: list[Any] = []
+        if args.human_review:
+            human_reviews = read_jsonl(args.human_review)
+            known_case_ids = {
+                row["case_id"]
+                for row in rows
+                if isinstance(row, dict) and isinstance(row.get("case_id"), str) and row["case_id"].strip()
+            }
+            errors.extend(
+                validate_human_review_rows(
+                    human_reviews,
+                    source=args.human_review,
+                    known_case_ids=known_case_ids,
+                )
+            )
+        if errors:
+            print(json.dumps({"valid": False, "errors": errors}, ensure_ascii=False, indent=2))
+            return 1
+
+        summary = build_eval_summary(rows, human_reviews=human_reviews)
+        args.json_output.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        args.json_output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        args.markdown_output.write_text(render_markdown_report(summary), encoding="utf-8")
         print(json.dumps(summary, ensure_ascii=False))
         return 0
 
