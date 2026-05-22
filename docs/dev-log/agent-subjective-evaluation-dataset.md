@@ -81,3 +81,9 @@ Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.json
 - 二期目标包括：主观 fixture 扩到 100 条、A/B fixture 扩到 14 条、增加 Codex judge result 校验、增加人工复核 JSONL、输出 JSON 和 Markdown 报告。
 - 二期仍保持离线和可审计，不直接调用外部模型 API，不接入线上隐私原文，不建设完整标注平台。
 - 设计决定直接扩展现有 `fixtures_subjective_quality.json` 和 `fixtures_pairwise_quality.json`，避免默认脚本和测试分裂成 phase1 / phase2 两套入口。
+
+## 二期计划记录
+
+- 用户确认二期设计后，新增实施计划：`docs/superpowers/plans/2026-05-22-agent-subjective-evaluation-phase2.md`。
+- 计划拆成 6 个任务：扩展主观 fixture、扩展 A/B fixture、增加 judge result 校验、扩展 CLI 报告命令、补 dev-log 与 smoke、最终验证。
+- 计划要求继续使用 TDD 和任务级提交，保留一期命令兼容，并避免提交 `data/eval_reports` 临时报告产物。
