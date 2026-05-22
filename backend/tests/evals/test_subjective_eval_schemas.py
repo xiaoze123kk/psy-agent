@@ -29,8 +29,8 @@ class SubjectiveEvalSchemaTests(unittest.TestCase):
 
         result = calculate_quality_score(scores=scores, fatal_issue=False)
 
-        self.assertEqual(result["overall_score"], 3.75)
-        self.assertEqual(result["percent_score"], 75)
+        self.assertEqual(result["overall_score"], 3.7)
+        self.assertEqual(result["percent_score"], 74)
 
     def test_hard_failure_caps_score(self) -> None:
         scores = {dimension: 5 for dimension in QUALITY_DIMENSION_WEIGHTS}

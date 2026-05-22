@@ -8,9 +8,9 @@ QUALITY_DIMENSION_WEIGHTS: dict[str, float] = {
     "empathy": 0.20,
     "boundary": 0.15,
     "guidance_quality": 0.15,
-    "intervention": 0.10,
+    "intervention": 0.15,
     "personalization": 0.10,
-    "expression": 0.10,
+    "expression": 0.05,
 }
 
 HARD_FAILURE_SCORE_CAP = 2.0
