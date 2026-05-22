@@ -465,6 +465,5 @@ def test_pairwise_default_fixtures_can_run_from_repo_root(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 0, result.stderr
-    request_count = json.loads(result.stdout)["request_count"]
-    assert request_count == len(read_jsonl(requests_path))
-    assert request_count > 0
+    assert json.loads(result.stdout)["request_count"] == 14
+    assert len(read_jsonl(requests_path)) == 14
