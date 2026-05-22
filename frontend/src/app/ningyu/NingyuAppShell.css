@@ -1,7 +1,6 @@
 .ningyu-transition {
   width: 100vw;
   height: 100vh;
-  height: 100dvh;
   overflow: hidden;
   position: relative;
   background: #e0f2f1;
@@ -10,7 +9,6 @@
 .ningyu-shell {
   width: 100vw;
   height: 100vh;
-  height: 100dvh;
   overflow: hidden;
   position: relative;
   display: flex;
@@ -154,6 +152,7 @@
 .ningyu-input button,
 .ningyu-new-chat,
 .ningyu-thread,
+.ningyu-thread-list__more,
 .ningyu-sidebar__bottom button,
 .ningyu-support-card,
 .ningyu-suggestions button {
@@ -189,6 +188,7 @@
 .ningyu-round-button:hover,
 .ningyu-new-chat:hover,
 .ningyu-thread:hover,
+.ningyu-thread-list__more:hover,
 .ningyu-support-card:hover,
 .ningyu-suggestions button:hover {
   transform: translateY(-1px);
@@ -291,6 +291,305 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  justify-content: center;
+  padding: 0 clamp(76px, 8vw, 112px);
+  overflow: hidden;
+}
+
+.ningyu-floating-controls {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  display: grid;
+  gap: 10px;
+  transform: translateY(-50%);
+}
+
+.ningyu-floating-controls--left {
+  left: 18px;
+}
+
+.ningyu-floating-controls--right {
+  right: 18px;
+}
+
+.ningyu-edge-button,
+.ningyu-edge-panel__close,
+.ningyu-tool-back {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(153, 246, 228, 0.44);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  color: rgba(17, 94, 89, 0.92);
+  box-shadow: 0 12px 32px -24px rgba(15, 118, 110, 0.48);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ningyu-edge-button {
+  width: 92px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ningyu-edge-button:hover,
+.ningyu-edge-button.is-active,
+.ningyu-tool-back:hover {
+  border-color: rgba(45, 212, 191, 0.62);
+  background: rgba(240, 253, 250, 0.9);
+  transform: translateY(-1px);
+}
+
+.ningyu-edge-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ningyu-edge-button--safety {
+  border-color: rgba(251, 146, 60, 0.44);
+  color: #9a3412;
+}
+
+.ningyu-shell.is-night .ningyu-edge-button,
+.ningyu-shell.is-night .ningyu-edge-panel__close,
+.ningyu-shell.is-night .ningyu-tool-back {
+  border-color: rgba(71, 85, 105, 0.66);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-edge-button:hover,
+.ningyu-shell.is-night .ningyu-edge-button.is-active,
+.ningyu-shell.is-night .ningyu-tool-back:hover {
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(52, 211, 153, 0.48);
+}
+
+.ningyu-edge-panel {
+  position: absolute;
+  z-index: 8;
+  top: 18px;
+  bottom: 18px;
+  width: min(360px, calc(100vw - 36px));
+  display: flex;
+  overflow: hidden;
+  border: 1px solid rgba(153, 246, 228, 0.36);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 60px -36px rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.ningyu-edge-panel--left {
+  left: 72px;
+}
+
+.ningyu-edge-panel--right {
+  right: 72px;
+}
+
+.ningyu-shell.is-night .ningyu-edge-panel {
+  border-color: rgba(51, 65, 85, 0.7);
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.ningyu-edge-panel .ningyu-sidebar {
+  width: 100%;
+  flex: 1 1 auto;
+  background: transparent;
+}
+
+.ningyu-edge-panel__close {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  width: 44px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.ningyu-edge-panel:focus,
+.ningyu-safety-layer__sheet:focus {
+  outline: 2px solid rgba(20, 184, 166, 0.52);
+  outline-offset: 3px;
+}
+
+.ningyu-safety-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.ningyu-safety-layer__backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(8, 13, 23, 0.38);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ningyu-safety-layer__sheet {
+  position: relative;
+  z-index: 1;
+  width: min(720px, calc(100vw - 48px));
+  max-height: min(680px, calc(100vh - 120px));
+  display: grid;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid rgba(153, 246, 228, 0.42);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 32px 80px -42px rgba(15, 23, 42, 0.72);
+}
+
+.ningyu-safety-layer__sheet.is-high-risk {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(255, 247, 237, 0.94);
+}
+
+.ningyu-safety-layer__header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 12px;
+  align-items: start;
+}
+
+.ningyu-safety-layer__header > span {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(204, 251, 241, 0.76);
+  color: #0f766e;
+}
+
+.ningyu-safety-layer__header h2,
+.ningyu-safety-layer__header p,
+.ningyu-safety-layer__header small,
+.ningyu-safety-layer__status strong,
+.ningyu-safety-layer__status span {
+  display: block;
+  margin: 0;
+}
+
+.ningyu-safety-layer__header small {
+  color: rgba(15, 118, 110, 0.58);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ningyu-safety-layer__header h2 {
+  margin-top: 3px;
+  color: rgba(19, 78, 74, 0.96);
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.ningyu-safety-layer__header p {
+  margin-top: 6px;
+  color: rgba(17, 94, 89, 0.7);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ningyu-safety-layer__close {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(153, 246, 228, 0.42);
+  border-radius: 50%;
+  background: rgba(240, 253, 250, 0.58);
+  color: rgba(17, 94, 89, 0.88);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.ningyu-safety-layer__status {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(153, 246, 228, 0.32);
+  border-radius: 18px;
+  background: rgba(240, 253, 250, 0.42);
+}
+
+.ningyu-safety-layer__status strong {
+  color: rgba(19, 78, 74, 0.9);
+  font-size: 13px;
+}
+
+.ningyu-safety-layer__status span {
+  color: rgba(17, 94, 89, 0.66);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-safety-layer__resources,
+.ningyu-safety-layer__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ningyu-safety-layer__actions button {
+  min-height: 44px;
+  border: 1px solid rgba(153, 246, 228, 0.38);
+  border-radius: 16px;
+  background: rgba(240, 253, 250, 0.44);
+  color: rgba(17, 94, 89, 0.86);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__backdrop {
+  background: rgba(2, 6, 23, 0.56);
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__sheet {
+  border-color: rgba(51, 65, 85, 0.72);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__sheet.is-high-risk {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(69, 10, 10, 0.9);
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__header > span,
+.ningyu-shell.is-night .ningyu-safety-layer__close,
+.ningyu-shell.is-night .ningyu-safety-layer__status,
+.ningyu-shell.is-night .ningyu-safety-layer__actions button {
+  border-color: rgba(51, 65, 85, 0.58);
+  background: rgba(30, 41, 59, 0.54);
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__header small,
+.ningyu-shell.is-night .ningyu-safety-layer__header p,
+.ningyu-shell.is-night .ningyu-safety-layer__status span {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-safety-layer__header h2,
+.ningyu-shell.is-night .ningyu-safety-layer__status strong {
+  color: #e2e8f0;
 }
 
 .ningyu-sidebar {
@@ -305,6 +604,134 @@
   background: rgba(240, 253, 250, 0.68);
   pointer-events: auto;
   transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out, color 1000ms ease-in-out;
+}
+
+.ningyu-tool-launcher__grid,
+.ningyu-placeholder-list,
+.ningyu-tests-list,
+.ningyu-tests-surface {
+  display: grid;
+  gap: 10px;
+}
+
+.ningyu-tool-launcher__grid button,
+.ningyu-tests-list button {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(153, 246, 228, 0.34);
+  border-radius: 18px;
+  background: rgba(240, 253, 250, 0.3);
+  color: rgba(19, 78, 74, 0.92);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ningyu-tool-launcher__grid button:hover,
+.ningyu-tests-list button:hover:not(:disabled) {
+  border-color: rgba(45, 212, 191, 0.48);
+  background: rgba(204, 251, 241, 0.4);
+}
+
+.ningyu-tool-launcher__grid button span,
+.ningyu-tests-list button span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ningyu-tool-launcher__grid strong,
+.ningyu-tests-list strong,
+.ningyu-tests-surface__header strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.ningyu-tool-launcher__grid small,
+.ningyu-tests-list small,
+.ningyu-tests-surface__header small,
+.ningyu-placeholder-list span {
+  color: rgba(17, 94, 89, 0.64);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ningyu-tool-back {
+  width: calc(100% - 40px);
+  margin: 16px 20px 0;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ningyu-tests-surface {
+  margin-top: 14px;
+}
+
+.ningyu-tests-surface__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ningyu-tests-list button {
+  justify-content: space-between;
+}
+
+.ningyu-tests-list button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.ningyu-tests-list em {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  color: rgba(15, 118, 110, 0.7);
+}
+
+.ningyu-tool-empty {
+  margin: 0;
+  color: rgba(17, 94, 89, 0.66);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ningyu-tool-empty.is-error {
+  color: #b91c1c;
+}
+
+.ningyu-placeholder-list {
+  margin-top: 14px;
+}
+
+.ningyu-placeholder-list span {
+  padding: 10px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.ningyu-shell.is-night .ningyu-tool-launcher__grid button,
+.ningyu-shell.is-night .ningyu-tests-list button,
+.ningyu-shell.is-night .ningyu-placeholder-list span {
+  border-color: rgba(51, 65, 85, 0.54);
+  background: rgba(30, 41, 59, 0.34);
+  color: #e2e8f0;
+}
+
+.ningyu-shell.is-night .ningyu-tool-launcher__grid small,
+.ningyu-shell.is-night .ningyu-tests-list small,
+.ningyu-shell.is-night .ningyu-tests-surface__header small,
+.ningyu-shell.is-night .ningyu-placeholder-list span,
+.ningyu-shell.is-night .ningyu-tool-empty {
+  color: #94a3b8;
 }
 
 .ningyu-sidebar--left {
@@ -399,8 +826,62 @@
   color: #94a3b8;
 }
 
+.ningyu-thread-group {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ningyu-thread-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 4px;
+  color: rgba(17, 94, 89, 0.62);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ningyu-thread-group__header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ningyu-thread-group__count {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.48);
+  color: rgba(15, 118, 110, 0.62);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ningyu-thread-list__meta {
+  margin: 8px 10px 10px;
+  color: rgba(17, 94, 89, 0.58);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ningyu-thread-list__more {
+  width: calc(100% - 20px);
+  min-height: 34px;
+  margin: 4px 10px 12px;
+  border: 1px solid rgba(153, 246, 228, 0.28);
+  border-radius: 14px;
+  background: rgba(240, 253, 250, 0.24);
+  color: rgba(17, 94, 89, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .ningyu-thread {
   width: 100%;
+  display: flex;
   align-items: flex-start;
   gap: 10px;
   min-height: auto;
@@ -422,8 +903,36 @@
   box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.5);
 }
 
+.ningyu-thread--draft {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(240, 253, 250, 0.24);
+}
+
+.ningyu-thread--draft .ningyu-thread__dot {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 2px solid rgba(20, 184, 166, 0.55);
+}
+
 .ningyu-thread:disabled {
   cursor: default;
+}
+
+.ningyu-shell.is-night .ningyu-thread-group__header,
+.ningyu-shell.is-night .ningyu-thread-list__meta {
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread-group__count {
+  background: rgba(30, 41, 59, 0.58);
+  color: #94a3b8;
+}
+
+.ningyu-shell.is-night .ningyu-thread-list__more {
+  border-color: rgba(51, 65, 85, 0.58);
+  background: rgba(30, 41, 59, 0.32);
+  color: #cbd5e1;
 }
 
 .ningyu-shell.is-night .ningyu-thread:hover {
@@ -435,6 +944,15 @@
   border-color: rgba(52, 211, 153, 0.36);
   background: rgba(20, 83, 45, 0.32);
   box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.5);
+}
+
+.ningyu-shell.is-night .ningyu-thread--draft {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(20, 83, 45, 0.18);
+}
+
+.ningyu-shell.is-night .ningyu-thread--draft .ningyu-thread__dot {
+  border-color: rgba(52, 211, 153, 0.55);
 }
 
 .ningyu-thread-list__state {
@@ -494,42 +1012,42 @@
   color: #94a3b8;
 }
 
-.ningyu-thread strong,
-.ningyu-thread span,
-.ningyu-thread small {
+.ningyu-thread__content > strong,
+.ningyu-thread__content > span,
+.ningyu-thread__content > small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ningyu-thread strong {
+.ningyu-thread__content > strong {
   color: rgba(19, 78, 74, 0.96);
   font-size: 13px;
   line-height: 1.32;
 }
 
-.ningyu-thread span {
+.ningyu-thread__content > span {
   color: rgba(17, 94, 89, 0.72);
   font-size: 12px;
   line-height: 1.35;
 }
 
-.ningyu-thread small {
+.ningyu-thread__content > small {
   color: rgba(15, 118, 110, 0.5);
   font-size: 10px;
   line-height: 1.2;
 }
 
-.ningyu-shell.is-night .ningyu-thread strong {
+.ningyu-shell.is-night .ningyu-thread__content > strong {
   color: #e2e8f0;
 }
 
-.ningyu-shell.is-night .ningyu-thread span {
+.ningyu-shell.is-night .ningyu-thread__content > span {
   color: #94a3b8;
 }
 
-.ningyu-shell.is-night .ningyu-thread small {
+.ningyu-shell.is-night .ningyu-thread__content > small {
   color: #64748b;
 }
 
@@ -1146,8 +1664,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  opacity: 0;
-  transform: translateY(2px);
+  opacity: 0.78;
+  transform: translateY(0);
   transition: opacity 220ms ease, transform 220ms ease;
 }
 
@@ -1175,9 +1693,26 @@
   color: rgba(15, 118, 110, 0.9);
 }
 
+.ningyu-message-feedback button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
 .ningyu-message-feedback span {
   color: rgba(15, 118, 110, 0.42);
   font-size: 10px;
+}
+
+.ningyu-message-feedback.is-failed span {
+  color: #b91c1c;
+}
+
+.ningyu-trace-line {
+  display: block;
+  margin-top: 10px;
+  color: rgba(15, 118, 110, 0.48);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .ningyu-shell.is-night .ningyu-message-feedback button {
@@ -1194,6 +1729,14 @@
 }
 
 .ningyu-shell.is-night .ningyu-message-feedback span {
+  color: #64748b;
+}
+
+.ningyu-shell.is-night .ningyu-message-feedback.is-failed span {
+  color: #fca5a5;
+}
+
+.ningyu-shell.is-night .ningyu-trace-line {
   color: #64748b;
 }
 
@@ -1586,9 +2129,22 @@
   color: #94a3b8;
 }
 
-.ningyu-mood-checkin__footer {
+.ningyu-mood-checkin__footer,
+.ningyu-mood-checkin__recorded-state {
   display: grid;
   gap: 10px;
+}
+
+.ningyu-mood-checkin__recorded-state {
+  padding: 12px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: 16px;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__recorded-state {
+  border-color: rgba(134, 239, 172, 0.18);
+  background: rgba(34, 197, 94, 0.09);
 }
 
 .ningyu-mood-checkin__summary {
@@ -1618,7 +2174,8 @@
   color: #fca5a5;
 }
 
-.ningyu-mood-checkin__footer button {
+.ningyu-mood-checkin__footer button,
+.ningyu-mood-checkin__recorded-state button {
   min-height: 40px;
   border-radius: 15px;
   font-weight: 800;
@@ -1630,9 +2187,25 @@
   color: #ffffff;
 }
 
-.ningyu-mood-checkin__footer button:disabled {
-  cursor: progress;
+.ningyu-mood-checkin__footer button:disabled,
+.ningyu-mood-checkin__recorded-state button:disabled {
+  cursor: not-allowed;
   opacity: 0.68;
+}
+
+.ningyu-mood-checkin__footer button.is-recorded:disabled,
+.ningyu-mood-checkin__recorded-state button.is-recorded:disabled {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  opacity: 1;
+}
+
+.ningyu-shell.is-night .ningyu-mood-checkin__footer button.is-recorded:disabled,
+.ningyu-shell.is-night .ningyu-mood-checkin__recorded-state button.is-recorded:disabled {
+  border-color: rgba(134, 239, 172, 0.22);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
 }
 
 .ningyu-mood-trend {
@@ -2517,309 +3090,6 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-.ningyu-immersive {
-  --ningyu-safe-top: env(safe-area-inset-top, 0px);
-  --ningyu-safe-right: env(safe-area-inset-right, 0px);
-  --ningyu-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --ningyu-safe-left: env(safe-area-inset-left, 0px);
-  --ningyu-floating-size: 48px;
-  --ningyu-floating-gap: 10px;
-  --ningyu-floating-offset: clamp(18px, 3vw, 34px);
-  --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 84px);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: transparent;
-}
-
-.ningyu-immersive__topbar {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: calc(18px + var(--ningyu-safe-top)) max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right)) 10px max(clamp(18px, 3vw, 34px), var(--ningyu-safe-left));
-  pointer-events: none;
-}
-
-.ningyu-immersive-brand,
-.ningyu-immersive-status {
-  pointer-events: auto;
-}
-
-.ningyu-immersive-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.36);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.48);
-  color: rgba(19, 78, 74, 0.94);
-  box-shadow: 0 14px 34px -30px rgba(15, 118, 110, 0.46);
-}
-
-.ningyu-shell.is-night .ningyu-immersive-brand {
-  border-color: rgba(71, 85, 105, 0.44);
-  background: rgba(15, 23, 42, 0.56);
-  color: #e2e8f0;
-}
-
-.ningyu-immersive-brand img {
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-}
-
-.ningyu-immersive-brand h1,
-.ningyu-immersive-brand p,
-.ningyu-immersive-status strong,
-.ningyu-immersive-status small {
-  margin: 0;
-}
-
-.ningyu-immersive-brand h1 {
-  font-size: 17px;
-  line-height: 1.15;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.ningyu-immersive-brand p {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 3px;
-  color: rgba(17, 94, 89, 0.7);
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-brand p {
-  color: #cbd5e1;
-}
-
-.ningyu-immersive-status {
-  max-width: min(420px, 42vw);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
-  color: rgba(19, 78, 74, 0.86);
-}
-
-.ningyu-shell.is-night .ningyu-immersive-status {
-  border-color: rgba(71, 85, 105, 0.42);
-  background: rgba(15, 23, 42, 0.5);
-  color: #e2e8f0;
-}
-
-.ningyu-immersive-status__tone {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #2dd4bf;
-  box-shadow: 0 0 0 5px rgba(45, 212, 191, 0.12);
-}
-
-.ningyu-immersive-status__tone.is-watch {
-  background: #f59e0b;
-  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.14);
-}
-
-.ningyu-immersive-status__tone.is-support {
-  background: #22c55e;
-  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.14);
-}
-
-.ningyu-immersive-status__tone.is-error {
-  background: #ef4444;
-  box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.14);
-}
-
-.ningyu-immersive-status strong,
-.ningyu-immersive-status small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ningyu-immersive-status strong {
-  font-size: 13px;
-  line-height: 1.2;
-}
-
-.ningyu-immersive-status small {
-  color: inherit;
-  font-size: 11px;
-  opacity: 0.64;
-}
-
-.ningyu-immersive__main {
-  position: relative;
-  z-index: 2;
-  min-height: 0;
-  display: grid;
-  place-items: center;
-  padding: 10px clamp(76px, 8vw, 128px) calc(28px + var(--ningyu-safe-bottom));
-}
-
-.ningyu-immersive-paper {
-  width: min(100%, 960px);
-  height: min(100%, 780px);
-  max-height: 100%;
-  min-height: 0;
-  display: flex;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 30px;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.18) 1px, transparent 1px),
-    rgba(255, 255, 255, 0.42);
-  background-size: 100% 34px, auto;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 24px 54px -44px rgba(15, 118, 110, 0.5);
-  overflow: hidden;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-paper {
-  border-color: rgba(71, 85, 105, 0.44);
-  background:
-    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
-    rgba(15, 23, 42, 0.54);
-  background-size: 100% 34px, auto;
-  box-shadow:
-    inset 0 1px 0 rgba(148, 163, 184, 0.1),
-    0 24px 54px -44px rgba(2, 6, 23, 0.86);
-}
-
-.ningyu-immersive .ningyu-chat {
-  width: 100%;
-  height: 100%;
-}
-
-.ningyu-immersive .ningyu-chat::before {
-  inset: 18px 18px 82px;
-  border-inline-color: rgba(20, 184, 166, 0.12);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(240, 253, 250, 0.05) 56%, transparent);
-}
-
-.ningyu-immersive .ningyu-chat__scroll {
-  padding: clamp(20px, 3vw, 34px) clamp(18px, 4vw, 48px) 18px;
-}
-
-.ningyu-immersive .ningyu-chat__inner {
-  width: 100%;
-  min-height: 100%;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.ningyu-immersive .ningyu-chat__input {
-  padding: 14px clamp(18px, 4vw, 48px) 22px;
-}
-
-.ningyu-immersive .ningyu-chat__input > * {
-  width: 100%;
-}
-
-.ningyu-immersive-edge {
-  position: absolute;
-  z-index: 5;
-  top: 50%;
-  display: grid;
-  gap: var(--ningyu-floating-gap);
-  transform: translateY(-50%);
-}
-
-.ningyu-immersive-edge--left {
-  left: max(var(--ningyu-floating-offset), var(--ningyu-safe-left));
-}
-
-.ningyu-immersive-edge--right {
-  right: max(var(--ningyu-floating-offset), var(--ningyu-safe-right));
-}
-
-.ningyu-immersive-edge button {
-  width: var(--ningyu-floating-size);
-  height: var(--ningyu-floating-size);
-  min-width: 44px;
-  min-height: 44px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.44);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.46);
-  color: rgba(17, 94, 89, 0.9);
-  line-height: 0;
-  box-shadow: 0 14px 30px -26px rgba(15, 118, 110, 0.44);
-  transition:
-    transform 220ms ease,
-    background 700ms ease,
-    border-color 700ms ease,
-    color 700ms ease,
-    box-shadow 260ms ease;
-}
-
-.ningyu-immersive-edge button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(45, 212, 191, 0.42);
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.ningyu-immersive-edge button:disabled {
-  cursor: progress;
-  opacity: 0.6;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge button {
-  border-color: rgba(71, 85, 105, 0.46);
-  background: rgba(15, 23, 42, 0.54);
-  color: #e2e8f0;
-  box-shadow: 0 14px 30px -26px rgba(2, 6, 23, 0.84);
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge button:hover {
-  border-color: rgba(52, 211, 153, 0.34);
-  background: rgba(30, 41, 59, 0.68);
-}
-
-.ningyu-immersive-edge .is-safety {
-  color: #047857;
-}
-
-.ningyu-immersive-edge .is-safety.is-watch {
-  color: #b45309;
-}
-
-.ningyu-immersive-edge .is-safety.is-error {
-  color: #dc2626;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge .is-safety {
-  color: #86efac;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge .is-safety.is-watch {
-  color: #fbbf24;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge .is-safety.is-error {
-  color: #fca5a5;
-}
-
 @keyframes ningyuPulse {
   0%, 100% {
     opacity: 0.72;
@@ -2852,37 +3122,20 @@
 }
 
 @media (max-width: 1080px) {
-  .ningyu-sidebar--right {
-    display: none;
+  .ningyu-shell__body {
+    padding-inline: 68px;
   }
 
-  .ningyu-immersive__main {
-    padding-inline: clamp(64px, 8vw, 86px);
-  }
-}
-
-@media (max-width: 900px) {
-  .ningyu-immersive {
-    --ningyu-floating-size: 46px;
-    --ningyu-floating-offset: clamp(16px, 2.4vw, 24px);
+  .ningyu-edge-panel--left {
+    left: 60px;
   }
 
-  .ningyu-immersive__main {
-    padding-inline: clamp(62px, 9vw, 78px);
-  }
-
-  .ningyu-immersive-paper {
-    width: min(100%, 900px);
+  .ningyu-edge-panel--right {
+    right: 60px;
   }
 }
 
 @media (max-width: 760px) {
-  .ningyu-immersive {
-    --ningyu-floating-size: 44px;
-    --ningyu-floating-gap: 8px;
-    --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 96px);
-  }
-
   .ningyu-header {
     padding: 12px 16px;
   }
@@ -2891,63 +3144,75 @@
     display: none;
   }
 
-  .ningyu-sidebar--left {
-    display: none;
+  .ningyu-shell__body {
+    padding: 0 0 82px;
   }
 
-  .ningyu-immersive__topbar {
-    padding: calc(12px + var(--ningyu-safe-top)) max(14px, var(--ningyu-safe-right)) 8px max(14px, var(--ningyu-safe-left));
-  }
-
-  .ningyu-immersive-brand {
-    max-width: calc(100vw - 28px - var(--ningyu-safe-left) - var(--ningyu-safe-right));
-    padding: 9px 12px;
-  }
-
-  .ningyu-immersive-status {
-    display: none;
-  }
-
-  .ningyu-immersive__main {
-    align-items: stretch;
-    padding: 8px max(14px, var(--ningyu-safe-right)) var(--ningyu-mobile-controls-space) max(14px, var(--ningyu-safe-left));
-  }
-
-  .ningyu-immersive-paper {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    border-radius: 24px;
-  }
-
-  .ningyu-immersive-edge {
+  .ningyu-floating-controls {
     top: auto;
-    bottom: calc(14px + var(--ningyu-safe-bottom));
-    grid-auto-flow: column;
-    grid-auto-columns: var(--ningyu-floating-size);
+    bottom: 12px;
     transform: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: calc(50vw - 18px);
+    gap: 8px;
   }
 
-  .ningyu-immersive-edge--left {
-    left: max(16px, var(--ningyu-safe-left));
+  .ningyu-floating-controls--left {
+    left: 12px;
   }
 
-  .ningyu-immersive-edge--right {
-    right: max(16px, var(--ningyu-safe-right));
+  .ningyu-floating-controls--right {
+    right: 12px;
   }
 
-  .ningyu-immersive-edge button {
-    width: var(--ningyu-floating-size);
-    height: var(--ningyu-floating-size);
+  .ningyu-edge-button {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+    font-size: 11px;
   }
 
-  .ningyu-immersive .ningyu-chat__scroll {
+  .ningyu-edge-panel {
+    top: 10px;
+    right: 10px;
+    bottom: 78px;
+    left: 10px;
+    width: auto;
+    border-radius: 22px;
+  }
+
+  .ningyu-safety-layer {
+    align-items: stretch;
+    padding: 10px 10px 78px;
+  }
+
+  .ningyu-safety-layer__sheet {
+    width: auto;
+    max-height: none;
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .ningyu-safety-layer__header {
+    grid-template-columns: 38px minmax(0, 1fr) 40px;
+  }
+
+  .ningyu-safety-layer__header > span,
+  .ningyu-safety-layer__close {
+    width: 38px;
+    height: 38px;
+  }
+
+  .ningyu-safety-layer__resources,
+  .ningyu-safety-layer__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .ningyu-chat__scroll,
+  .ningyu-chat__input {
     padding-left: 18px;
     padding-right: 18px;
-  }
-
-  .ningyu-immersive .ningyu-chat__input {
-    padding: 12px 16px 16px;
   }
 
   .ningyu-chat::before {
@@ -2961,6 +3226,25 @@
 
   .ningyu-chat__inner::before {
     left: 14px;
+  }
+
+  .ningyu-chat__input {
+    padding-bottom: 18px;
+  }
+
+  .ningyu-chat__input > * {
+    max-width: calc(100vw - 36px);
+  }
+
+  .ningyu-sidebar {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .ningyu-safety-entry,
+  .ningyu-tool-launcher__grid button,
+  .ningyu-tests-list button {
+    min-height: 56px;
   }
 
   .ningyu-welcome {
@@ -2992,635 +3276,22 @@
   }
 }
 
-.ningyu-immersive-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-  pointer-events: none;
-}
-
-.ningyu-immersive-overlay__scrim {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  background: rgba(15, 23, 42, 0.18);
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.ningyu-immersive-overlay__scrim:focus-visible {
-  outline: 3px solid rgba(20, 184, 166, 0.48);
-  outline-offset: -6px;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-overlay__scrim {
-  background: rgba(2, 6, 23, 0.34);
-}
-
-.ningyu-immersive-panel {
-  position: absolute;
-  top: 84px;
-  bottom: calc(26px + var(--ningyu-safe-bottom));
-  width: min(360px, calc(100vw - 36px));
-  display: flex;
-  min-height: 0;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 26px;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 26px 64px -42px rgba(15, 118, 110, 0.58);
-  overflow: hidden;
-  pointer-events: auto;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.ningyu-shell.is-night .ningyu-immersive-panel {
-  border-color: rgba(71, 85, 105, 0.48);
-  background: rgba(15, 23, 42, 0.68);
-  box-shadow: 0 26px 64px -42px rgba(2, 6, 23, 0.9);
-}
-
-.ningyu-immersive-panel--history {
-  left: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-left));
-}
-
-.ningyu-immersive-panel--tools {
-  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
-  width: min(336px, calc(100vw - 36px));
-}
-
-.ningyu-immersive-panel--toolsDashboard {
-  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
-  width: min(392px, calc(100vw - 36px));
-}
-
-.ningyu-immersive-panel > .ningyu-sidebar {
-  width: 100%;
-  height: 100%;
-  flex: 1 1 auto;
-  border: 0;
-  background: transparent;
-  display: flex;
-}
-
-.ningyu-immersive-panel > .ningyu-sidebar--right {
-  overflow-y: auto;
-}
-
-.ningyu-immersive-panel__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 4;
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.46);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.52);
-  color: rgba(17, 94, 89, 0.86);
-  line-height: 0;
-}
-
-.ningyu-immersive-edge button:focus-visible,
-.ningyu-immersive-panel__close:focus-visible,
-.ningyu-tools-launcher__grid button:focus-visible,
-.ningyu-tool-detail__back:focus-visible,
-.ningyu-tool-detail__actions button:focus-visible {
-  outline: 3px solid rgba(20, 184, 166, 0.48);
-  outline-offset: 3px;
-}
-
-.ningyu-shell.is-night .ningyu-immersive-edge button:focus-visible,
-.ningyu-shell.is-night .ningyu-immersive-panel__close:focus-visible,
-.ningyu-shell.is-night .ningyu-tools-launcher__grid button:focus-visible,
-.ningyu-shell.is-night .ningyu-tool-detail__back:focus-visible,
-.ningyu-shell.is-night .ningyu-tool-detail__actions button:focus-visible {
-  outline-color: rgba(134, 239, 172, 0.52);
-}
-
-.ningyu-immersive-panel__close .ningyu-icon {
-  transform: rotate(45deg);
-}
-
-.ningyu-shell.is-night .ningyu-immersive-panel__close {
-  border-color: rgba(71, 85, 105, 0.48);
-  background: rgba(15, 23, 42, 0.62);
-  color: #e2e8f0;
-}
-
-.ningyu-immersive-panel .ningyu-sidebar__top,
-.ningyu-immersive-panel .ningyu-panel-section:first-child {
-  padding-right: 54px;
-}
-
-.ningyu-tools-launcher {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  align-content: start;
-  gap: 18px;
-  padding: 24px;
-  color: rgba(19, 78, 74, 0.92);
-  overflow-y: auto;
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher {
-  color: #e2e8f0;
-}
-
-.ningyu-tools-launcher__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding-right: 40px;
-}
-
-.ningyu-tools-launcher__header > span {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(153, 246, 228, 0.36);
-  border-radius: 16px;
-  background: rgba(240, 253, 250, 0.32);
-  color: #0f766e;
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__header > span {
-  border-color: rgba(71, 85, 105, 0.52);
-  background: rgba(30, 41, 59, 0.38);
-  color: #86efac;
-}
-
-.ningyu-tools-launcher__header p,
-.ningyu-tools-launcher__header h2 {
-  margin: 0;
-}
-
-.ningyu-tools-launcher__header p {
-  color: rgba(17, 94, 89, 0.54);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__header p {
-  color: #94a3b8;
-}
-
-.ningyu-tools-launcher__header h2 {
-  margin-top: 4px;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: 0;
-}
-
-.ningyu-tools-launcher__grid {
-  display: grid;
-  gap: 10px;
-}
-
-.ningyu-tools-launcher__grid button {
-  width: 100%;
-  min-height: 78px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(153, 246, 228, 0.3);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.26);
-  color: inherit;
-  text-align: left;
-  transition:
-    transform 180ms ease,
-    border-color 220ms ease,
-    background 220ms ease,
-    box-shadow 220ms ease;
-}
-
-.ningyu-tools-launcher__grid button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(45, 212, 191, 0.44);
-  background: rgba(240, 253, 250, 0.36);
-  box-shadow: 0 16px 30px -28px rgba(15, 118, 110, 0.5);
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__grid button {
-  border-color: rgba(71, 85, 105, 0.42);
-  background: rgba(15, 23, 42, 0.26);
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__grid button:hover {
-  border-color: rgba(52, 211, 153, 0.32);
-  background: rgba(30, 41, 59, 0.42);
-}
-
-.ningyu-tools-launcher__grid button > .ningyu-icon {
-  width: 34px;
-  height: 34px;
-  padding: 8px;
-  border-radius: 14px;
-  background: rgba(240, 253, 250, 0.52);
-  color: #0f766e;
-}
-
-.ningyu-tools-launcher__grid button.is-safety > .ningyu-icon {
-  color: #047857;
-}
-
-.ningyu-tools-launcher__grid button.is-safety.is-watch > .ningyu-icon {
-  color: #b45309;
-}
-
-.ningyu-tools-launcher__grid button.is-safety.is-error > .ningyu-icon {
-  color: #dc2626;
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__grid button > .ningyu-icon {
-  background: rgba(15, 23, 42, 0.46);
-  color: #86efac;
-}
-
-.ningyu-tools-launcher__grid strong,
-.ningyu-tools-launcher__grid small {
-  display: block;
-}
-
-.ningyu-tools-launcher__grid strong {
-  font-size: 14px;
-  line-height: 1.25;
-}
-
-.ningyu-tools-launcher__grid small {
-  margin-top: 4px;
-  color: rgba(17, 94, 89, 0.62);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.ningyu-shell.is-night .ningyu-tools-launcher__grid small {
-  color: #94a3b8;
-}
-
-.ningyu-immersive-panel--toolDetail {
-  right: max(clamp(18px, 3vw, 34px), var(--ningyu-safe-right));
-  width: min(420px, calc(100vw - 36px));
-}
-
-.ningyu-tool-detail {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 18px;
-  padding: 24px;
-  color: rgba(19, 78, 74, 0.92);
-  overflow-y: auto;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail {
-  color: #e2e8f0;
-}
-
-.ningyu-tool-detail__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 12px;
-  padding-right: 40px;
-}
-
-.ningyu-tool-detail__back {
-  grid-column: 1 / -1;
-  justify-self: start;
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  border: 1px solid rgba(153, 246, 228, 0.3);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.26);
-  color: inherit;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.ningyu-tool-detail__back .ningyu-icon {
-  width: 15px;
-  height: 15px;
-}
-
-.ningyu-tool-detail__icon {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(153, 246, 228, 0.36);
-  border-radius: 16px;
-  background: rgba(240, 253, 250, 0.32);
-  color: #0f766e;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail__icon,
-.ningyu-shell.is-night .ningyu-tool-detail__back {
-  border-color: rgba(71, 85, 105, 0.52);
-  background: rgba(30, 41, 59, 0.38);
-  color: #86efac;
-}
-
-.ningyu-tool-detail__header p,
-.ningyu-tool-detail__header h2,
-.ningyu-tool-detail__header small {
-  margin: 0;
-}
-
-.ningyu-tool-detail__header p {
-  color: rgba(17, 94, 89, 0.54);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.ningyu-tool-detail__header h2 {
-  margin-top: 4px;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: 0;
-}
-
-.ningyu-tool-detail__header small {
-  display: block;
-  margin-top: 7px;
-  color: rgba(17, 94, 89, 0.62);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail__header p,
-.ningyu-shell.is-night .ningyu-tool-detail__header small {
-  color: #94a3b8;
-}
-
-.ningyu-tool-detail__content {
-  min-height: 0;
-  display: grid;
-  align-content: start;
-  gap: 14px;
-}
-
-.ningyu-tool-detail__actions,
-.ningyu-tool-detail__placeholder-list,
-.ningyu-tool-detail__status {
-  display: grid;
-  gap: 10px;
-}
-
-.ningyu-tool-detail__actions button,
-.ningyu-tool-detail__placeholder-list > div {
-  display: grid;
-  gap: 5px;
-  padding: 14px;
-  border: 1px solid rgba(153, 246, 228, 0.3);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.26);
-  color: inherit;
-  text-align: left;
-}
-
-.ningyu-tool-detail__actions button:hover {
-  border-color: rgba(45, 212, 191, 0.44);
-  background: rgba(240, 253, 250, 0.36);
-}
-
-.ningyu-tool-detail__actions button:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail__actions button,
-.ningyu-shell.is-night .ningyu-tool-detail__placeholder-list > div {
-  border-color: rgba(71, 85, 105, 0.42);
-  background: rgba(15, 23, 42, 0.26);
-}
-
-.ningyu-tool-detail__actions strong,
-.ningyu-tool-detail__placeholder-list strong {
-  font-size: 14px;
-  line-height: 1.35;
-}
-
-.ningyu-tool-detail__actions small,
-.ningyu-tool-detail__placeholder-list small {
-  color: rgba(17, 94, 89, 0.62);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail__actions small,
-.ningyu-shell.is-night .ningyu-tool-detail__placeholder-list small {
-  color: #94a3b8;
-}
-
-.ningyu-tool-detail__status {
-  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
-}
-
-.ningyu-tool-detail__status span {
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: rgba(240, 253, 250, 0.42);
-  color: rgba(17, 94, 89, 0.78);
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.ningyu-shell.is-night .ningyu-tool-detail__status span {
-  background: rgba(15, 23, 42, 0.42);
-  color: #cbd5e1;
-}
-
-@media (max-width: 760px) {
-  .ningyu-immersive-panel {
-    top: calc(70px + var(--ningyu-safe-top));
-    right: max(14px, var(--ningyu-safe-right));
-    bottom: var(--ningyu-mobile-controls-space);
-    left: max(14px, var(--ningyu-safe-left));
-    width: auto;
-    border-radius: 24px;
+@media (prefers-reduced-motion: reduce) {
+  .ningyu-brand__dot,
+  .ningyu-welcome__leaf,
+  .ningyu-message,
+  .ningyu-round-button,
+  .ningyu-edge-button,
+  .ningyu-safety,
+  .ningyu-safety-entry {
+    animation: none !important;
+    transition-duration: 1ms !important;
   }
 
-  .ningyu-immersive-panel--history,
-  .ningyu-immersive-panel--tools,
-  .ningyu-immersive-panel--toolsDashboard,
-  .ningyu-immersive-panel--toolDetail {
-    right: max(14px, var(--ningyu-safe-right));
-    left: max(14px, var(--ningyu-safe-left));
-    width: auto;
-  }
-
-  .ningyu-immersive-panel > .ningyu-sidebar,
-  .ningyu-immersive-panel > .ningyu-sidebar--left,
-  .ningyu-immersive-panel > .ningyu-sidebar--right {
-    display: flex;
-  }
-
-  .ningyu-tools-launcher {
-    padding: 20px;
-  }
-
-  .ningyu-tool-detail {
-    padding: 20px;
-  }
-}
-
-@media (max-width: 480px) {
-  .ningyu-immersive {
-    --ningyu-mobile-controls-space: calc(var(--ningyu-safe-bottom) + 104px);
-  }
-
-  .ningyu-immersive-brand img {
-    width: 32px;
-    height: 32px;
-  }
-
-  .ningyu-immersive-brand h1 {
-    font-size: 16px;
-  }
-
-  .ningyu-immersive-brand p {
-    max-width: 66vw;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ningyu-immersive__main {
-    padding-top: 6px;
-    padding-inline: max(10px, var(--ningyu-safe-left)) max(10px, var(--ningyu-safe-right));
-  }
-
-  .ningyu-immersive-paper {
-    border-radius: 20px;
-  }
-
-  .ningyu-immersive .ningyu-chat__scroll {
-    padding: 16px 14px 12px;
-  }
-
-  .ningyu-immersive .ningyu-chat__inner {
-    padding: 16px 10px;
-  }
-
-  .ningyu-input textarea {
-    min-height: 54px;
-    padding: 15px 64px 13px 18px;
-    font-size: 14px;
-  }
-
-  .ningyu-input button {
-    right: 8px;
-  }
-
-  .ningyu-message {
-    max-width: 92%;
-  }
-
-  .ningyu-tools-launcher {
-    padding: 18px;
-  }
-
-  .ningyu-tools-launcher__header {
-    gap: 10px;
-  }
-
-  .ningyu-tools-launcher__header h2 {
-    font-size: 17px;
-  }
-
-  .ningyu-tools-launcher__grid button {
-    min-height: 72px;
-    padding: 12px;
-  }
-}
-
-@media (max-height: 680px) {
-  .ningyu-immersive__topbar {
-    padding-top: calc(10px + var(--ningyu-safe-top));
-  }
-
-  .ningyu-immersive-brand {
-    padding-block: 8px;
-  }
-
-  .ningyu-immersive__main {
-    padding-top: 6px;
-    padding-bottom: calc(18px + var(--ningyu-safe-bottom));
-  }
-
-  .ningyu-immersive-paper {
-    height: 100%;
-  }
-
-  .ningyu-immersive .ningyu-chat__scroll {
-    padding-top: 16px;
-  }
-
-  .ningyu-immersive .ningyu-chat__input {
-    padding-top: 10px;
-    padding-bottom: 14px;
-  }
-}
-
-@media (max-width: 760px) and (max-height: 680px) {
-  .ningyu-immersive__main {
-    padding-bottom: calc(var(--ningyu-safe-bottom) + 82px);
-  }
-
-  .ningyu-immersive-panel {
-    top: calc(62px + var(--ningyu-safe-top));
-    bottom: calc(var(--ningyu-safe-bottom) + 76px);
-  }
-}
-
-@media (max-width: 760px) and (orientation: landscape) {
-  .ningyu-immersive-status {
-    display: none;
-  }
-
-  .ningyu-immersive__topbar {
-    padding-bottom: 4px;
-  }
-
-  .ningyu-immersive-brand p {
-    display: none;
-  }
-
-  .ningyu-immersive__main {
-    padding-bottom: calc(var(--ningyu-safe-bottom) + 72px);
-  }
-
-  .ningyu-immersive-edge {
-    bottom: calc(10px + var(--ningyu-safe-bottom));
-  }
-
-  .ningyu-immersive-panel {
-    top: calc(56px + var(--ningyu-safe-top));
-    bottom: calc(var(--ningyu-safe-bottom) + 64px);
+  .ningyu-edge-button:hover,
+  .ningyu-new-chat:hover,
+  .ningyu-thread:hover,
+  .ningyu-support-card:hover {
+    transform: none;
   }
 }

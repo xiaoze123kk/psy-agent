@@ -1,18 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 import bgDay from "../../imports/wcbg.png";
 import bgNight from "../../imports/wcbg_night.png";
 import logo from "../../imports/wind-chat-logo.png";
 import { api } from "../../api";
 import { useAppState } from "../state";
-import { graphUpdateDetail } from "./conversationQuality";
 import {
-  buildDailyOpeningSuggestions,
-  claimDailyOpeningSuggestionsForSession,
-  dismissDailyOpeningSuggestionsForSession,
-  getDailyOpeningSuggestionOwnerId,
-  getDailyOpeningSuggestionStorage,
-} from "./dailyOpeningSuggestions";
+  conversationFeedbackOptions,
+  formatDuration,
+  formatRagStatus,
+  graphUpdateDetail,
+  traceTimingFromSummary,
+  type ConversationFeedbackSubmitStatus,
+  type TraceTiming,
+} from "./conversationQuality";
+import {
+  buildConversationList,
+  buildDraftThread,
+  formatMessageTime,
+  toThreadListItemFromStartThread,
+  type ConversationListEntry,
+  type ConversationListSection,
+  type DraftThread,
+} from "./threadList";
 import {
   getMoodCheckInOwnerId,
   getMoodCheckInStorage,
@@ -22,12 +33,14 @@ import {
   shouldShowMoodCheckInControls,
 } from "./moodCheckInFrequency";
 import {
-  buildConversationList,
-  buildDraftThread,
-  formatMessageTime,
-  toThreadListItemFromStartThread,
-  type ConversationListEntry,
-} from "./threadList";
+  buildDailyOpeningSuggestions,
+  claimDailyOpeningSuggestionsForSession,
+  dismissDailyOpeningSuggestionsForSession,
+  getDailyOpeningSuggestionOwnerId,
+  getDailyOpeningSuggestionStorage,
+  markDailyOpeningSuggestionsSeenToday,
+  type DailyOpeningSuggestion,
+} from "./dailyOpeningSuggestions";
 import "./NingyuAppShell.css";
 import type {
   ChatStreamAcceptedEvent,
@@ -37,12 +50,14 @@ import type {
   ChatStreamGraphUpdateEvent,
   ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
+  ConversationFeedbackValue,
   MemoryMode,
   MessageItem,
   MoodLogResponse,
   MoodTrendResponse,
   RiskLevel,
   SendMessageRequest,
+  TestListItem,
   ThreadListItem,
   UserMode,
   WeeklySummaryResponse,
@@ -72,6 +87,13 @@ interface Message {
   riskLevel?: string | null;
   suggestedActions?: string[];
   metadata?: Record<string, unknown>;
+  turnId?: string | null;
+  assistantMessageId?: string | null;
+  trace?: TraceTiming | null;
+  feedbackState?: {
+    value: ConversationFeedbackValue;
+    status: ConversationFeedbackSubmitStatus;
+  };
   isStreaming?: boolean;
   deliveryStatus?: string;
   intent?: string;
@@ -80,8 +102,6 @@ interface Message {
   failureReason?: string | null;
 }
 
-type HomeEntry = ConversationListEntry;
-
 interface HomeSupportResource {
   id: string;
   icon: "phone" | "message";
@@ -89,12 +109,7 @@ interface HomeSupportResource {
   title: string;
 }
 
-interface QuickAction {
-  id: string;
-  label: string;
-  title: string;
-  kind: "chat";
-}
+type QuickAction = DailyOpeningSuggestion;
 
 interface QuickActionResult {
   title: string;
@@ -119,7 +134,6 @@ interface HighRiskSafetyState {
   error?: string;
 }
 
-type MessageFeedback = "helpful" | "not_helpful";
 type ShellPhase = "loading" | "ready" | "error";
 type SafetyTone = "loading" | "stable" | "watch" | "support" | "error";
 type MoodCheckInStatus = "idle" | "submitting" | "success" | "error";
@@ -127,82 +141,26 @@ type MoodTrendRange = "7d" | "30d";
 type MoodTrendStatus = "idle" | "loading" | "success" | "error";
 type WeeklySummaryStatus = "idle" | "loading" | "success" | "error";
 type QuickActionStatus = "idle" | "loading" | "success" | "error";
+type TestListStatus = "idle" | "loading" | "success" | "error";
 type ThreadListStatus = "idle" | "loading" | "success" | "error";
 type MessageListStatus = "idle" | "loading" | "success" | "error";
 type CreateThreadStatus = "idle" | "loading" | "success" | "error";
 type ChatStreamStatus = "idle" | "streaming" | "success" | "error";
+type ActiveConversation = { kind: "thread"; threadId: string } | { kind: "draft" } | null;
+type SendMessageHandler = (content: string) => boolean | Promise<boolean>;
+type DraftInputSeed = { id: string; text: string };
+type EdgePanel = "history" | "tools" | null;
 
-interface SafetyStateDisplay {
-  tone: SafetyTone;
-  label: string;
-  detail: string;
-}
+const focusableSelector =
+  'button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
-interface NingyuShellViewModel {
-  isNight: boolean;
-  displayName: string;
-  userMode: UserMode;
-  userModeLabel: string;
-  memoryModeLabel: string;
-  safetyState: SafetyStateDisplay;
-  isSafetyEntryOpen: boolean;
-  homeEntries: HomeEntry[];
-  homeSuggestions: QuickAction[];
-  statusTags: string[];
-  activeThreadId: string | null;
-  threadListStatus: ThreadListStatus;
-  threadListError: string | null;
-  createThreadStatus: CreateThreadStatus;
-  createThreadError: string | null;
-  messages: Message[];
-  messageListStatus: MessageListStatus;
-  messageListError: string | null;
-  messageFeedback: Record<string, MessageFeedback>;
-  chatStreamStatus: ChatStreamStatus;
-  chatStreamError: string | null;
-  graphUpdates: GraphUpdateItem[];
-  streamStatusDetail: string | null;
-  supportResources: HomeSupportResource[];
-  highRiskSafety: HighRiskSafetyState | null;
-  moodScore: number;
-  moodTags: string[];
-  moodNote: string;
-  moodStatus: MoodCheckInStatus;
-  moodError: string | null;
-  latestMoodLog: MoodLogResponse | null;
-  showMoodCheckInControls: boolean;
-  moodTrendRange: MoodTrendRange;
-  moodTrendStatus: MoodTrendStatus;
-  moodTrendError: string | null;
-  moodTrend: MoodTrendResponse | null;
-  weeklySummaryStatus: WeeklySummaryStatus;
-  weeklySummaryError: string | null;
-  weeklySummary: WeeklySummaryResponse | null;
-  quickActionStatus: QuickActionStatus;
-  activeQuickActionId: string | null;
-  quickActionError: string | null;
-  quickActionResult: QuickActionResult | null;
-}
+const edgePanelTriggerIds: Record<Exclude<EdgePanel, null>, string> = {
+  history: "ningyu-history-trigger",
+  tools: "ningyu-tools-trigger",
+};
 
-interface NingyuShellHandlers {
-  onToggleNight: () => void;
-  onToggleSafetyEntry: () => void;
-  onSelectThread: (threadId: string) => void;
-  onStartNewThread: () => void;
-  onSend: (content: string) => void | Promise<void>;
-  onMessageFeedback: (messageId: string, feedback: MessageFeedback) => void;
-  onMoodScoreChange: (score: number) => void;
-  onMoodTagToggle: (tagId: string) => void;
-  onMoodNoteChange: (note: string) => void;
-  onMoodSubmit: () => void;
-  onMoodTrendRangeChange: (range: MoodTrendRange) => void;
-  onQuickAction: (action: QuickAction) => void;
-  onRetrySafetyState: () => void;
-}
-
-interface NingyuThreeColumnShellProps {
-  viewModel: NingyuShellViewModel;
-  handlers: NingyuShellHandlers;
+function focusElementById(id: string) {
+  window.setTimeout(() => document.getElementById(id)?.focus(), 0);
 }
 
 interface MoodTagOption {
@@ -220,9 +178,11 @@ const moodTagOptions: MoodTagOption[] = [
 const moodScoreLabels = ["很低", "偏低", "还可以", "轻一点", "有力量"];
 
 const supportResources: HomeSupportResource[] = [
-  { id: "hotline", icon: "phone", label: "24小时热线", title: "400-xxx-xxxx" },
+  { id: "hotline", icon: "phone", label: "24小时热线", title: "010-82951332" },
   { id: "urgent-chat", icon: "message", label: "紧急咨询", title: "立即连接" },
 ];
+
+const dailyOpeningSuggestionSessionKeys = new Set<string>();
 const userModeLabels: Record<UserMode, string> = {
   teen: "青少年模式",
   adult: "标准模式",
@@ -234,6 +194,14 @@ const memoryModeLabels: Record<MemoryMode, string> = {
 };
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function extractSuggestedActions(metadata: Record<string, unknown>): string[] {
@@ -248,10 +216,6 @@ function extractSuggestedActions(metadata: Record<string, unknown>): string[] {
   return [];
 }
 
-function buildGraphUpdateDetail(update: ChatStreamGraphUpdateEvent): string {
-  return graphUpdateDetail(update) || "正在整理这一步的上下文";
-}
-
 function mapGraphUpdate(update: ChatStreamGraphUpdateEvent): GraphUpdateItem {
   return {
     id: crypto.randomUUID(),
@@ -259,7 +223,7 @@ function mapGraphUpdate(update: ChatStreamGraphUpdateEvent): GraphUpdateItem {
     status: update.status,
     riskLevel: update.risk_level,
     intent: update.intent,
-    detail: buildGraphUpdateDetail(update),
+    detail: graphUpdateDetail(update),
   };
 }
 
@@ -268,14 +232,28 @@ function isHighRiskLevel(riskLevel: RiskLevel | string | null | undefined): risk
 }
 
 function mapMessageItem(message: MessageItem): Message {
+  const metadata = message.metadata;
+  const accepted = recordOrNull(metadata.accepted);
+  const final = recordOrNull(metadata.final);
+  const traceSummary = recordOrNull(metadata.trace_summary) ?? recordOrNull(final?.trace_summary);
+  const turnId = stringOrNull(metadata.turn_id) ?? stringOrNull(final?.turn_id) ?? stringOrNull(accepted?.turn_id);
+  const assistantMessageId =
+    stringOrNull(metadata.assistant_message_id) ??
+    stringOrNull(final?.assistant_message_id) ??
+    (message.role === "assistant" ? message.id : null);
+
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     timestamp: formatMessageTime(message.created_at),
     riskLevel: message.risk_level,
-    suggestedActions: extractSuggestedActions(message.metadata),
-    metadata: message.metadata,
+    suggestedActions: extractSuggestedActions(metadata),
+    metadata,
+    turnId,
+    assistantMessageId,
+    deliveryStatus: stringOrNull(metadata.delivery_status) ?? stringOrNull(final?.delivery_status) ?? undefined,
+    trace: traceTimingFromSummary(traceSummary ?? undefined),
   };
 }
 
@@ -285,7 +263,6 @@ export function NingyuAppShell() {
     ageModeProfile,
     userMode,
     memoryMode,
-    privacySettings,
     isNight,
     toggleThemeMode,
   } = useAppState();
@@ -302,6 +279,15 @@ export function NingyuAppShell() {
   const [moodTrendStatus, setMoodTrendStatus] = useState<MoodTrendStatus>("idle");
   const [moodTrendError, setMoodTrendError] = useState<string | null>(null);
   const [moodTrend, setMoodTrend] = useState<MoodTrendResponse | null>(null);
+  const moodCheckInOwnerId = useMemo(() => getMoodCheckInOwnerId(currentUser?.user_id ?? currentUser?.username), [currentUser]);
+  const dailyOpeningSuggestionOwnerId = useMemo(
+    () => getDailyOpeningSuggestionOwnerId(currentUser?.user_id ?? currentUser?.username),
+    [currentUser],
+  );
+  const [recordedMoodCheckInDay, setRecordedMoodCheckInDay] = useState<string | null>(() =>
+    readRecordedMoodCheckInDay(getMoodCheckInStorage(), "local"),
+  );
+  const [isDailyOpeningSuggestionsVisible, setIsDailyOpeningSuggestionsVisible] = useState(false);
   const [weeklySummaryStatus, setWeeklySummaryStatus] = useState<WeeklySummaryStatus>("idle");
   const [weeklySummaryError, setWeeklySummaryError] = useState<string | null>(null);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummaryResponse | null>(null);
@@ -309,22 +295,33 @@ export function NingyuAppShell() {
   const [activeQuickActionId, setActiveQuickActionId] = useState<string | null>(null);
   const [quickActionError, setQuickActionError] = useState<string | null>(null);
   const [quickActionResult, setQuickActionResult] = useState<QuickActionResult | null>(null);
+  const [tests, setTests] = useState<TestListItem[]>([]);
+  const [testListStatus, setTestListStatus] = useState<TestListStatus>("idle");
+  const [testListError, setTestListError] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadListItem[]>([]);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
+  const [activeConversation, setActiveConversation] = useState<ActiveConversation>(null);
+  const activeThreadId = activeConversation?.kind === "thread" ? activeConversation.threadId : null;
+  const isDraftActive = activeConversation?.kind === "draft";
+  const activeConversationRef = useRef<ActiveConversation>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+  const sendOperationRef = useRef<string | null>(null);
+  const skipNextMessageLoadRef = useRef<string | null>(null);
+  const draftCreationRef = useRef<string | null>(null);
   const [threadListStatus, setThreadListStatus] = useState<ThreadListStatus>("idle");
   const [threadListError, setThreadListError] = useState<string | null>(null);
   const [messageListStatus, setMessageListStatus] = useState<MessageListStatus>("idle");
   const [messageListError, setMessageListError] = useState<string | null>(null);
   const [createThreadStatus, setCreateThreadStatus] = useState<CreateThreadStatus>("idle");
   const [createThreadError, setCreateThreadError] = useState<string | null>(null);
-  const [messageFeedback, setMessageFeedback] = useState<Record<string, MessageFeedback>>({});
   const [chatStreamStatus, setChatStreamStatus] = useState<ChatStreamStatus>("idle");
   const [chatStreamError, setChatStreamError] = useState<string | null>(null);
   const [graphUpdates, setGraphUpdates] = useState<GraphUpdateItem[]>([]);
   const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
+  const [draftInputSeed, setDraftInputSeed] = useState<DraftInputSeed | null>(null);
   const [highRiskSafety, setHighRiskSafety] = useState<HighRiskSafetyState | null>(null);
-  const dailyOpeningSessionKeysRef = useRef<Set<string>>(new Set());
-  const skipNextMessageLoadThreadIdRef = useRef<string | null>(null);
+  const [activeEdgePanel, setActiveEdgePanel] = useState<EdgePanel>(null);
+  const shouldReduceMotion = Boolean(useReducedMotion());
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -333,6 +330,54 @@ export function NingyuAppShell() {
 
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+    activeThreadIdRef.current = activeThreadId;
+  }, [activeConversation, activeThreadId]);
+
+  useEffect(() => {
+    if (highRiskSafety) {
+      setActiveEdgePanel(null);
+      setIsSafetyEntryOpen(true);
+    }
+  }, [highRiskSafety]);
+
+  const closeEdgePanel = useCallback(() => {
+    const closingPanel = activeEdgePanel;
+    setActiveEdgePanel(null);
+    if (closingPanel) {
+      focusElementById(edgePanelTriggerIds[closingPanel]);
+    }
+  }, [activeEdgePanel]);
+
+  const handleEdgePanelChange = useCallback((panel: EdgePanel) => {
+    if (panel === null) {
+      closeEdgePanel();
+      return;
+    }
+
+    setActiveEdgePanel(panel);
+  }, [closeEdgePanel]);
+
+  const closeSafetyLayer = useCallback(() => {
+    setIsSafetyEntryOpen(false);
+    focusElementById("ningyu-safety-trigger");
+  }, []);
+
+  useEffect(() => {
+    setRecordedMoodCheckInDay(readRecordedMoodCheckInDay(getMoodCheckInStorage(), moodCheckInOwnerId));
+  }, [moodCheckInOwnerId]);
+
+  useEffect(() => {
+    const claim = claimDailyOpeningSuggestionsForSession({
+      storage: getDailyOpeningSuggestionStorage(),
+      ownerId: dailyOpeningSuggestionOwnerId,
+      sessionKeys: dailyOpeningSuggestionSessionKeys,
+    });
+
+    setIsDailyOpeningSuggestionsVisible(claim.visible);
+  }, [dailyOpeningSuggestionOwnerId]);
 
   const loadMoodTrend = useCallback(async (range: MoodTrendRange) => {
     setMoodTrendStatus("loading");
@@ -362,6 +407,20 @@ export function NingyuAppShell() {
     }
   }, []);
 
+  const loadTests = useCallback(async () => {
+    setTestListStatus("loading");
+    setTestListError(null);
+
+    try {
+      const response = await api.listTests();
+      setTests(response.items);
+      setTestListStatus("success");
+    } catch (error) {
+      setTestListStatus("error");
+      setTestListError(error instanceof Error ? error.message : "Tests could not be loaded right now.");
+    }
+  }, []);
+
   const loadThreads = useCallback(async () => {
     setThreadListStatus("loading");
     setThreadListError(null);
@@ -370,7 +429,14 @@ export function NingyuAppShell() {
       const response = await api.listThreads();
       setThreads(response.items);
       setThreadListStatus("success");
-      setActiveThreadId((current) => current ?? response.items[0]?.thread_id ?? null);
+      setActiveConversation((current) => {
+        if (current?.kind === "draft" || current?.kind === "thread") {
+          return current;
+        }
+
+        const firstThreadId = response.items[0]?.thread_id;
+        return firstThreadId ? { kind: "thread", threadId: firstThreadId } : null;
+      });
     } catch (error) {
       setThreadListStatus("error");
       setThreadListError(error instanceof Error ? error.message : "最近对话加载失败，请稍后再试。");
@@ -383,20 +449,31 @@ export function NingyuAppShell() {
 
     try {
       const response = await api.listMessages(threadId);
+      if (activeThreadIdRef.current !== threadId) {
+        return;
+      }
+
       setMessages(response.items.map(mapMessageItem));
       setMessageListStatus("success");
     } catch (error) {
+      if (activeThreadIdRef.current !== threadId) {
+        return;
+      }
+
       setMessageListStatus("error");
       setMessageListError(error instanceof Error ? error.message : "消息列表加载失败，请稍后再试。");
     }
   }, []);
 
-  const activateThread = useCallback((thread: ThreadListItem, options: { clearMessages?: boolean } = {}) => {
+  const activateThread = useCallback((thread: ThreadListItem, options: { clearMessages?: boolean; skipMessageLoad?: boolean } = {}) => {
     setThreads((current) => [thread, ...current.filter((item) => item.thread_id !== thread.thread_id)]);
-    if (options.clearMessages) {
-      skipNextMessageLoadThreadIdRef.current = thread.thread_id;
+    draftCreationRef.current = null;
+    activeConversationRef.current = { kind: "thread", threadId: thread.thread_id };
+    activeThreadIdRef.current = thread.thread_id;
+    if (options.skipMessageLoad) {
+      skipNextMessageLoadRef.current = thread.thread_id;
     }
-    setActiveThreadId(thread.thread_id);
+    setActiveConversation({ kind: "thread", threadId: thread.thread_id });
     setMessageListError(null);
 
     if (options.clearMessages) {
@@ -405,24 +482,22 @@ export function NingyuAppShell() {
     }
   }, []);
 
-  const ensureThreadForSend = async (content: string): Promise<string> => {
-    if (activeThreadId) {
-      return activeThreadId;
-    }
-
-    setCreateThreadStatus("loading");
-    setCreateThreadError(null);
-
-    const thread = await api.startThread({
-      mode: "companion",
-      title: content.trim().slice(0, 18) || "新的陪伴对话",
-    });
-    const threadItem = toThreadListItemFromStartThread(thread);
-    skipNextMessageLoadThreadIdRef.current = threadItem.thread_id;
-    activateThread(threadItem, { clearMessages: false });
+  const activateDraft = useCallback(() => {
+    setDraftThread((current) => current ?? buildDraftThread());
+    activeConversationRef.current = { kind: "draft" };
+    activeThreadIdRef.current = null;
+    sendOperationRef.current = null;
+    setActiveConversation({ kind: "draft" });
+    setMessages([]);
+    setGraphUpdates([]);
+    setStreamStatusDetail(null);
+    setChatStreamStatus("idle");
+    setChatStreamError(null);
+    setMessageListError(null);
+    setMessageListStatus("success");
     setCreateThreadStatus("success");
-    return threadItem.thread_id;
-  };
+    setCreateThreadError(null);
+  }, []);
 
   useEffect(() => {
     void loadMoodTrend(moodTrendRange);
@@ -433,22 +508,27 @@ export function NingyuAppShell() {
   }, [loadWeeklySummary]);
 
   useEffect(() => {
+    void loadTests();
+  }, [loadTests]);
+
+  useEffect(() => {
     void loadThreads();
   }, [loadThreads]);
 
   useEffect(() => {
     if (!activeThreadId) {
-      setMessageListStatus("idle");
+      setMessageListStatus(isDraftActive ? "success" : "idle");
       return;
     }
 
-    if (skipNextMessageLoadThreadIdRef.current === activeThreadId) {
-      skipNextMessageLoadThreadIdRef.current = null;
+    if (skipNextMessageLoadRef.current === activeThreadId) {
+      skipNextMessageLoadRef.current = null;
+      setMessageListStatus("success");
       return;
     }
 
     void loadMessages(activeThreadId);
-  }, [activeThreadId, loadMessages]);
+  }, [activeThreadId, isDraftActive, loadMessages]);
 
   const safetyState = useMemo(() => {
     if (shellPhase === "loading") {
@@ -504,12 +584,6 @@ export function NingyuAppShell() {
   }, [highRiskSafety, isSafetyEntryOpen, messages.length, shellPhase]);
 
   const displayName = currentUser?.nickname || currentUser?.username || "正在倾听你";
-  const moodCheckInOwnerId = useMemo(() => getMoodCheckInOwnerId(currentUser?.user_id), [currentUser?.user_id]);
-  const moodCheckInStorage = useMemo(() => getMoodCheckInStorage(), []);
-  const recordedMoodCheckInDay = useMemo(
-    () => readRecordedMoodCheckInDay(moodCheckInStorage, moodCheckInOwnerId),
-    [moodCheckInOwnerId, moodCheckInStorage, latestMoodLog],
-  );
   const hasRecordedMoodToday = useMemo(
     () =>
       hasMoodCheckInForToday({
@@ -519,75 +593,42 @@ export function NingyuAppShell() {
       }),
     [latestMoodLog, moodTrend, recordedMoodCheckInDay],
   );
-  const showMoodCheckInControls = shouldShowMoodCheckInControls({ hasRecordedMoodToday });
   const conversationList = useMemo(
     () =>
       buildConversationList({
         threads,
-        draft: activeThreadId ? null : buildDraftThread(),
+        draft: draftThread,
         displayName,
         userMode,
         memoryMode,
+    }),
+    [displayName, draftThread, memoryMode, threads, userMode],
+  );
+  const homeSuggestions = useMemo(
+    () =>
+      buildDailyOpeningSuggestions({
+        userMode,
+        memoryMode,
+        isNight,
+        latestMoodLog,
+        moodTrend,
+        weeklySummary,
+        hasRecordedMoodToday,
       }),
-    [activeThreadId, displayName, memoryMode, threads, userMode],
+    [hasRecordedMoodToday, isNight, latestMoodLog, memoryMode, moodTrend, weeklySummary, userMode],
   );
-  const homeEntries = useMemo(
-    () => conversationList.sections.flatMap((section) => section.entries),
-    [conversationList],
-  );
-  const dailyOpeningOwnerId = useMemo(
-    () => getDailyOpeningSuggestionOwnerId(currentUser?.user_id),
-    [currentUser?.user_id],
-  );
-  const homeSuggestions = useMemo(() => {
-    const suggestions = buildDailyOpeningSuggestions({
-      userMode,
-      memoryMode,
-      isNight,
-      latestMoodLog,
-      moodTrend,
-      weeklySummary,
-      hasRecordedMoodToday,
-    });
-    const claim = claimDailyOpeningSuggestionsForSession({
-      storage: getDailyOpeningSuggestionStorage(),
-      ownerId: dailyOpeningOwnerId,
-      sessionKeys: dailyOpeningSessionKeysRef.current,
-    });
-
-    return claim.visible ? suggestions : [];
-  }, [
-    dailyOpeningOwnerId,
-    hasRecordedMoodToday,
-    isNight,
-    latestMoodLog,
-    memoryMode,
-    moodTrend,
-    userMode,
-    weeklySummary,
-  ]);
-  useEffect(
-    () => () => {
-      dismissDailyOpeningSuggestionsForSession({
-        ownerId: dailyOpeningOwnerId,
-        sessionKeys: dailyOpeningSessionKeysRef.current,
-      });
-    },
-    [dailyOpeningOwnerId],
-  );
+  const visibleHomeSuggestions = isDailyOpeningSuggestionsVisible ? homeSuggestions : [];
   const statusTags = useMemo(
     () => [
       userModeLabels[userMode],
       ageModeProfile.ageLabel,
       ageModeProfile.description,
       memoryModeLabels[memoryMode],
-      privacySettings.saveTranscript ? "保存转写" : "不保存转写",
     ],
     [
       memoryMode,
       ageModeProfile.ageLabel,
       ageModeProfile.description,
-      privacySettings.saveTranscript,
       userMode,
     ],
   );
@@ -648,18 +689,91 @@ export function NingyuAppShell() {
     [],
   );
 
-  const handleSend = async (content: string) => {
-    if (chatStreamStatus === "streaming") return;
+  const updateMessage = useCallback((messageId: string, updater: (message: Message) => Message) => {
+    setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
+  }, []);
 
-    let targetThreadId: string;
-    try {
-      targetThreadId = await ensureThreadForSend(content);
-    } catch (error) {
-      setChatStreamStatus("error");
-      setChatStreamError(error instanceof Error ? error.message : "新对话创建失败，请稍后再试。");
-      setCreateThreadStatus("error");
-      setCreateThreadError(error instanceof Error ? error.message : "新对话创建失败，请稍后再试。");
+  const handleSelectConversationEntry = useCallback((entry: ConversationListEntry) => {
+    if (entry.kind === "draft") {
+      activateDraft();
       return;
+    }
+
+    if (!entry.threadId) {
+      return;
+    }
+
+    sendOperationRef.current = null;
+    draftCreationRef.current = null;
+    activeConversationRef.current = { kind: "thread", threadId: entry.threadId };
+    activeThreadIdRef.current = entry.threadId;
+    setChatStreamStatus("idle");
+    setChatStreamError(null);
+    setCreateThreadStatus("success");
+    setCreateThreadError(null);
+    setStreamStatusDetail(null);
+    setGraphUpdates([]);
+    setMessages([]);
+    setMessageListError(null);
+    setActiveConversation({ kind: "thread", threadId: entry.threadId });
+  }, [activateDraft]);
+
+  const ensureThreadForSend = useCallback(async (): Promise<string | null> => {
+    if (activeThreadId) {
+      return activeThreadId;
+    }
+
+    if (!isDraftActive) {
+      return null;
+    }
+
+    const draftCreationId = crypto.randomUUID();
+    draftCreationRef.current = draftCreationId;
+    setCreateThreadStatus("loading");
+    setCreateThreadError(null);
+
+    try {
+      const thread = await api.startThread({
+        mode: "companion",
+        title: draftThread?.title ?? "新的陪伴对话",
+      });
+      if (
+        draftCreationRef.current !== draftCreationId ||
+        activeConversationRef.current?.kind !== "draft" ||
+        activeThreadIdRef.current !== null
+      ) {
+        return null;
+      }
+
+      const threadItem = toThreadListItemFromStartThread(thread);
+      setDraftThread(null);
+      draftCreationRef.current = null;
+      activeThreadIdRef.current = threadItem.thread_id;
+      activateThread(threadItem, { clearMessages: false, skipMessageLoad: true });
+      setCreateThreadStatus("success");
+      return threadItem.thread_id;
+    } catch (error) {
+      if (draftCreationRef.current !== draftCreationId || activeConversationRef.current?.kind !== "draft") {
+        return null;
+      }
+
+      draftCreationRef.current = null;
+      setCreateThreadStatus("error");
+      setCreateThreadError(error instanceof Error ? error.message : "新对话暂时没创建成功，可以稍后重试。");
+      return null;
+    }
+  }, [activeThreadId, activateThread, draftThread?.title, isDraftActive]);
+
+  const handleSend = async (content: string): Promise<boolean> => {
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return false;
+
+    const resolvedThreadId = await ensureThreadForSend();
+    if (!resolvedThreadId) {
+      if (activeConversationRef.current?.kind !== "thread" && activeThreadIdRef.current === null) {
+        setChatStreamStatus("error");
+        setChatStreamError(isDraftActive ? "新对话暂时没创建成功，可以稍后重试。" : "请先从左侧开始一段新对话，再发送消息。");
+      }
+      return false;
     }
 
     const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -671,6 +785,8 @@ export function NingyuAppShell() {
       input_type: "text",
       user_mode: userMode,
     };
+    const sendOperationId = crypto.randomUUID();
+    sendOperationRef.current = sendOperationId;
 
     setChatStreamStatus("streaming");
     setChatStreamError(null);
@@ -695,8 +811,13 @@ export function NingyuAppShell() {
 
     let hasReceivedStreamEvent = false;
 
+    void (async () => {
     try {
-      await api.streamMessage(targetThreadId, payload, (eventName, data) => {
+      await api.streamMessage(resolvedThreadId, payload, (eventName, data) => {
+        if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+          return;
+        }
+
         hasReceivedStreamEvent = true;
         const typedEvent = eventName as ChatStreamEventName;
 
@@ -706,7 +827,12 @@ export function NingyuAppShell() {
           setMessages((current) =>
             current.map((message) =>
               message.id === assistantMessageId
-                ? { ...message, turnStatus: accepted.turn_status, metadata: { ...message.metadata, accepted } }
+                ? {
+                    ...message,
+                    turnId: accepted.turn_id ?? message.turnId,
+                    turnStatus: accepted.turn_status,
+                    metadata: { ...message.metadata, accepted, turn_id: accepted.turn_id ?? message.turnId },
+                  }
                 : message,
             ),
           );
@@ -715,7 +841,25 @@ export function NingyuAppShell() {
 
         if (typedEvent === "graph_update") {
           const update = data as unknown as ChatStreamGraphUpdateEvent;
+          const graphTrace = traceTimingFromSummary({
+            node: update.node,
+            duration_ms: update.duration_ms,
+            retrieved_memory_count: update.retrieved_memory_count,
+            retrieved_example_count: update.retrieved_example_count,
+            rag_used: update.rag_used,
+            rag_skipped_reason: update.rag_skipped_reason,
+            rag_trace_summary: update.rag_trace_summary,
+          });
           setGraphUpdates((current) => [...current.slice(-4), mapGraphUpdate(update)]);
+          if (graphTrace) {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantMessageId && message.isStreaming
+                  ? { ...message, trace: { ...message.trace, ...graphTrace } }
+                  : message,
+              ),
+            );
+          }
           setStreamStatusDetail(update.status ? `${update.node} · ${update.status}` : `${update.node} 正在处理`);
           return;
         }
@@ -759,7 +903,16 @@ export function NingyuAppShell() {
                     sessionSummary: final.session_summary,
                     turnStatus: final.turn_status,
                     failureReason: final.failure_reason,
-                    metadata: { ...message.metadata, final },
+                    turnId: final.turn_id ?? message.turnId,
+                    assistantMessageId: final.assistant_message_id ?? final.message_id ?? message.assistantMessageId,
+                    trace: traceTimingFromSummary(final.trace_summary) ?? message.trace,
+                    metadata: {
+                      ...message.metadata,
+                      final,
+                      turn_id: final.turn_id ?? message.turnId,
+                      assistant_message_id: final.assistant_message_id ?? final.message_id ?? message.assistantMessageId,
+                      trace_summary: final.trace_summary,
+                    },
                   }
                 : message,
             ),
@@ -767,7 +920,7 @@ export function NingyuAppShell() {
           setStreamStatusDetail(final.delivery_status ? `完成 · ${final.delivery_status}` : "回复已完成");
           setChatStreamStatus("success");
           void handleHighRiskChatResponse({
-            threadId: final.thread_id || targetThreadId,
+            threadId: final.thread_id || resolvedThreadId,
             riskLevel: final.risk_level,
             detectedSignals: [
               final.intent,
@@ -800,19 +953,31 @@ export function NingyuAppShell() {
         }
       });
 
+      if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+        return;
+      }
+
       setMessages((current) =>
         current.map((message) => (message.id === assistantMessageId ? { ...message, isStreaming: false } : message)),
       );
       setChatStreamStatus((current) => (current === "streaming" ? "success" : current));
       setStreamStatusDetail((current) => current ?? "回复已完成");
     } catch (error) {
+      if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "流式回复失败，请稍后再试。";
 
       if (!hasReceivedStreamEvent) {
         setStreamStatusDetail("流式连接未开始，正在切换到普通发送...");
 
         try {
-          const fallback = await api.sendMessage(targetThreadId, payload);
+          const fallback = await api.sendMessage(resolvedThreadId, payload);
+          if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+            return;
+          }
+
           const assistant = fallback.assistant_message;
 
           setMessages((current) =>
@@ -838,7 +1003,14 @@ export function NingyuAppShell() {
                   sessionSummary: assistant?.session_summary,
                   turnStatus: fallback.turn_status,
                   failureReason: fallback.failure_reason,
-                  metadata: { ...item.metadata, fallback },
+                  turnId: fallback.turn_id ?? item.turnId,
+                  assistantMessageId: fallback.assistant_message_id ?? assistant?.id ?? item.assistantMessageId,
+                  metadata: {
+                    ...item.metadata,
+                    fallback,
+                    turn_id: fallback.turn_id ?? item.turnId,
+                    assistant_message_id: fallback.assistant_message_id ?? assistant?.id ?? item.assistantMessageId,
+                  },
                 };
               }
 
@@ -849,7 +1021,7 @@ export function NingyuAppShell() {
           setChatStreamError(null);
           setStreamStatusDetail(fallback.delivery_status ? `已用普通发送完成 · ${fallback.delivery_status}` : "已用普通发送完成");
           void handleHighRiskChatResponse({
-            threadId: fallback.thread_id || targetThreadId,
+            threadId: fallback.thread_id || resolvedThreadId,
             riskLevel: assistant?.risk_level ?? null,
             detectedSignals: [
               assistant?.intent,
@@ -860,6 +1032,10 @@ export function NingyuAppShell() {
           });
           return;
         } catch (fallbackError) {
+          if (sendOperationRef.current !== sendOperationId || activeThreadIdRef.current !== resolvedThreadId) {
+            return;
+          }
+
           const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "普通发送也失败了，请稍后再试。";
           setChatStreamError(fallbackMessage);
           setStreamStatusDetail("普通发送回退失败");
@@ -896,85 +1072,64 @@ export function NingyuAppShell() {
         ),
       );
     }
+    })();
+
+    return true;
   };
 
-  const addLocalAssistantMessage = (content: string, suggestedActions: string[] = []) => {
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content,
-        timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        suggestedActions,
-      },
-    ]);
-  };
+  const handleMessageFeedback = useCallback(
+    async (message: Message, feedback: ConversationFeedbackValue) => {
+      if (!activeThreadId || message.role !== "assistant" || !message.turnId) return;
+      if (message.feedbackState?.status === "submitting" || message.feedbackState?.status === "submitted") return;
 
-  const handleMessageFeedback = (messageId: string, feedback: MessageFeedback) => {
-    setMessageFeedback((current) => ({
-      ...current,
-      [messageId]: feedback,
-    }));
-  };
+      updateMessage(message.id, (current) => ({
+        ...current,
+        feedbackState: { value: feedback, status: "submitting" },
+      }));
+
+      try {
+        await api.submitConversationQualityFeedback({
+          thread_id: activeThreadId,
+          turn_id: message.turnId,
+          feedback,
+        });
+        updateMessage(message.id, (current) => ({
+          ...current,
+          feedbackState: { value: feedback, status: "submitted" },
+        }));
+      } catch {
+        updateMessage(message.id, (current) => ({
+          ...current,
+          feedbackState: { value: feedback, status: "failed" },
+        }));
+      }
+    },
+    [activeThreadId, updateMessage],
+  );
 
   const handleQuickAction = async (action: QuickAction) => {
-    if (quickActionStatus === "loading") return;
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return;
+    if (!isDailyOpeningSuggestionsVisible) return;
 
-    setQuickActionStatus("loading");
     setActiveQuickActionId(action.id);
     setQuickActionError(null);
+    setQuickActionResult(null);
+    setQuickActionStatus("success");
 
-    try {
-      const thread = await api.startThread({
-        mode: "companion",
-        title: action.title,
-      });
-
-      const result = {
-        title: "对话入口已准备",
-        detail: `已创建「${thread.title || action.title}」对话。`,
-        threadId: thread.thread_id,
-      };
-      setQuickActionResult(result);
-      addLocalAssistantMessage(`${result.detail} 你可以先在这里写下想说的话，后续聊天模块会接入完整消息流。`, [
-        "我想从刚才那句话开始",
-        "帮我把感受拆小一点",
-      ]);
-
-      activateThread(
-        {
-          ...toThreadListItemFromStartThread(thread),
-          title: thread.title || action.title,
-        },
-        { clearMessages: false },
-      );
-      setQuickActionStatus("success");
-    } catch (error) {
-      setQuickActionStatus("error");
-      setQuickActionError(error instanceof Error ? error.message : "快捷入口启动失败，请稍后再试。");
-    } finally {
-      setActiveQuickActionId(null);
-    }
+    markDailyOpeningSuggestionsSeenToday(getDailyOpeningSuggestionStorage(), dailyOpeningSuggestionOwnerId);
+    dismissDailyOpeningSuggestionsForSession({
+      ownerId: dailyOpeningSuggestionOwnerId,
+      sessionKeys: dailyOpeningSuggestionSessionKeys,
+    });
+    setIsDailyOpeningSuggestionsVisible(false);
+    activateDraft();
+    setDraftInputSeed({ id: crypto.randomUUID(), text: action.title });
+    setActiveQuickActionId(null);
   };
 
-  const handleStartNewThread = async () => {
-    if (createThreadStatus === "loading") return;
-
-    setCreateThreadStatus("loading");
-    setCreateThreadError(null);
-
-    try {
-      const thread = await api.startThread({
-        mode: "companion",
-        title: "新的陪伴对话",
-      });
-      activateThread(toThreadListItemFromStartThread(thread), { clearMessages: true });
-      setCreateThreadStatus("success");
-    } catch (error) {
-      setCreateThreadStatus("error");
-      setCreateThreadError(error instanceof Error ? error.message : "新对话创建失败，请稍后再试。");
-    }
+  const handleStartNewThread = () => {
+    if (chatStreamStatus === "streaming" || createThreadStatus === "loading") return;
+    activateDraft();
   };
 
   const handleMoodTagToggle = (tagId: string) => {
@@ -986,7 +1141,7 @@ export function NingyuAppShell() {
   };
 
   const handleMoodSubmit = async () => {
-    if (moodStatus === "submitting") return;
+    if (moodStatus === "submitting" || hasRecordedMoodToday) return;
 
     setMoodStatus("submitting");
     setMoodError(null);
@@ -997,8 +1152,8 @@ export function NingyuAppShell() {
         mood_tags: moodTags,
         note: moodNote.trim() ? moodNote.trim() : null,
       });
-      markMoodCheckInRecordedToday(moodCheckInStorage, moodCheckInOwnerId);
       setLatestMoodLog(response);
+      setRecordedMoodCheckInDay(markMoodCheckInRecordedToday(getMoodCheckInStorage(), moodCheckInOwnerId));
       setMoodStatus("success");
       setMoodNote("");
       await loadMoodTrend(moodTrendRange);
@@ -1009,719 +1164,309 @@ export function NingyuAppShell() {
     }
   };
 
-  const shellViewModel: NingyuShellViewModel = {
-    isNight,
-    displayName,
-    userMode,
-    userModeLabel: userModeLabels[userMode],
-    memoryModeLabel: memoryModeLabels[memoryMode],
-    safetyState,
-    isSafetyEntryOpen,
-    homeEntries,
-    homeSuggestions,
-    statusTags,
-    activeThreadId,
-    threadListStatus,
-    threadListError,
-    createThreadStatus,
-    createThreadError,
-    messages,
-    messageListStatus,
-    messageListError,
-    messageFeedback,
-    chatStreamStatus,
-    chatStreamError,
-    graphUpdates,
-    streamStatusDetail,
-    supportResources,
-    highRiskSafety,
-    moodScore,
-    moodTags,
-    moodNote,
-    moodStatus,
-    moodError,
-    latestMoodLog,
-    showMoodCheckInControls,
-    moodTrendRange,
-    moodTrendStatus,
-    moodTrendError,
-    moodTrend,
-    weeklySummaryStatus,
-    weeklySummaryError,
-    weeklySummary,
-    quickActionStatus,
-    activeQuickActionId,
-    quickActionError,
-    quickActionResult,
-  };
-
-  const shellHandlers: NingyuShellHandlers = {
-    onToggleNight: toggleThemeMode,
-    onToggleSafetyEntry: handleToggleSafetyEntry,
-    onSelectThread: setActiveThreadId,
-    onStartNewThread: handleStartNewThread,
-    onSend: handleSend,
-    onMessageFeedback: handleMessageFeedback,
-    onMoodScoreChange: setMoodScore,
-    onMoodTagToggle: handleMoodTagToggle,
-    onMoodNoteChange: setMoodNote,
-    onMoodSubmit: handleMoodSubmit,
-    onMoodTrendRangeChange: setMoodTrendRange,
-    onQuickAction: handleQuickAction,
-    onRetrySafetyState: handleRetrySafetyState,
-  };
-
-  return <ImmersiveNingyuShellSafe viewModel={shellViewModel} handlers={shellHandlers} />;
+  return (
+    <div className={`ningyu-transition ${isNight ? "is-night" : "is-day"}`}>
+      <div className={`ningyu-shell ${isNight ? "is-night" : "is-day"}`}>
+        <Background isNight={isNight} />
+        <Header
+          isNight={isNight}
+          displayName={displayName}
+          userModeLabel={userModeLabels[userMode]}
+          safetyState={safetyState}
+          onToggleNight={toggleThemeMode}
+          onToggleSafetyEntry={handleToggleSafetyEntry}
+          isSafetyEntryOpen={isSafetyEntryOpen}
+        />
+        <main className="ningyu-shell__body">
+          <FloatingEdgeControls
+            activePanel={activeEdgePanel}
+            createThreadStatus={createThreadStatus}
+            isSafetyEntryOpen={isSafetyEntryOpen}
+            shouldReduceMotion={shouldReduceMotion}
+            onPanelChange={handleEdgePanelChange}
+            onStartNewThread={handleStartNewThread}
+            onToggleSafetyEntry={handleToggleSafetyEntry}
+          />
+          <AnimatePresence>
+            {activeEdgePanel === "history" ? (
+              <AccessibleLayer
+                className="ningyu-edge-panel ningyu-edge-panel--left"
+                id="ningyu-history-panel"
+                key="history"
+                label="History panel"
+                shouldReduceMotion={shouldReduceMotion}
+                slideDirection="left"
+                onClose={closeEdgePanel}
+              >
+                <button className="ningyu-edge-panel__close" type="button" onClick={closeEdgePanel} aria-label="Close history panel">
+                  x
+                </button>
+                <LeftSidebar
+                  isNight={isNight}
+                  sections={conversationList.sections}
+                  activeConversation={activeConversation}
+                  threadListStatus={threadListStatus}
+                  threadListError={threadListError}
+                  hiddenEmptyThreadCount={conversationList.hiddenEmptyThreadCount}
+                  overflowThreadCount={conversationList.overflowThreadCount}
+                  createThreadStatus={createThreadStatus}
+                  createThreadError={createThreadError}
+                  userModeLabel={userModeLabels[userMode]}
+                  memoryModeLabel={memoryModeLabels[memoryMode]}
+                  onSelectEntry={handleSelectConversationEntry}
+                  onStartNewThread={handleStartNewThread}
+                />
+              </AccessibleLayer>
+            ) : null}
+          </AnimatePresence>
+          <ChatWorkspace
+            isNight={isNight}
+            shouldReduceMotion={shouldReduceMotion}
+            primarySuggestion={homeSuggestions[0]?.label ?? ""}
+            primarySupportLabel={supportResources[1].title}
+            messages={messages}
+            messageListStatus={messageListStatus}
+            messageListError={messageListError}
+            activeThreadId={activeThreadId}
+            isInputDisabled={chatStreamStatus === "streaming" || createThreadStatus === "loading"}
+            chatStreamStatus={chatStreamStatus}
+            chatStreamError={chatStreamError}
+            graphUpdates={graphUpdates}
+            streamStatusDetail={streamStatusDetail}
+            draftInputSeed={draftInputSeed}
+            onSend={handleSend}
+            onMessageFeedback={handleMessageFeedback}
+          />
+          <AnimatePresence>
+            {activeEdgePanel === "tools" ? (
+              <AccessibleLayer
+                className="ningyu-edge-panel ningyu-edge-panel--right"
+                id="ningyu-tools-panel"
+                key="tools"
+                label="Tools panel"
+                shouldReduceMotion={shouldReduceMotion}
+                slideDirection="right"
+                onClose={closeEdgePanel}
+              >
+                <button className="ningyu-edge-panel__close" type="button" onClick={closeEdgePanel} aria-label="Close tools panel">
+                  x
+                </button>
+                <RightPanel
+                  isNight={isNight}
+                  currentUserLabel={displayName}
+                  userMode={userMode}
+                  statusTags={statusTags}
+                  suggestions={visibleHomeSuggestions}
+                  supportResources={supportResources}
+                  safetyState={safetyState}
+                  isSafetyEntryOpen={isSafetyEntryOpen}
+                  highRiskSafety={highRiskSafety}
+                  moodScore={moodScore}
+                  moodTags={moodTags}
+                  moodNote={moodNote}
+                  moodStatus={moodStatus}
+                  moodError={moodError}
+                  latestMoodLog={latestMoodLog}
+                  hasRecordedMoodToday={hasRecordedMoodToday}
+                  moodTrendRange={moodTrendRange}
+                  moodTrendStatus={moodTrendStatus}
+                  moodTrendError={moodTrendError}
+                  moodTrend={moodTrend}
+                  weeklySummaryStatus={weeklySummaryStatus}
+                  weeklySummaryError={weeklySummaryError}
+                  weeklySummary={weeklySummary}
+                  quickActionStatus={quickActionStatus}
+                  activeQuickActionId={activeQuickActionId}
+                  quickActionError={quickActionError}
+                  quickActionResult={quickActionResult}
+                  tests={tests}
+                  testListStatus={testListStatus}
+                  testListError={testListError}
+                  onMoodScoreChange={setMoodScore}
+                  onMoodTagToggle={handleMoodTagToggle}
+                  onMoodNoteChange={setMoodNote}
+                  onMoodSubmit={handleMoodSubmit}
+                  onMoodTrendRangeChange={setMoodTrendRange}
+                  onQuickAction={handleQuickAction}
+                  onToggleSafetyEntry={handleToggleSafetyEntry}
+                  onRetrySafetyState={handleRetrySafetyState}
+                />
+              </AccessibleLayer>
+            ) : null}
+          </AnimatePresence>
+          <AnimatePresence>
+            {isSafetyEntryOpen ? (
+              <SafetySupportLayer
+                key="safety-layer"
+                userMode={userMode}
+                safetyState={safetyState}
+                highRiskSafety={highRiskSafety}
+                supportResources={supportResources}
+                shouldReduceMotion={shouldReduceMotion}
+                onClose={closeSafetyLayer}
+                onRetrySafetyState={handleRetrySafetyState}
+              />
+            ) : null}
+          </AnimatePresence>
+        </main>
+      </div>
+    </div>
+  );
 }
 
-type ImmersiveToolPanel = "toolMood" | "toolJourney" | "toolSuggestions" | "toolSettings";
-type ImmersivePanel = "history" | "tools" | "toolsDashboard" | ImmersiveToolPanel;
-
-const immersivePanelLabels: Record<ImmersivePanel, string> = {
-  history: "History panel",
-  tools: "Tools launcher",
-  toolsDashboard: "Tools panel",
-  toolMood: "\u4eca\u5929\u7684\u5fc3\u60c5",
-  toolJourney: "\u6211\u7684\u65c5\u7a0b",
-  toolSuggestions: "\u5efa\u8bae\u884c\u52a8",
-  toolSettings: "\u8bbe\u7f6e\u4e0e\u6d4b\u8bd5",
-};
-
-function isImmersiveToolPanel(panel: ImmersivePanel | null): panel is ImmersiveToolPanel {
-  return panel === "toolMood" || panel === "toolJourney" || panel === "toolSuggestions" || panel === "toolSettings";
-}
-
-function ImmersiveNingyuShellSafe({ viewModel, handlers }: NingyuThreeColumnShellProps) {
-  const [activePanel, setActivePanel] = useState<ImmersivePanel | null>(null);
-  const panelRef = useRef<HTMLElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const openPanel = useCallback((panel: ImmersivePanel, trigger?: HTMLElement) => {
-    if (trigger) {
-      restoreFocusRef.current = trigger;
-    }
-    setActivePanel(panel);
-  }, []);
-  const closePanel = useCallback(() => {
-    const focusTarget = restoreFocusRef.current;
-    setActivePanel(null);
-    window.setTimeout(() => {
-      if (focusTarget && document.contains(focusTarget)) {
-        focusTarget.focus();
-      }
-    }, 0);
-  }, []);
-  const openSafetyPanel = (trigger?: HTMLElement) => {
-    openPanel("toolsDashboard", trigger);
-    if (!viewModel.isSafetyEntryOpen) {
-      handlers.onToggleSafetyEntry();
-    }
-  };
+function AccessibleLayer({
+  children,
+  className,
+  id,
+  label,
+  shouldReduceMotion,
+  slideDirection,
+  onClose,
+}: {
+  children: ReactNode;
+  className: string;
+  id: string;
+  label: string;
+  shouldReduceMotion: boolean;
+  slideDirection: "left" | "right";
+  onClose: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const offset = slideDirection === "left" ? -28 : 28;
 
   useEffect(() => {
-    if (!activePanel) return;
+    const target = layerRef.current?.querySelector<HTMLElement>(focusableSelector) ?? layerRef.current;
+    target?.focus();
+  }, []);
 
-    const getFocusableElements = () => {
-      const panel = panelRef.current;
-      if (!panel) return [];
-
-      return Array.from(
-        panel.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => element.offsetParent !== null);
-    };
-
-    const focusFirstElement = window.requestAnimationFrame(() => {
-      const firstFocusable = getFocusableElements()[0];
-      firstFocusable?.focus();
-    });
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closePanel();
-        return;
-      }
-
-      if (event.key === "Tab") {
-        const focusableElements = getFocusableElements();
-        if (!focusableElements.length) return;
-
-        const firstElement = focusableElements[0];
-        const lastElement = focusableElements[focusableElements.length - 1];
-        const activeElement = document.activeElement;
-
-        if (event.shiftKey && activeElement === firstElement) {
-          event.preventDefault();
-          lastElement.focus();
-          return;
+  return (
+    <motion.div
+      ref={layerRef}
+      className={className}
+      id={id}
+      role="dialog"
+      aria-modal="false"
+      aria-label={label}
+      tabIndex={-1}
+      initial={shouldReduceMotion ? false : { opacity: 0, x: offset }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={shouldReduceMotion ? undefined : { opacity: 0, x: offset / 2 }}
+      transition={{ duration: 0.24, ease: "easeOut" }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
         }
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
-        if (!event.shiftKey && activeElement === lastElement) {
-          event.preventDefault();
-          firstElement.focus();
+function SafetySupportLayer({
+  userMode,
+  safetyState,
+  highRiskSafety,
+  supportResources,
+  shouldReduceMotion,
+  onClose,
+  onRetrySafetyState,
+}: {
+  userMode: UserMode;
+  safetyState: { tone: SafetyTone; label: string; detail: string };
+  highRiskSafety: HighRiskSafetyState | null;
+  supportResources: HomeSupportResource[];
+  shouldReduceMotion: boolean;
+  onClose: () => void;
+  onRetrySafetyState: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const isHighRisk = Boolean(highRiskSafety);
+
+  useEffect(() => {
+    const target = layerRef.current?.querySelector<HTMLElement>(focusableSelector) ?? layerRef.current;
+    target?.focus();
+  }, []);
+
+  return (
+    <motion.div
+      className="ningyu-safety-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ningyu-safety-layer-title"
+      initial={shouldReduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
         }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.cancelAnimationFrame(focusFirstElement);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [activePanel, closePanel]);
-
-  return (
-    <div className={`ningyu-transition ${viewModel.isNight ? "is-night" : "is-day"}`}>
-      <div className={`ningyu-shell ningyu-immersive ${viewModel.isNight ? "is-night" : "is-day"}`}>
-        <Background isNight={viewModel.isNight} />
-        <header className="ningyu-immersive__topbar">
-          <div className="ningyu-immersive-brand">
-            <img src={logo} alt="Ningyu Logo" />
-            <div>
-              <h1>{"\u5b81\u8bed"}</h1>
-              <p>
-                <span className="ningyu-brand__dot" />
-                {viewModel.displayName} / {viewModel.userModeLabel}
-              </p>
-            </div>
-          </div>
-          <div className="ningyu-immersive-status" aria-live="polite">
-            <span className={`ningyu-immersive-status__tone is-${viewModel.safetyState.tone}`} />
-            <strong>{viewModel.safetyState.label}</strong>
-            <small>{viewModel.memoryModeLabel}</small>
-          </div>
-        </header>
-
-        <main className="ningyu-immersive__main">
-          <div className="ningyu-immersive-paper">
-            <ChatWorkspace
-              isNight={viewModel.isNight}
-              displayName={viewModel.displayName}
-              userModeLabel={viewModel.userModeLabel}
-              primarySuggestion={viewModel.homeSuggestions[0]?.label ?? ""}
-              primarySupportLabel={viewModel.supportResources[1].title}
-              messages={viewModel.messages}
-              messageListStatus={viewModel.messageListStatus}
-              messageListError={viewModel.messageListError}
-              activeThreadId={viewModel.activeThreadId}
-              messageFeedback={viewModel.messageFeedback}
-              chatStreamStatus={viewModel.chatStreamStatus}
-              chatStreamError={viewModel.chatStreamError}
-              graphUpdates={viewModel.graphUpdates}
-              streamStatusDetail={viewModel.streamStatusDetail}
-              onSend={handlers.onSend}
-              onMessageFeedback={handlers.onMessageFeedback}
-            />
-          </div>
-        </main>
-
-        <div className="ningyu-immersive-edge ningyu-immersive-edge--left" aria-label="Floating navigation">
-          <button type="button" onClick={handlers.onStartNewThread} disabled={viewModel.createThreadStatus === "loading"} aria-label="Start new chat">
-            <Icon name="plus" />
-          </button>
-          <button
-            type="button"
-            onClick={(event) => openPanel("history", event.currentTarget)}
-            aria-controls="ningyu-immersive-active-panel"
-            aria-expanded={activePanel === "history"}
-            aria-haspopup="dialog"
-            aria-label="Chat history"
-            title="Chat history"
-          >
-            <Icon name="clock" />
-          </button>
-        </div>
-
-        <div className="ningyu-immersive-edge ningyu-immersive-edge--right" aria-label="Floating tools">
-          <button type="button" onClick={handlers.onToggleNight} aria-label={viewModel.isNight ? "Switch to day mode" : "Switch to night mode"} title={viewModel.isNight ? "Switch to day mode" : "Switch to night mode"}>
-            <Icon name={viewModel.isNight ? "moon" : "sun"} />
-          </button>
-          <button
-            className={`is-safety is-${viewModel.safetyState.tone}`}
-            type="button"
-            onClick={(event) => openSafetyPanel(event.currentTarget)}
-            aria-controls="ningyu-immersive-active-panel"
-            aria-expanded={activePanel === "toolsDashboard"}
-            aria-haspopup="dialog"
-            aria-label="Safety support"
-            title="Safety support"
-          >
+      }}
+    >
+      <button className="ningyu-safety-layer__backdrop" type="button" tabIndex={-1} aria-label="Close safety support" onClick={onClose} />
+      <motion.div
+        ref={layerRef}
+        className={`ningyu-safety-layer__sheet ${isHighRisk ? "is-high-risk" : ""}`}
+        tabIndex={-1}
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ duration: 0.24, ease: "easeOut" }}
+      >
+        <div className="ningyu-safety-layer__header">
+          <span>
             <Icon name="shield" />
-          </button>
-          <button
-            type="button"
-            onClick={(event) => openPanel("tools", event.currentTarget)}
-            aria-controls="ningyu-immersive-active-panel"
-            aria-expanded={activePanel === "tools" || isImmersiveToolPanel(activePanel)}
-            aria-haspopup="dialog"
-            aria-label="Tools"
-            title="Tools"
-          >
-            <Icon name="spark" />
-          </button>
-        </div>
-
-        {activePanel ? (
-          <div className={`ningyu-immersive-overlay is-${activePanel}`}>
-            <button className="ningyu-immersive-overlay__scrim" type="button" onClick={closePanel} aria-label="Close panel" />
-            <aside
-              id="ningyu-immersive-active-panel"
-              ref={panelRef}
-              className={`ningyu-immersive-panel ningyu-immersive-panel--${activePanel} ${isImmersiveToolPanel(activePanel) ? "ningyu-immersive-panel--toolDetail" : ""}`}
-              role="dialog"
-              aria-modal="true"
-              aria-label={immersivePanelLabels[activePanel]}
-            >
-              <button className="ningyu-immersive-panel__close" type="button" onClick={closePanel} aria-label="Close panel" title="Close panel" data-autofocus="true">
-                <Icon name="plus" />
-              </button>
-              {activePanel === "history" ? (
-                <LeftSidebar
-                  isNight={viewModel.isNight}
-                  entries={viewModel.homeEntries}
-                  activeThreadId={viewModel.activeThreadId}
-                  threadListStatus={viewModel.threadListStatus}
-                  threadListError={viewModel.threadListError}
-                  createThreadStatus={viewModel.createThreadStatus}
-                  createThreadError={viewModel.createThreadError}
-                  userModeLabel={viewModel.userModeLabel}
-                  memoryModeLabel={viewModel.memoryModeLabel}
-                  onSelectThread={(threadId) => {
-                    handlers.onSelectThread(threadId);
-                    closePanel();
-                  }}
-                  onStartNewThread={handlers.onStartNewThread}
-                />
-              ) : activePanel === "tools" ? (
-                <ToolsLauncher
-                  onSelectTool={(panel) => setActivePanel(panel)}
-                />
-              ) : isImmersiveToolPanel(activePanel) ? (
-                <ToolDetailPanel
-                  panel={activePanel}
-                  viewModel={viewModel}
-                  handlers={handlers}
-                  onBack={() => setActivePanel("tools")}
-                />
-              ) : (
-                <RightPanel
-                  isNight={viewModel.isNight}
-                  currentUserLabel={viewModel.displayName}
-                  userMode={viewModel.userMode}
-                  statusTags={viewModel.statusTags}
-                  suggestions={viewModel.homeSuggestions}
-                  supportResources={viewModel.supportResources}
-                  safetyState={viewModel.safetyState}
-                  isSafetyEntryOpen={viewModel.isSafetyEntryOpen}
-                  highRiskSafety={viewModel.highRiskSafety}
-                  moodScore={viewModel.moodScore}
-                  moodTags={viewModel.moodTags}
-                  moodNote={viewModel.moodNote}
-                  moodStatus={viewModel.moodStatus}
-                  moodError={viewModel.moodError}
-                  latestMoodLog={viewModel.latestMoodLog}
-                  showMoodCheckInControls={viewModel.showMoodCheckInControls}
-                  moodTrendRange={viewModel.moodTrendRange}
-                  moodTrendStatus={viewModel.moodTrendStatus}
-                  moodTrendError={viewModel.moodTrendError}
-                  moodTrend={viewModel.moodTrend}
-                  weeklySummaryStatus={viewModel.weeklySummaryStatus}
-                  weeklySummaryError={viewModel.weeklySummaryError}
-                  weeklySummary={viewModel.weeklySummary}
-                  quickActionStatus={viewModel.quickActionStatus}
-                  activeQuickActionId={viewModel.activeQuickActionId}
-                  quickActionError={viewModel.quickActionError}
-                  quickActionResult={viewModel.quickActionResult}
-                  onMoodScoreChange={handlers.onMoodScoreChange}
-                  onMoodTagToggle={handlers.onMoodTagToggle}
-                  onMoodNoteChange={handlers.onMoodNoteChange}
-                  onMoodSubmit={handlers.onMoodSubmit}
-                  onMoodTrendRangeChange={handlers.onMoodTrendRangeChange}
-                  onQuickAction={handlers.onQuickAction}
-                  onToggleSafetyEntry={handlers.onToggleSafetyEntry}
-                  onRetrySafetyState={handlers.onRetrySafetyState}
-                />
-              )}
-            </aside>
+          </span>
+          <div>
+            <small>{isHighRisk ? "High priority safety layer" : "Safety support"}</small>
+            <h2 id="ningyu-safety-layer-title">{isHighRisk ? "Put safety first right now" : "Safety support is ready"}</h2>
+            <p>{safetyState.detail}</p>
           </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ToolsLauncher({
-  onSelectTool,
-}: {
-  onSelectTool: (panel: ImmersiveToolPanel) => void;
-}) {
-  const entries: Array<{ id: string; panel: ImmersiveToolPanel; icon: IconName; title: string; detail: string }> = [
-    {
-      id: "mood",
-      panel: "toolMood",
-      icon: "heart",
-      title: "\u4eca\u5929\u7684\u5fc3\u60c5",
-      detail: "\u8bb0\u5f55\u6b64\u523b\u72b6\u6001\uff0c\u4e0d\u6253\u5f00\u5b8c\u6574\u4eea\u8868\u76d8",
-    },
-    {
-      id: "journey",
-      panel: "toolJourney",
-      icon: "leaf",
-      title: "\u6211\u7684\u65c5\u7a0b",
-      detail: "\u67e5\u770b\u8d8b\u52bf\u548c\u672c\u5468\u5c0f\u7ed3",
-    },
-    {
-      id: "suggestions",
-      panel: "toolSuggestions",
-      icon: "light",
-      title: "\u5efa\u8bae\u884c\u52a8",
-      detail: "\u6253\u5f00\u53ef\u6267\u884c\u7684\u4f4e\u538b\u5efa\u8bae",
-    },
-    {
-      id: "settings",
-      panel: "toolSettings",
-      icon: "settings",
-      title: "\u8bbe\u7f6e / \u6d4b\u8bd5",
-      detail: "\u67e5\u770b\u8bb0\u5fc6\u3001\u9690\u79c1\u548c\u6d4b\u8bd5\u5165\u53e3",
-    },
-  ];
-
-  return (
-    <section className="ningyu-tools-launcher" aria-labelledby="ningyu-tools-launcher-title">
-      <div className="ningyu-tools-launcher__header">
-        <span>
-          <Icon name="spark" />
-        </span>
-        <div>
-          <p>{"\u5de5\u5177"}</p>
-          <h2 id="ningyu-tools-launcher-title">{"\u5148\u9009\u4e00\u4e2a\u5165\u53e3"}</h2>
-        </div>
-      </div>
-      <div className="ningyu-tools-launcher__grid">
-        {entries.map((entry) => (
-          <button key={entry.id} type="button" onClick={() => onSelectTool(entry.panel)}>
-            <Icon name={entry.icon} />
-            <span>
-              <strong>{entry.title}</strong>
-              <small>{entry.detail}</small>
-            </span>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ToolDetailPanel({
-  panel,
-  viewModel,
-  handlers,
-  onBack,
-}: {
-  panel: ImmersiveToolPanel;
-  viewModel: NingyuShellViewModel;
-  handlers: NingyuShellHandlers;
-  onBack: () => void;
-}) {
-  const panelMeta: Record<ImmersiveToolPanel, { icon: IconName; eyebrow: string; title: string; detail: string }> = {
-    toolMood: {
-      icon: "heart",
-      eyebrow: "\u5f53\u4e0b\u8bb0\u5f55",
-      title: "\u4eca\u5929\u7684\u5fc3\u60c5",
-      detail: "\u5148\u628a\u6b64\u523b\u7684\u611f\u53d7\u653e\u4e0b\u6765\uff0c\u4e0d\u9700\u8981\u7acb\u523b\u5206\u6790\u5b83\u3002",
-    },
-    toolJourney: {
-      icon: "leaf",
-      eyebrow: "\u8f7b\u91cf\u56de\u770b",
-      title: "\u6211\u7684\u65c5\u7a0b",
-      detail: "\u8fd9\u91cc\u4fdd\u7559\u8d8b\u52bf\u548c\u672c\u5468\u5c0f\u7ed3\uff0c\u540e\u7eed\u4f1a\u7ee7\u7eed\u6536\u655b\u6210\u66f4\u5b89\u9759\u7684\u624b\u8d26\u5c42\u3002",
-    },
-    toolSuggestions: {
-      icon: "light",
-      eyebrow: "\u4e0b\u4e00\u5c0f\u6b65",
-      title: "\u5efa\u8bae\u884c\u52a8",
-      detail: "\u9009\u4e00\u4e2a\u5f53\u4e0b\u80fd\u505a\u7684\u5c0f\u52a8\u4f5c\uff0c\u5b83\u4f1a\u7ee7\u7eed\u8d70\u539f\u6709\u5feb\u6377\u884c\u52a8\u903b\u8f91\u3002",
-    },
-    toolSettings: {
-      icon: "settings",
-      eyebrow: "\u8bbe\u7f6e\u4e0e\u6d4b\u8bd5",
-      title: "\u8bbe\u7f6e / \u6d4b\u8bd5",
-      detail: "\u4fdd\u7559\u8bb0\u5fc6\u3001\u9690\u79c1\u3001\u6d4b\u8bd5\u7b49\u5165\u53e3\u7684\u53ef\u8fbe\u6027\uff0c\u672a\u5b8c\u6574\u8fc1\u79fb\u7684\u529f\u80fd\u5148\u660e\u786e\u6807\u6ce8\u3002",
-    },
-  };
-  const meta = panelMeta[panel];
-
-  return (
-    <section className="ningyu-tool-detail" aria-labelledby={`ningyu-${panel}-title`}>
-      <div className="ningyu-tool-detail__header">
-        <button className="ningyu-tool-detail__back" type="button" onClick={onBack}>
-          <Icon name="clock" />
-          <span>{"\u8fd4\u56de"}</span>
-        </button>
-        <span className="ningyu-tool-detail__icon">
-          <Icon name={meta.icon} />
-        </span>
-        <div>
-          <p>{meta.eyebrow}</p>
-          <h2 id={`ningyu-${panel}-title`}>{meta.title}</h2>
-          <small>{meta.detail}</small>
-        </div>
-      </div>
-
-      {panel === "toolMood" ? (
-        <div className="ningyu-tool-detail__content">
-          <MoodCheckIn
-            moodScore={viewModel.moodScore}
-            moodTags={viewModel.moodTags}
-            moodNote={viewModel.moodNote}
-            moodStatus={viewModel.moodStatus}
-            moodError={viewModel.moodError}
-            latestMoodLog={viewModel.latestMoodLog}
-            showControls={viewModel.showMoodCheckInControls}
-            onMoodScoreChange={handlers.onMoodScoreChange}
-            onMoodTagToggle={handlers.onMoodTagToggle}
-            onMoodNoteChange={handlers.onMoodNoteChange}
-            onMoodSubmit={handlers.onMoodSubmit}
-          />
-        </div>
-      ) : null}
-
-      {panel === "toolJourney" ? (
-        <div className="ningyu-tool-detail__content">
-          <MoodTrendCard
-            range={viewModel.moodTrendRange}
-            status={viewModel.moodTrendStatus}
-            error={viewModel.moodTrendError}
-            trend={viewModel.moodTrend}
-            onRangeChange={handlers.onMoodTrendRangeChange}
-          />
-          <WeeklySummaryCard
-            status={viewModel.weeklySummaryStatus}
-            error={viewModel.weeklySummaryError}
-            summary={viewModel.weeklySummary}
-          />
-        </div>
-      ) : null}
-
-      {panel === "toolSuggestions" ? (
-        <div className="ningyu-tool-detail__content">
-          <div className="ningyu-tool-detail__actions" aria-label={meta.title}>
-            {viewModel.homeSuggestions.map((suggestion) => (
-              <button
-                key={suggestion.id}
-                className={viewModel.activeQuickActionId === suggestion.id ? "is-loading" : ""}
-                type="button"
-                onClick={() => handlers.onQuickAction(suggestion)}
-                disabled={viewModel.quickActionStatus === "loading"}
-              >
-                <strong>{viewModel.activeQuickActionId === suggestion.id ? "\u51c6\u5907\u4e2d..." : suggestion.label}</strong>
-                <small>{suggestion.title}</small>
-              </button>
-            ))}
-          </div>
-          <QuickActionFeedback
-            status={viewModel.quickActionStatus}
-            error={viewModel.quickActionError}
-            result={viewModel.quickActionResult}
-          />
-        </div>
-      ) : null}
-
-      {panel === "toolSettings" ? (
-        <div className="ningyu-tool-detail__content">
-          <div className="ningyu-tool-detail__status">
-            <span>{viewModel.userModeLabel}</span>
-            <span>{viewModel.memoryModeLabel}</span>
-            {viewModel.statusTags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
-          </div>
-          <div className="ningyu-tool-detail__placeholder-list">
-            <div>
-              <strong>{"\u6d4b\u8bd5\u5217\u8868"}</strong>
-              <small>{"\u5c06\u5728 7.x \u8fc1\u79fb\uff0c\u4fdd\u7559 published gate \u4e0e attempt API \u7ea6\u675f\u3002"}</small>
-            </div>
-            <div>
-              <strong>{"\u8bb0\u5fc6\u4e0e\u9690\u79c1"}</strong>
-              <small>{"\u5f53\u524d\u72b6\u6001\u4ecd\u53ef\u67e5\u770b\uff0c\u672a\u5236\u9020\u53ef\u70b9\u51fb\u7684\u5047\u529f\u80fd\u3002"}</small>
-            </div>
-            <div>
-              <strong>{"\u8bed\u97f3\u4e0e\u77e5\u8bc6\u5e93"}</strong>
-              <small>{"\u4fdd\u7559\u540e\u7eed\u5165\u53e3\u4f4d\u7f6e\uff0c\u5b8c\u6574\u80fd\u529b\u5c06\u5728\u5bf9\u5e94\u4efb\u52a1\u4e2d\u63a5\u5165\u3002"}</small>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-/*
-function ImmersiveNingyuShell({ viewModel, handlers }: NingyuThreeColumnShellProps) {
-  return (
-    <div className={`ningyu-transition ${viewModel.isNight ? "is-night" : "is-day"}`}>
-      <div className={`ningyu-shell ningyu-immersive ${viewModel.isNight ? "is-night" : "is-day"}`}>
-        <Background isNight={viewModel.isNight} />
-        <header className="ningyu-immersive__topbar">
-          <div className="ningyu-immersive-brand">
-            <img src={logo} alt="ç€¹ä½½î‡¢ Logo" />
-            <div>
-              <h1>ç€¹ä½½î‡¢</h1>
-              <p>
-                <span className="ningyu-brand__dot" />
-                {viewModel.displayName} è·¯ {viewModel.userModeLabel}
-              </p>
-            </div>
-          </div>
-          <div className="ningyu-immersive-status" aria-live="polite">
-            <span className={`ningyu-immersive-status__tone is-${viewModel.safetyState.tone}`} />
-            <strong>{viewModel.safetyState.label}</strong>
-            <small>{viewModel.memoryModeLabel}</small>
-          </div>
-        </header>
-
-        <main className="ningyu-immersive__main">
-          <div className="ningyu-immersive-paper">
-            <ChatWorkspace
-              isNight={viewModel.isNight}
-              displayName={viewModel.displayName}
-              userModeLabel={viewModel.userModeLabel}
-              primarySuggestion={viewModel.homeSuggestions[0]?.label ?? ""}
-              primarySupportLabel={viewModel.supportResources[1].title}
-              messages={viewModel.messages}
-              messageListStatus={viewModel.messageListStatus}
-              messageListError={viewModel.messageListError}
-              activeThreadId={viewModel.activeThreadId}
-              messageFeedback={viewModel.messageFeedback}
-              chatStreamStatus={viewModel.chatStreamStatus}
-              chatStreamError={viewModel.chatStreamError}
-              graphUpdates={viewModel.graphUpdates}
-              streamStatusDetail={viewModel.streamStatusDetail}
-              onSend={handlers.onSend}
-              onMessageFeedback={handlers.onMessageFeedback}
-            />
-          </div>
-        </main>
-
-        <div className="ningyu-immersive-edge ningyu-immersive-edge--left" aria-label="æµ®åŠ¨å¯¼èˆª">
-          <button type="button" onClick={handlers.onStartNewThread} disabled={viewModel.createThreadStatus === "loading"} aria-label="å¼€å§‹æ–°å¯¹è¯">
-            <Icon name="plus" />
-          </button>
-          <button type="button" aria-label="åŽ†å²å¯¹è¯">
-            <Icon name="clock" />
+          <button className="ningyu-safety-layer__close" type="button" onClick={onClose} aria-label="Close safety support">
+            x
           </button>
         </div>
 
-        <div className="ningyu-immersive-edge ningyu-immersive-edge--right" aria-label="æµ®åŠ¨å·¥å…·">
-          <button type="button" onClick={handlers.onToggleNight} aria-label={viewModel.isNight ? "åˆ‡æ¢åˆ°æ—¥é—´" : "åˆ‡æ¢åˆ°å¤œé—´"}>
-            <Icon name={viewModel.isNight ? "moon" : "sun"} />
-          </button>
-          <button
-            className={`is-safety is-${viewModel.safetyState.tone}`}
-            type="button"
-            onClick={handlers.onToggleSafetyEntry}
-            aria-expanded={viewModel.isSafetyEntryOpen}
-            aria-label="ç€¹å¤Šåé€îˆ›å¯”"
-          >
-            <Icon name="shield" />
-          </button>
-          <button type="button" aria-label="å·¥å…·">
-            <Icon name="spark" />
-          </button>
+        <div className="ningyu-safety-layer__status" aria-live="polite">
+          <strong>{safetyState.label}</strong>
+          <span>
+            {highRiskSafety
+              ? highRiskSafety.eventStatus === "recorded"
+                ? `Crisis event recorded${highRiskSafety.eventId ? ` · ${highRiskSafety.eventId}` : ""}`
+                : highRiskSafety.eventStatus === "recording"
+                  ? "Recording crisis event..."
+                  : highRiskSafety.error || "Crisis event record failed, but support remains available."
+              : "No high-risk event is currently active."}
+          </span>
         </div>
-      </div>
-    </div>
-  );
-}
 
-*/
-function NingyuThreeColumnShell({ viewModel, handlers }: NingyuThreeColumnShellProps) {
-  return (
-    <div className={`ningyu-transition ${viewModel.isNight ? "is-night" : "is-day"}`}>
-      <div className={`ningyu-shell ${viewModel.isNight ? "is-night" : "is-day"}`}>
-        <Background isNight={viewModel.isNight} />
-        <Header
-          isNight={viewModel.isNight}
-          displayName={viewModel.displayName}
-          userModeLabel={viewModel.userModeLabel}
-          safetyState={viewModel.safetyState}
-          onToggleNight={handlers.onToggleNight}
-          onToggleSafetyEntry={handlers.onToggleSafetyEntry}
-          isSafetyEntryOpen={viewModel.isSafetyEntryOpen}
-        />
-        <div className="ningyu-shell__body">
-          <LeftSidebar
-            isNight={viewModel.isNight}
-            entries={viewModel.homeEntries}
-            activeThreadId={viewModel.activeThreadId}
-            threadListStatus={viewModel.threadListStatus}
-            threadListError={viewModel.threadListError}
-            createThreadStatus={viewModel.createThreadStatus}
-            createThreadError={viewModel.createThreadError}
-            userModeLabel={viewModel.userModeLabel}
-            memoryModeLabel={viewModel.memoryModeLabel}
-            onSelectThread={handlers.onSelectThread}
-            onStartNewThread={handlers.onStartNewThread}
-          />
-          <ChatWorkspace
-            isNight={viewModel.isNight}
-            displayName={viewModel.displayName}
-            userModeLabel={viewModel.userModeLabel}
-            primarySuggestion={viewModel.homeSuggestions[0]?.label ?? ""}
-            primarySupportLabel={viewModel.supportResources[1].title}
-            messages={viewModel.messages}
-            messageListStatus={viewModel.messageListStatus}
-            messageListError={viewModel.messageListError}
-            activeThreadId={viewModel.activeThreadId}
-            messageFeedback={viewModel.messageFeedback}
-            chatStreamStatus={viewModel.chatStreamStatus}
-            chatStreamError={viewModel.chatStreamError}
-            graphUpdates={viewModel.graphUpdates}
-            streamStatusDetail={viewModel.streamStatusDetail}
-            onSend={handlers.onSend}
-            onMessageFeedback={handlers.onMessageFeedback}
-          />
-          <RightPanel
-            isNight={viewModel.isNight}
-            currentUserLabel={viewModel.displayName}
-            userMode={viewModel.userMode}
-            statusTags={viewModel.statusTags}
-            suggestions={viewModel.homeSuggestions}
-            supportResources={viewModel.supportResources}
-            safetyState={viewModel.safetyState}
-            isSafetyEntryOpen={viewModel.isSafetyEntryOpen}
-            highRiskSafety={viewModel.highRiskSafety}
-            moodScore={viewModel.moodScore}
-            moodTags={viewModel.moodTags}
-            moodNote={viewModel.moodNote}
-            moodStatus={viewModel.moodStatus}
-            moodError={viewModel.moodError}
-            latestMoodLog={viewModel.latestMoodLog}
-            showMoodCheckInControls={viewModel.showMoodCheckInControls}
-            moodTrendRange={viewModel.moodTrendRange}
-            moodTrendStatus={viewModel.moodTrendStatus}
-            moodTrendError={viewModel.moodTrendError}
-            moodTrend={viewModel.moodTrend}
-            weeklySummaryStatus={viewModel.weeklySummaryStatus}
-            weeklySummaryError={viewModel.weeklySummaryError}
-            weeklySummary={viewModel.weeklySummary}
-            quickActionStatus={viewModel.quickActionStatus}
-            activeQuickActionId={viewModel.activeQuickActionId}
-            quickActionError={viewModel.quickActionError}
-            quickActionResult={viewModel.quickActionResult}
-            onMoodScoreChange={handlers.onMoodScoreChange}
-            onMoodTagToggle={handlers.onMoodTagToggle}
-            onMoodNoteChange={handlers.onMoodNoteChange}
-            onMoodSubmit={handlers.onMoodSubmit}
-            onMoodTrendRangeChange={handlers.onMoodTrendRangeChange}
-            onQuickAction={handlers.onQuickAction}
-            onToggleSafetyEntry={handlers.onToggleSafetyEntry}
-            onRetrySafetyState={handlers.onRetrySafetyState}
-          />
+        <SafetyGuidanceCard userMode={userMode} highRiskSafety={highRiskSafety} />
+
+        <div className="ningyu-safety-layer__resources" aria-label="Safety resources">
+          {supportResources.map((resource) => (
+            <button className="ningyu-support-card" key={resource.id} type="button">
+              <Icon name={resource.icon} />
+              <span>
+                <small>{resource.label}</small>
+                {resource.title}
+              </span>
+            </button>
+          ))}
         </div>
-      </div>
-    </div>
+
+        <div className="ningyu-safety-layer__actions">
+          <button type="button" onClick={onRetrySafetyState}>
+            Recheck safety status
+          </button>
+          <button type="button" onClick={onClose}>
+            Return to chat
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1809,29 +1554,114 @@ function Header({
   );
 }
 
+function FloatingEdgeControls({
+  activePanel,
+  createThreadStatus,
+  isSafetyEntryOpen,
+  shouldReduceMotion,
+  onPanelChange,
+  onStartNewThread,
+  onToggleSafetyEntry,
+}: {
+  activePanel: EdgePanel;
+  createThreadStatus: CreateThreadStatus;
+  isSafetyEntryOpen: boolean;
+  shouldReduceMotion: boolean;
+  onPanelChange: (panel: EdgePanel) => void;
+  onStartNewThread: () => void;
+  onToggleSafetyEntry: () => void;
+}) {
+  const openPanel = (panel: Exclude<EdgePanel, null>) => {
+    onPanelChange(activePanel === panel ? null : panel);
+  };
+
+  return (
+    <>
+      <motion.div
+        className="ningyu-floating-controls ningyu-floating-controls--left"
+        initial={shouldReduceMotion ? false : { opacity: 0, x: -16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.38, delay: 0.2, ease: "easeOut" }}
+      >
+        <button
+          id="ningyu-history-trigger"
+          className={activePanel === "history" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
+          type="button"
+          onClick={() => openPanel("history")}
+          aria-expanded={activePanel === "history"}
+          aria-controls="ningyu-history-panel"
+          aria-label="Open history panel"
+        >
+          <Icon name="clock" />
+          <span>History</span>
+        </button>
+        <button className="ningyu-edge-button" type="button" onClick={onStartNewThread} disabled={createThreadStatus === "loading"} aria-label="Start new chat">
+          <Icon name="plus" />
+          <span>New</span>
+        </button>
+      </motion.div>
+
+      <motion.div
+        className="ningyu-floating-controls ningyu-floating-controls--right"
+        initial={shouldReduceMotion ? false : { opacity: 0, x: 16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.38, delay: 0.28, ease: "easeOut" }}
+      >
+        <button
+          id="ningyu-tools-trigger"
+          className={activePanel === "tools" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
+          type="button"
+          onClick={() => openPanel("tools")}
+          aria-expanded={activePanel === "tools"}
+          aria-controls="ningyu-tools-panel"
+          aria-label="Open tools panel"
+        >
+          <Icon name="spark" />
+          <span>Tools</span>
+        </button>
+        <button
+          id="ningyu-safety-trigger"
+          className={isSafetyEntryOpen ? "ningyu-edge-button ningyu-edge-button--safety is-active" : "ningyu-edge-button ningyu-edge-button--safety"}
+          type="button"
+          onClick={onToggleSafetyEntry}
+          aria-expanded={isSafetyEntryOpen}
+          aria-label="Open safety support"
+        >
+          <Icon name="shield" />
+          <span>SOS</span>
+        </button>
+      </motion.div>
+    </>
+  );
+}
+
 function LeftSidebar({
   isNight,
-  entries,
-  activeThreadId,
+  sections,
+  activeConversation,
   threadListStatus,
   threadListError,
+  hiddenEmptyThreadCount,
+  overflowThreadCount,
   createThreadStatus,
   createThreadError,
   userModeLabel,
   memoryModeLabel,
-  onSelectThread,
+  onSelectEntry,
   onStartNewThread,
 }: {
   isNight: boolean;
-  entries: HomeEntry[];
-  activeThreadId: string | null;
+  sections: ConversationListSection[];
+  activeConversation: ActiveConversation;
   threadListStatus: ThreadListStatus;
   threadListError: string | null;
+  hiddenEmptyThreadCount: number;
+  overflowThreadCount: number;
   createThreadStatus: CreateThreadStatus;
   createThreadError: string | null;
   userModeLabel: string;
   memoryModeLabel: string;
-  onSelectThread: (threadId: string) => void;
+  onSelectEntry: (entry: ConversationListEntry) => void;
   onStartNewThread: () => void;
 }) {
   return (
@@ -1857,28 +1687,56 @@ function LeftSidebar({
         </div>
         {threadListStatus === "loading" ? <p className="ningyu-thread-list__state">正在加载最近对话...</p> : null}
         {threadListStatus === "error" ? <p className="ningyu-thread-list__state is-error">{threadListError}</p> : null}
-        {entries.map((entry) => (
-          <button
-            className={`ningyu-thread ${entry.threadId && entry.threadId === activeThreadId ? "is-active" : ""}`}
-            key={entry.id}
-            type="button"
-            onClick={entry.threadId ? () => onSelectThread(entry.threadId as string) : undefined}
-            disabled={!entry.threadId}
-          >
-            <span className="ningyu-thread__dot" />
-            <span className="ningyu-thread__content">
-              <strong>{entry.title}</strong>
-              <span>{entry.preview}</span>
-              <small>{entry.time}</small>
-            </span>
-            {entry.riskLevel || entry.mode ? (
-              <span className="ningyu-thread__meta">
-                {entry.riskLevel ? <small>{entry.riskLevel}</small> : null}
-                {entry.mode ? <small>{entry.mode}</small> : null}
-              </span>
-            ) : null}
-          </button>
+        {sections.map((section) => (
+          <div className="ningyu-thread-group" key={section.id}>
+            <div className="ningyu-thread-group__header">
+              <span>{section.label}</span>
+              {section.countLabel ? <em className="ningyu-thread-group__count">{section.countLabel}</em> : null}
+            </div>
+            {section.entries.map((entry) => {
+              const isActive =
+                entry.kind === "draft"
+                  ? activeConversation?.kind === "draft"
+                  : Boolean(entry.threadId && activeConversation?.kind === "thread" && entry.threadId === activeConversation.threadId);
+              const isSelectable = entry.kind === "draft" || Boolean(entry.threadId);
+
+              return (
+                <button
+                  className={[
+                    "ningyu-thread",
+                    entry.kind === "draft" ? "ningyu-thread--draft" : "",
+                    isActive ? "is-active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={entry.id}
+                  type="button"
+                  onClick={isSelectable ? () => onSelectEntry(entry) : undefined}
+                  disabled={!isSelectable}
+                >
+                  <span className="ningyu-thread__dot" />
+                  <span className="ningyu-thread__content">
+                    <strong>{entry.title}</strong>
+                    <span>{entry.preview}</span>
+                    <small>{entry.time}</small>
+                  </span>
+                  {entry.kind === "thread" && (entry.riskLevel || entry.mode) ? (
+                    <span className="ningyu-thread__meta">
+                      {entry.riskLevel ? <small>{entry.riskLevel}</small> : null}
+                      {entry.mode ? <small>{entry.mode}</small> : null}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         ))}
+        {hiddenEmptyThreadCount > 0 ? (
+          <p className="ningyu-thread-list__meta">已隐藏 {hiddenEmptyThreadCount} 个未开始的空白对话</p>
+        ) : null}
+        {overflowThreadCount > 0 ? (
+          <p className="ningyu-thread-list__meta">还有 {overflowThreadCount} 条更早对话，后续接入历史分页。</p>
+        ) : null}
       </div>
 
       <div className="ningyu-sidebar__bottom">
@@ -1901,55 +1759,48 @@ function LeftSidebar({
 
 function ChatWorkspace({
   isNight,
-  displayName,
-  userModeLabel,
+  shouldReduceMotion,
   primarySuggestion,
   primarySupportLabel,
   messages,
   messageListStatus,
   messageListError,
   activeThreadId,
-  messageFeedback,
+  isInputDisabled,
   chatStreamStatus,
   chatStreamError,
   graphUpdates,
   streamStatusDetail,
+  draftInputSeed,
   onSend,
   onMessageFeedback,
 }: {
   isNight: boolean;
-  displayName: string;
-  userModeLabel: string;
+  shouldReduceMotion: boolean;
   primarySuggestion: string;
   primarySupportLabel: string;
   messages: Message[];
   messageListStatus: MessageListStatus;
   messageListError: string | null;
   activeThreadId: string | null;
-  messageFeedback: Record<string, MessageFeedback>;
+  isInputDisabled: boolean;
   chatStreamStatus: ChatStreamStatus;
   chatStreamError: string | null;
   graphUpdates: GraphUpdateItem[];
   streamStatusDetail: string | null;
-  onSend: (content: string) => void | Promise<void>;
-  onMessageFeedback: (messageId: string, feedback: MessageFeedback) => void;
+  draftInputSeed: DraftInputSeed | null;
+  onSend: SendMessageHandler;
+  onMessageFeedback: (message: Message, feedback: ConversationFeedbackValue) => void | Promise<void>;
 }) {
-  const [draftSuggestion, setDraftSuggestion] = useState<{ id: string; text: string } | null>(null);
-  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-  const suggestedActions = latestAssistant?.suggestedActions?.length
-    ? latestAssistant.suggestedActions
-    : messages.length
-      ? ["把刚才的话说得更具体一点", "帮我整理成一个小步骤"]
-      : [];
-
-  const handleSuggestedAction = (action: string) => {
-    setDraftSuggestion({ id: crypto.randomUUID(), text: action });
-  };
-
   return (
     <section className="ningyu-chat" aria-label="聊天工作区">
       <div className="ningyu-chat__scroll">
-        <div className="ningyu-chat__inner">
+        <motion.div
+          className="ningyu-chat__inner"
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.48, delay: 0.12, ease: "easeOut" }}
+        >
           {messageListStatus === "loading" ? (
             <ChatStateMessage title="正在载入对话" detail="风正在把这段聊天记录带回来..." />
           ) : messageListStatus === "error" ? (
@@ -1957,8 +1808,6 @@ function ChatWorkspace({
           ) : messages.length === 0 ? (
             <WelcomeState
               isNight={isNight}
-              displayName={displayName}
-              userModeLabel={userModeLabel}
               primarySuggestion={primarySuggestion}
               primarySupportLabel={primarySupportLabel}
               activeThreadId={activeThreadId}
@@ -1970,13 +1819,9 @@ function ChatWorkspace({
                   key={message.id}
                   message={message}
                   isNight={isNight}
-                  feedback={messageFeedback[message.id]}
                   onFeedback={onMessageFeedback}
                 />
               ))}
-              {suggestedActions.length ? (
-                <SuggestedActionChips actions={suggestedActions} onSelect={handleSuggestedAction} />
-              ) : null}
               {graphUpdates.length || chatStreamStatus !== "idle" ? (
                 <GraphUpdateTrail
                   status={chatStreamStatus}
@@ -1987,13 +1832,14 @@ function ChatWorkspace({
               ) : null}
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
       <div className="ningyu-chat__input">
         <ChatInput
           isNight={isNight}
-          draftSuggestion={draftSuggestion}
           isSending={chatStreamStatus === "streaming"}
+          isDisabled={isInputDisabled}
+          draftInputSeed={draftInputSeed}
           onSend={onSend}
         />
       </div>
@@ -2003,15 +1849,11 @@ function ChatWorkspace({
 
 function WelcomeState({
   isNight,
-  displayName,
-  userModeLabel,
   primarySuggestion,
   primarySupportLabel,
   activeThreadId,
 }: {
   isNight: boolean;
-  displayName: string;
-  userModeLabel: string;
   primarySuggestion: string;
   primarySupportLabel: string;
   activeThreadId: string | null;
@@ -2028,8 +1870,8 @@ function WelcomeState({
       </h2>
       <p>
         {activeThreadId
-          ? "这段对话暂时还没有消息。你可以先在下方写一句想说的话。"
-          : `${displayName}，这里已经进入${userModeLabel}。你可以从左侧续聊入口继续，也可以先试试「${primarySuggestion}」；如果此刻需要更直接的支持，右侧的 ${primarySupportLabel} 会一直保持可见。`}
+          ? "这段对话还安静地留着空白。你可以先在下方写一句想被听见的话。"
+          : `先把世界的声音放轻一点。可以从「${primarySuggestion}」轻轻开口，也可以把此刻最想被听见的心事慢慢写下；如果需要更直接的支撑，右侧的 ${primarySupportLabel} 会一直为你留着一束光。`}
       </p>
       <span>
         <Icon name="spark" />
@@ -2051,29 +1893,41 @@ function ChatStateMessage({ title, detail, tone = "default" }: { title: string; 
 
 function ChatInput({
   isNight,
-  draftSuggestion,
   isSending,
+  isDisabled,
+  draftInputSeed,
   onSend,
 }: {
   isNight: boolean;
-  draftSuggestion: { id: string; text: string } | null;
   isSending: boolean;
-  onSend: (content: string) => void | Promise<void>;
+  isDisabled: boolean;
+  draftInputSeed: DraftInputSeed | null;
+  onSend: SendMessageHandler;
 }) {
   const [value, setValue] = useState("");
 
   useEffect(() => {
-    if (draftSuggestion) {
-      setValue(draftSuggestion.text);
+    if (!draftInputSeed) {
+      return;
     }
-  }, [draftSuggestion]);
+
+    setValue(draftInputSeed.text);
+  }, [draftInputSeed]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextValue = value.trim();
-    if (!nextValue) return;
-    void onSend(nextValue);
-    setValue("");
+    if (!nextValue || isDisabled) return;
+    void (async () => {
+      try {
+        const accepted = await onSend(nextValue);
+        if (accepted) {
+          setValue("");
+        }
+      } catch {
+        // Keep the draft text if sending fails before acceptance.
+      }
+    })();
   };
 
   return (
@@ -2089,10 +1943,10 @@ function ChatInput({
         }}
         placeholder={isSending ? "宁语正在回应..." : isNight ? "夜风很安静，慢慢写..." : "随便写点什么吧，风在听..."}
         aria-label="输入聊天内容"
-        disabled={isSending}
+        disabled={isDisabled}
         rows={1}
       />
-      <button className={value.trim() ? "is-active" : ""} type="submit" disabled={!value.trim() || isSending} aria-label="发送">
+      <button className={value.trim() ? "is-active" : ""} type="submit" disabled={!value.trim() || isDisabled} aria-label="发送">
         <Icon name="send" />
       </button>
     </form>
@@ -2102,17 +1956,18 @@ function ChatInput({
 function ChatMessage({
   message,
   isNight,
-  feedback,
   onFeedback,
 }: {
   message: Message;
   isNight: boolean;
-  feedback?: MessageFeedback;
-  onFeedback: (messageId: string, feedback: MessageFeedback) => void;
+  onFeedback: (message: Message, feedback: ConversationFeedbackValue) => void | Promise<void>;
 }) {
   const isUser = message.role === "user";
   const metaLabel = message.role === "user" ? "你" : message.role === "system" ? "系统" : "宁语";
   const isAssistant = message.role === "assistant";
+  const canSendFeedback = isAssistant && !message.isStreaming && Boolean(message.turnId);
+  const feedbackStatus = message.feedbackState?.status;
+  const feedbackDisabled = feedbackStatus === "submitting" || feedbackStatus === "submitted";
 
   return (
     <article className={`ningyu-message ${isUser ? "is-user" : "is-assistant"} ${isNight ? "is-night" : ""}`}>
@@ -2123,26 +1978,33 @@ function ChatMessage({
       <div className="ningyu-message__bubble">
         <Icon name={isUser ? "leaf" : "wind"} />
         <p>{message.content}</p>
+        {message.trace ? <TraceLine trace={message.trace} /> : null}
       </div>
       <div className="ningyu-message__footer">
         <time>{message.timestamp}</time>
-        {isAssistant ? (
+        {canSendFeedback ? (
           <div className="ningyu-message-feedback" aria-label="消息反馈">
-            <button
-              className={feedback === "helpful" ? "is-selected" : ""}
-              type="button"
-              onClick={() => onFeedback(message.id, "helpful")}
-            >
-              有帮助
-            </button>
-            <button
-              className={feedback === "not_helpful" ? "is-selected" : ""}
-              type="button"
-              onClick={() => onFeedback(message.id, "not_helpful")}
-            >
-              不适合
-            </button>
-            {feedback ? <span>已记录</span> : null}
+            {conversationFeedbackOptions.map((option) => {
+              const selected = message.feedbackState?.value === option.value;
+
+              return (
+                <button
+                  key={option.value}
+                  className={selected ? "is-selected" : ""}
+                  type="button"
+                  onClick={() => onFeedback(message, option.value)}
+                  disabled={feedbackDisabled}
+                  aria-pressed={selected}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+            {feedbackStatus ? (
+              <span aria-live="polite">
+                {feedbackStatus === "submitting" ? "记录中" : feedbackStatus === "submitted" ? "已记录" : "未记录"}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -2150,19 +2012,32 @@ function ChatMessage({
   );
 }
 
-function SuggestedActionChips({ actions, onSelect }: { actions: string[]; onSelect: (action: string) => void }) {
-  return (
-    <div className="ningyu-chat-suggestions" aria-label="建议行动">
-      <span>可以接着试试</span>
-      <div>
-        {actions.slice(0, 4).map((action) => (
-          <button key={action} type="button" onClick={() => onSelect(action)}>
-            {action}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+function TraceLine({ trace }: { trace: TraceTiming }) {
+  const totalDuration = formatDuration(trace.totalMs);
+  const graphDuration = formatDuration(trace.totalGraphMs);
+  const nodeDuration = formatDuration(trace.nodeMs);
+  const slowestDuration = formatDuration(trace.slowestNodeMs);
+  const ragDuration = formatDuration(trace.ragMs ?? trace.ragTotalMs);
+  const hasRagInfo =
+    trace.ragStatus ||
+    trace.ragUsed !== undefined ||
+    trace.retrievedMemoryCount !== undefined ||
+    trace.retrievedExampleCount !== undefined ||
+    trace.ragSkippedReason;
+  const parts = [
+    totalDuration ? `总耗时 ${totalDuration}` : null,
+    graphDuration ? `图 ${graphDuration}` : null,
+    trace.node && nodeDuration ? `节点 ${trace.node} ${nodeDuration}` : trace.node ? `节点 ${trace.node}` : null,
+    hasRagInfo ? formatRagStatus(trace) : ragDuration ? `RAG ${ragDuration}` : null,
+    trace.ragSkippedReason ? `原因 ${trace.ragSkippedReason}` : null,
+    trace.slowestNode && slowestDuration ? `最慢 ${trace.slowestNode} ${slowestDuration}` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  if (!parts.length) {
+    return null;
+  }
+
+  return <span className="ningyu-trace-line">{parts.join(" · ")}</span>;
 }
 
 function GraphUpdateTrail({
@@ -2219,7 +2094,7 @@ function RightPanel({
   moodStatus,
   moodError,
   latestMoodLog,
-  showMoodCheckInControls,
+  hasRecordedMoodToday,
   moodTrendRange,
   moodTrendStatus,
   moodTrendError,
@@ -2231,6 +2106,9 @@ function RightPanel({
   activeQuickActionId,
   quickActionError,
   quickActionResult,
+  tests,
+  testListStatus,
+  testListError,
   onMoodScoreChange,
   onMoodTagToggle,
   onMoodNoteChange,
@@ -2255,7 +2133,7 @@ function RightPanel({
   moodStatus: MoodCheckInStatus;
   moodError: string | null;
   latestMoodLog: MoodLogResponse | null;
-  showMoodCheckInControls: boolean;
+  hasRecordedMoodToday: boolean;
   moodTrendRange: MoodTrendRange;
   moodTrendStatus: MoodTrendStatus;
   moodTrendError: string | null;
@@ -2267,6 +2145,9 @@ function RightPanel({
   activeQuickActionId: string | null;
   quickActionError: string | null;
   quickActionResult: QuickActionResult | null;
+  tests: TestListItem[];
+  testListStatus: TestListStatus;
+  testListError: string | null;
   onMoodScoreChange: (score: number) => void;
   onMoodTagToggle: (tagId: string) => void;
   onMoodNoteChange: (note: string) => void;
@@ -2276,7 +2157,149 @@ function RightPanel({
   onToggleSafetyEntry: () => void;
   onRetrySafetyState: () => void;
 }) {
+  const [activeToolSurface, setActiveToolSurface] = useState<"launcher" | "journey" | "actions" | "settings" | "safety">("launcher");
   const shouldShowGuidance = isSafetyEntryOpen || Boolean(highRiskSafety);
+
+  useEffect(() => {
+    if (shouldShowGuidance) {
+      setActiveToolSurface("safety");
+    }
+  }, [shouldShowGuidance]);
+
+  if (activeToolSurface === "launcher") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="Tools launcher">
+        <section className="ningyu-panel-section ningyu-tool-launcher">
+          <span className="ningyu-panel-section__caption">Quiet tools</span>
+          <h2>
+            <Icon name="spark" />
+            Choose one gentle next step
+          </h2>
+          <div className="ningyu-tool-launcher__grid">
+            <button type="button" onClick={() => setActiveToolSurface("journey")}>
+              <Icon name="heart" />
+              <span>
+                <strong>Today's mood</strong>
+                <small>Check in, trend, and weekly summary.</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("journey")}>
+              <Icon name="leaf" />
+              <span>
+                <strong>My journey</strong>
+                <small>A calm record of recent days.</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("actions")}>
+              <Icon name="light" />
+              <span>
+                <strong>Suggested actions</strong>
+                <small>Small prompts connected to chat.</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("settings")}>
+              <Icon name="settings" />
+              <span>
+                <strong>Settings / tests</strong>
+                <small>Published tests and placeholders.</small>
+              </span>
+            </button>
+          </div>
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "journey") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="My journey">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <section className="ningyu-panel-section ningyu-panel-section--mood">
+          <span className="ningyu-panel-section__caption">My journey</span>
+          <h2>
+            <Icon name="heart" />
+            Mood check-in
+          </h2>
+          <MoodCheckIn
+            moodScore={moodScore}
+            moodTags={moodTags}
+            moodNote={moodNote}
+            moodStatus={moodStatus}
+            moodError={moodError}
+            latestMoodLog={latestMoodLog}
+            hasRecordedMoodToday={hasRecordedMoodToday}
+            onMoodScoreChange={onMoodScoreChange}
+            onMoodTagToggle={onMoodTagToggle}
+            onMoodNoteChange={onMoodNoteChange}
+            onMoodSubmit={onMoodSubmit}
+          />
+          <MoodTrendCard
+            range={moodTrendRange}
+            status={moodTrendStatus}
+            error={moodTrendError}
+            trend={moodTrend}
+            onRangeChange={onMoodTrendRangeChange}
+          />
+          <WeeklySummaryCard status={weeklySummaryStatus} error={weeklySummaryError} summary={weeklySummary} />
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "actions") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="Suggested actions">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <section className="ningyu-panel-section ningyu-panel-section--suggestions">
+          <span className="ningyu-panel-section__caption">Suggested actions</span>
+          <h2>
+            <Icon name="light" />
+            Nearby next steps
+          </h2>
+          <div className="ningyu-suggestions">
+            {suggestions.length ? suggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
+                type="button"
+                onClick={() => onQuickAction(suggestion)}
+                disabled={quickActionStatus === "loading"}
+              >
+                {activeQuickActionId === suggestion.id ? "Working..." : suggestion.label}
+              </button>
+            )) : <p className="ningyu-tool-empty">No suggested action is waiting right now.</p>}
+          </div>
+          <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "settings") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="Settings and tests">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <section className="ningyu-panel-section">
+          <span className="ningyu-panel-section__caption">Settings / tests</span>
+          <h2>
+            <Icon name="settings" />
+            {currentUserLabel}
+          </h2>
+          <div className="ningyu-tags">
+            {statusTags.map((tag) => (
+              <span key={tag}>{tag}</span>
+            ))}
+          </div>
+          <TestListSurface tests={tests} status={testListStatus} error={testListError} />
+          <div className="ningyu-placeholder-list" aria-label="Future settings">
+            <span>Privacy controls are being prepared.</span>
+            <span>Memory review will stay explicit and reversible.</span>
+            <span>Knowledge settings will appear here when ready.</span>
+          </div>
+        </section>
+      </aside>
+    );
+  }
 
   return (
     <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="状态、安全与建议">
@@ -2337,7 +2360,7 @@ function RightPanel({
           moodStatus={moodStatus}
           moodError={moodError}
           latestMoodLog={latestMoodLog}
-          showControls={showMoodCheckInControls}
+          hasRecordedMoodToday={hasRecordedMoodToday}
           onMoodScoreChange={onMoodScoreChange}
           onMoodTagToggle={onMoodTagToggle}
           onMoodNoteChange={onMoodNoteChange}
@@ -2370,31 +2393,80 @@ function RightPanel({
         ))}
       </section>
 
-      <section className="ningyu-panel-section ningyu-panel-section--suggestions">
-        <span className="ningyu-panel-section__caption">低优先级建议</span>
-        <h2>
-          <Icon name="light" />
-          可以试试
-        </h2>
-        <div className="ningyu-suggestions">
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion.id}
-              className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
-              type="button"
-              onClick={() => onQuickAction(suggestion)}
-              disabled={quickActionStatus === "loading"}
-            >
-              {activeQuickActionId === suggestion.id ? "准备中..." : suggestion.label}
-            </button>
-          ))}
-        </div>
-        <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
-      </section>
+      {suggestions.length ? (
+        <section className="ningyu-panel-section ningyu-panel-section--suggestions">
+          <span className="ningyu-panel-section__caption">今天第一次对话</span>
+          <h2>
+            <Icon name="light" />
+            今日开场
+          </h2>
+          <div className="ningyu-suggestions">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
+                type="button"
+                onClick={() => onQuickAction(suggestion)}
+                disabled={quickActionStatus === "loading"}
+              >
+                {activeQuickActionId === suggestion.id ? "准备中..." : suggestion.label}
+              </button>
+            ))}
+          </div>
+          <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
+        </section>
+      ) : null}
       <span className="ningyu-sidebar__mode">
         {isNight ? "夜间保持安全入口可见" : "白天保持安全入口可见"}
       </span>
     </aside>
+  );
+}
+
+function ToolBackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="ningyu-tool-back" type="button" onClick={onClick}>
+      <Icon name="wind" />
+      Back to tools
+    </button>
+  );
+}
+
+function TestListSurface({
+  tests,
+  status,
+  error,
+}: {
+  tests: TestListItem[];
+  status: TestListStatus;
+  error: string | null;
+}) {
+  return (
+    <div className="ningyu-tests-surface">
+      <div className="ningyu-tests-surface__header">
+        <strong>Published tests</strong>
+        <small>{status === "loading" ? "Loading" : `${tests.length} available`}</small>
+      </div>
+      {status === "error" ? <p className="ningyu-tool-empty is-error">{error}</p> : null}
+      {status !== "loading" && status !== "error" && tests.length === 0 ? <p className="ningyu-tool-empty">No tests are available yet.</p> : null}
+      <div className="ningyu-tests-list">
+        {tests.map((test) => {
+          const isPublished = test.status === "published";
+
+          return (
+            <button key={test.test_id} type="button" disabled={!isPublished} aria-disabled={!isPublished}>
+              <span>
+                <strong>{test.title}</strong>
+                <small>
+                  {test.test_type} · {test.estimated_minutes} min · {isPublished ? "published" : "not published"}
+                </small>
+              </span>
+              <em>{isPublished ? "Ready" : "Locked"}</em>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -2496,7 +2568,7 @@ function MoodCheckIn({
   moodStatus,
   moodError,
   latestMoodLog,
-  showControls,
+  hasRecordedMoodToday,
   onMoodScoreChange,
   onMoodTagToggle,
   onMoodNoteChange,
@@ -2508,16 +2580,22 @@ function MoodCheckIn({
   moodStatus: MoodCheckInStatus;
   moodError: string | null;
   latestMoodLog: MoodLogResponse | null;
-  showControls: boolean;
+  hasRecordedMoodToday: boolean;
   onMoodScoreChange: (score: number) => void;
   onMoodTagToggle: (tagId: string) => void;
   onMoodNoteChange: (note: string) => void;
   onMoodSubmit: () => void;
 }) {
   const selectedTags = moodTagOptions.filter((tag) => moodTags.includes(tag.id)).map((tag) => tag.label);
-  const latestSummary = latestMoodLog
+  const latestSummary = hasRecordedMoodToday
+    ? latestMoodLog
+      ? `今日已记录：${latestMoodLog.mood_score}/5${selectedTags.length ? ` · ${selectedTags.join("、")}` : ""}`
+      : "今天已经记录过心情了，明天再来轻轻更新。"
+    : latestMoodLog
     ? `刚刚记录：${latestMoodLog.mood_score}/5${selectedTags.length ? ` · ${selectedTags.join("、")}` : ""}`
     : "选一个最接近此刻的分数就好，不需要解释得很完整。";
+  const summaryTone = moodStatus === "error" ? "error" : hasRecordedMoodToday ? "success" : moodStatus;
+  const showControls = shouldShowMoodCheckInControls({ hasRecordedMoodToday });
 
   return (
     <div className="ningyu-mood-checkin">
@@ -2559,19 +2637,24 @@ function MoodCheckIn({
             rows={2}
             aria-label="心情备注"
           />
-        </>
-      ) : null}
 
-      <div className="ningyu-mood-checkin__footer">
-        <p className={`ningyu-mood-checkin__summary is-${moodStatus}`}>
-          {moodStatus === "error" ? moodError : latestSummary}
-        </p>
-        {showControls ? (
-          <button type="button" onClick={onMoodSubmit} disabled={moodStatus === "submitting"}>
-            {moodStatus === "submitting" ? "记录中..." : "记录心情"}
+          <div className="ningyu-mood-checkin__footer">
+            <p className={`ningyu-mood-checkin__summary is-${summaryTone}`}>
+              {moodStatus === "error" ? moodError : latestSummary}
+            </p>
+            <button type="button" onClick={onMoodSubmit} disabled={moodStatus === "submitting"}>
+              {moodStatus === "submitting" ? "记录中..." : "记录心情"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="ningyu-mood-checkin__recorded-state" aria-live="polite">
+          <p className={`ningyu-mood-checkin__summary is-${summaryTone}`}>{latestSummary}</p>
+          <button className="is-recorded" type="button" disabled>
+            今日已记录
           </button>
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
