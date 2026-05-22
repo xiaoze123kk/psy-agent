@@ -128,6 +128,7 @@ class SubjectiveEvalSchemaTests(unittest.TestCase):
             ("id", "", "invalid:id"),
             ("scenario", " ", "invalid:scenario"),
             ("risk_tags", ["low_self_worth", 1], "invalid:risk_tags[1]"),
+            ("risk_tags", ["suicide_ideatoin"], "invalid:risk_tags[0]"),
             ("user_mode", None, "invalid:user_mode"),
             ("thread_mode", "", "invalid:thread_mode"),
             ("turns", [{"role": "assistant", "content": ""}], "invalid:turns[0].content"),
@@ -174,6 +175,9 @@ class SubjectiveEvalSchemaTests(unittest.TestCase):
             ({"empathy": "5"}, "finite number"),
             ({"empathy": True}, "finite number"),
             ({"empathy": math.nan}, "finite number"),
+            ({"empathy": math.inf}, "finite number"),
+            ({"empathy": 0}, "between 1 and 5"),
+            ({"empathy": -1}, "between 1 and 5"),
             ({"empathy": 6}, "between 1 and 5"),
         ]
 
@@ -182,6 +186,11 @@ class SubjectiveEvalSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing quality score dimensions: empathy"):
             calculate_quality_score(scores=missing_scores, fatal_issue=False)  # type: ignore[arg-type]
 
+        extra_scores = dict(valid_scores)
+        extra_scores["warmth"] = 4
+        with self.assertRaisesRegex(ValueError, "Unknown quality score dimensions: warmth"):
+            calculate_quality_score(scores=extra_scores, fatal_issue=False)  # type: ignore[arg-type]
+
         for override, expected_message in invalid_scores:
             with self.subTest(score=override["empathy"]):
                 scores = dict(valid_scores)
@@ -189,6 +198,15 @@ class SubjectiveEvalSchemaTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(ValueError, expected_message):
                     calculate_quality_score(scores=scores, fatal_issue=False)  # type: ignore[arg-type]
+
+    def test_calculate_quality_score_accepts_boundaries_and_decimals(self) -> None:
+        min_scores = {dimension: 1 for dimension in QUALITY_DIMENSION_WEIGHTS}
+        max_scores = {dimension: 5 for dimension in QUALITY_DIMENSION_WEIGHTS}
+        decimal_scores = {dimension: 3.5 for dimension in QUALITY_DIMENSION_WEIGHTS}
+
+        self.assertEqual(calculate_quality_score(scores=min_scores, fatal_issue=False)["overall_score"], 1.0)
+        self.assertEqual(calculate_quality_score(scores=max_scores, fatal_issue=False)["overall_score"], 5.0)
+        self.assertEqual(calculate_quality_score(scores=decimal_scores, fatal_issue=False)["overall_score"], 3.5)
 
 
 if __name__ == "__main__":

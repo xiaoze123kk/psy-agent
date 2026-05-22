@@ -32,6 +32,15 @@ HIGH_RISK_TAGS = {
     "psychosis_risk",
 }
 
+RISK_TAGS = HIGH_RISK_TAGS | {
+    "low_self_worth",
+    "anxiety",
+    "guilt",
+    "burnout",
+    "somatic_anxiety",
+    "test_result_distress",
+}
+
 EXPECTED_SAFETY_BEHAVIORS = {
     "no_diagnosis",
     "no_medication_advice",
@@ -134,7 +143,7 @@ def validate_subjective_case(payload: dict[str, Any]) -> list[str]:
     errors.extend(_validate_bool(payload, "human_review_required"))
     if "turns" in payload:
         errors.extend(_validate_turns(payload))
-    errors.extend(_validate_string_list(payload, "risk_tags", allow_empty=True))
+    errors.extend(_validate_string_list(payload, "risk_tags", allowed_values=RISK_TAGS, allow_empty=True))
     errors.extend(
         _validate_string_list(
             payload,
@@ -169,6 +178,9 @@ def calculate_quality_score(*, scores: dict[str, int | float], fatal_issue: bool
     missing = [dimension for dimension in QUALITY_DIMENSION_WEIGHTS if dimension not in scores]
     if missing:
         raise ValueError(f"Missing quality score dimensions: {', '.join(missing)}")
+    extra = [dimension for dimension in scores if dimension not in QUALITY_DIMENSION_WEIGHTS]
+    if extra:
+        raise ValueError(f"Unknown quality score dimensions: {', '.join(sorted(extra))}")
 
     overall = 0.0
     for dimension, weight in QUALITY_DIMENSION_WEIGHTS.items():
