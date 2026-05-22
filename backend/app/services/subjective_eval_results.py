@@ -4,7 +4,11 @@ import math
 from collections import Counter, defaultdict
 from typing import Any
 
-from app.services.subjective_eval_schemas import PAIRWISE_PRIORITY_ORDER, QUALITY_DIMENSION_WEIGHTS
+from app.services.subjective_eval_schemas import (
+    PAIRWISE_PRIORITY_ORDER,
+    QUALITY_DIMENSION_WEIGHTS,
+    calculate_quality_score,
+)
 
 
 VALID_JUDGE_TYPES = {"safety", "quality", "pairwise"}
@@ -55,7 +59,7 @@ def _validate_score(value: Any, field: str) -> list[str]:
 
 
 def _validate_percent_score(value: Any, field: str) -> list[str]:
-    if not _is_finite_number(value) or value < 0 or value > 100:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 100:
         return [f"invalid:{field}"]
     return []
 
@@ -106,28 +110,57 @@ def validate_quality_result(row: dict[str, Any]) -> list[str]:
     errors.extend(_validate_string_list(row, "major_issues"))
 
     scores = row.get("scores")
+    score_values: dict[str, int | float] = {}
+    scores_ready_for_consistency = isinstance(scores, dict)
     if "scores" in row and not isinstance(scores, dict):
         errors.append("invalid:scores")
     elif isinstance(scores, dict):
         for dimension in QUALITY_DIMENSION_WEIGHTS:
             if dimension not in scores:
                 errors.append(f"missing:scores.{dimension}")
+                scores_ready_for_consistency = False
                 continue
             value = scores[dimension]
             if not isinstance(value, dict):
                 errors.append(f"invalid:scores.{dimension}")
+                scores_ready_for_consistency = False
                 continue
-            errors.extend(_validate_score(value.get("score"), f"scores.{dimension}.score"))
+            score_errors = _validate_score(value.get("score"), f"scores.{dimension}.score")
+            errors.extend(score_errors)
+            if score_errors:
+                scores_ready_for_consistency = False
+            else:
+                score_values[dimension] = value["score"]
             if not _is_non_empty_string(value.get("reason")):
                 errors.append(f"invalid:scores.{dimension}.reason")
         for dimension in scores:
             if dimension not in QUALITY_DIMENSION_WEIGHTS:
                 errors.append(f"unknown:scores.{dimension}")
+                scores_ready_for_consistency = False
 
+    overall_score_errors: list[str] = []
     if "overall_score" in row:
-        errors.extend(_validate_score(row["overall_score"], "overall_score"))
+        overall_score_errors = _validate_score(row["overall_score"], "overall_score")
+        errors.extend(overall_score_errors)
+    percent_score_errors: list[str] = []
     if "percent_score" in row:
-        errors.extend(_validate_percent_score(row["percent_score"], "percent_score"))
+        percent_score_errors = _validate_percent_score(row["percent_score"], "percent_score")
+        errors.extend(percent_score_errors)
+
+    if (
+        scores_ready_for_consistency
+        and len(score_values) == len(QUALITY_DIMENSION_WEIGHTS)
+        and isinstance(row.get("fatal_issue"), bool)
+        and "overall_score" in row
+        and not overall_score_errors
+        and "percent_score" in row
+        and not percent_score_errors
+    ):
+        expected = calculate_quality_score(scores=score_values, fatal_issue=row["fatal_issue"])
+        if not math.isclose(float(row["overall_score"]), float(expected["overall_score"]), rel_tol=0, abs_tol=1e-9):
+            errors.append("invalid:overall_score")
+        if row["percent_score"] != expected["percent_score"]:
+            errors.append("invalid:percent_score")
     return errors
 
 
@@ -163,6 +196,12 @@ def validate_pairwise_result(row: dict[str, Any]) -> list[str]:
         for key in PAIRWISE_PRIORITY_ORDER:
             if key not in reason_by_priority:
                 errors.append(f"missing:reason_by_priority.{key}")
+                continue
+            if not _is_non_empty_string(reason_by_priority[key]):
+                errors.append(f"invalid:reason_by_priority.{key}")
+        for key in reason_by_priority:
+            if key not in PAIRWISE_PRIORITY_ORDER:
+                errors.append(f"unknown:reason_by_priority.{key}")
     return errors
 
 
@@ -255,11 +294,15 @@ def build_eval_summary(
             if _is_non_empty_string(case_id):
                 top_review_cases.append(str(case_id))
 
-        for failure in row.get("hard_failures", []) or []:
-            hard_failure_counts[str(failure)] += 1
-        for field in ("hard_failures_in_a", "hard_failures_in_b"):
-            for failure in row.get(field, []) or []:
+        hard_failures = row.get("hard_failures")
+        if isinstance(hard_failures, list):
+            for failure in hard_failures:
                 hard_failure_counts[str(failure)] += 1
+        for field in ("hard_failures_in_a", "hard_failures_in_b"):
+            hard_failures = row.get(field)
+            if isinstance(hard_failures, list):
+                for failure in hard_failures:
+                    hard_failure_counts[str(failure)] += 1
 
         if judge_type == "quality" and _is_finite_number(row.get("overall_score")):
             overall_score = float(row["overall_score"])

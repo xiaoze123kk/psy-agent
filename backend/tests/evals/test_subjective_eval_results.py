@@ -88,6 +88,47 @@ class SubjectiveEvalResultTests(unittest.TestCase):
         self.assertIn("invalid:overall_score", errors)
         self.assertIn("invalid:percent_score", errors)
 
+    def test_validate_quality_result_rejects_float_percent_score(self) -> None:
+        result = copy.deepcopy(QUALITY_RESULT)
+        result["percent_score"] = 74.5
+
+        errors = validate_judge_result(result)
+
+        self.assertIn("invalid:percent_score", errors)
+
+    def test_validate_quality_result_rejects_inconsistent_aggregate_scores(self) -> None:
+        result = copy.deepcopy(QUALITY_RESULT)
+        result["overall_score"] = 3.69
+        result["percent_score"] = 75
+
+        errors = validate_judge_result(result)
+
+        self.assertIn("invalid:overall_score", errors)
+        self.assertIn("invalid:percent_score", errors)
+
+    def test_validate_quality_result_rejects_uncapped_fatal_aggregate_scores(self) -> None:
+        result = copy.deepcopy(QUALITY_RESULT)
+        result["fatal_issue"] = True
+
+        errors = validate_judge_result(result)
+
+        self.assertIn("invalid:overall_score", errors)
+        self.assertIn("invalid:percent_score", errors)
+
+        result["overall_score"] = 2.0
+        result["percent_score"] = 40
+        self.assertEqual(validate_judge_result(result), [])
+
+    def test_validate_quality_result_skips_consistency_when_scores_are_incomplete(self) -> None:
+        result = copy.deepcopy(QUALITY_RESULT)
+        result["scores"].pop("empathy")
+
+        errors = validate_judge_result(result)
+
+        self.assertIn("missing:scores.empathy", errors)
+        self.assertNotIn("invalid:overall_score", errors)
+        self.assertNotIn("invalid:percent_score", errors)
+
     def test_validate_safety_result_checks_bool_fields_and_string_lists(self) -> None:
         result = copy.deepcopy(SAFETY_RESULT)
         result["risk_present"] = "true"
@@ -116,6 +157,16 @@ class SubjectiveEvalResultTests(unittest.TestCase):
         self.assertIn("invalid:fatal_issue_in_a", errors)
         self.assertIn("invalid:hard_failures_in_b[1]", errors)
         self.assertIn(f"missing:reason_by_priority.{PAIRWISE_PRIORITY_ORDER[0]}", errors)
+
+    def test_validate_pairwise_result_rejects_unknown_and_empty_priority_reasons(self) -> None:
+        result = copy.deepcopy(PAIRWISE_RESULT)
+        result["reason_by_priority"]["unknown"] = "extra"
+        result["reason_by_priority"]["ux"] = " "
+
+        errors = validate_judge_result(result)
+
+        self.assertIn("unknown:reason_by_priority.unknown", errors)
+        self.assertIn("invalid:reason_by_priority.ux", errors)
 
     def test_validate_pairwise_result_accepts_valid_payload(self) -> None:
         self.assertEqual(validate_judge_result(PAIRWISE_RESULT), [])
@@ -207,6 +258,16 @@ class SubjectiveEvalResultTests(unittest.TestCase):
         self.assertEqual(summary["human_agreement_rate"], 0.5)
         self.assertEqual(summary["human_override_rate"], 0.5)
         self.assertEqual(summary["top_review_cases"], ["crisis_method_003", "pairwise_self_worth_001"])
+
+    def test_build_eval_summary_skips_non_list_hard_failures(self) -> None:
+        rows = [
+            {**SAFETY_RESULT, "hard_failures": "dangerous_method"},
+            {**PAIRWISE_RESULT, "hard_failures_in_a": "unsafe", "hard_failures_in_b": {"bad": True}},
+        ]
+
+        summary = build_eval_summary(rows)
+
+        self.assertEqual(summary["hard_failure_counts"], {})
 
     def test_render_markdown_report_contains_key_metrics(self) -> None:
         summary = {
