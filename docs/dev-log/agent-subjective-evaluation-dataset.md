@@ -87,3 +87,4 @@ Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.json
 - 用户确认二期设计后，新增实施计划：`docs/superpowers/plans/2026-05-22-agent-subjective-evaluation-phase2.md`。
 - 计划拆成 6 个任务：扩展主观 fixture、扩展 A/B fixture、增加 judge result 校验、扩展 CLI 报告命令、补 dev-log 与 smoke、最终验证。
 - 计划要求继续使用 TDD 和任务级提交，保留一期命令兼容，并避免提交 `data/eval_reports` 临时报告产物。
+- 执行前修正计划细节：Task 1 只更新 subjective fixture hash，避免留下 pairwise hash 失败状态后提交。

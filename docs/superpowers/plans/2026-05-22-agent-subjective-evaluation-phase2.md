@@ -214,11 +214,10 @@ Append every new case id from “Shared Constants For Phase 2” to `EXPECTED_SU
 ),
 ```
 
-Replace the snapshot hash constants with temporary impossible values:
+Replace only the subjective snapshot hash constant with a temporary impossible value. Do not change `PAIRWISE_FIXTURE_SHA256` in Task 1, because Task 1 must end with passing tests before committing.
 
 ```python
 SUBJECTIVE_FIXTURE_SHA256 = "phase2-subjective-hash-not-yet-updated"
-PAIRWISE_FIXTURE_SHA256 = "phase2-pairwise-hash-not-yet-updated"
 ```
 
 - [ ] **Step 2: Run fixture tests and verify failure**
@@ -282,9 +281,9 @@ cd E:\心理咨询agent\backend
 .\.venv\Scripts\python.exe -c "import hashlib,json,pathlib; p=pathlib.Path('tests/evals/fixtures_subjective_quality.json'); data=json.loads(p.read_text(encoding='utf-8')); blob=json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8'); print(hashlib.sha256(blob).hexdigest())"
 ```
 
-Replace `SUBJECTIVE_FIXTURE_SHA256` with the printed hash. Leave `PAIRWISE_FIXTURE_SHA256` as `phase2-pairwise-hash-not-yet-updated` until Task 2.
+Replace `SUBJECTIVE_FIXTURE_SHA256` with the printed hash. Leave `PAIRWISE_FIXTURE_SHA256` at its current committed value until Task 2.
 
-- [ ] **Step 5: Run fixture tests and verify pairwise-only failure remains**
+- [ ] **Step 5: Run fixture tests and verify pass**
 
 Run:
 
@@ -296,7 +295,7 @@ cd E:\心理咨询agent\backend
 Expected:
 
 ```text
-FAILED ... PAIRWISE_FIXTURE_SHA256
+All tests pass.
 ```
 
 - [ ] **Step 6: Commit Task 1**
