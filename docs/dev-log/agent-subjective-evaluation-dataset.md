@@ -73,3 +73,11 @@ Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.json
 - 接入实际 agent 批量回答导出，把 50 条 gold set 自动补齐 `agent_answer`。
 - 建立人工复核表，记录 Codex 与人工审核的一致率、人工推翻率、hard failure 误报/漏报和 A/B 胜率。
 - 如果后续扩展 risk tag，需要同步更新 `RISK_TAGS`、fixture 和快照测试。
+
+## 二期设计记录
+
+- 用户确认二期采用“约 100 条样本 + 最小人审/报告闭环”的折中方案，而不是只扩样本或只做工具。
+- 新增二期设计文档：`docs/superpowers/specs/2026-05-22-agent-subjective-evaluation-phase2-design.md`。
+- 二期目标包括：主观 fixture 扩到 100 条、A/B fixture 扩到 14 条、增加 Codex judge result 校验、增加人工复核 JSONL、输出 JSON 和 Markdown 报告。
+- 二期仍保持离线和可审计，不直接调用外部模型 API，不接入线上隐私原文，不建设完整标注平台。
+- 设计决定直接扩展现有 `fixtures_subjective_quality.json` 和 `fixtures_pairwise_quality.json`，避免默认脚本和测试分裂成 phase1 / phase2 两套入口。
