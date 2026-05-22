@@ -106,3 +106,15 @@ Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.json
 
 - 下一步可接入实际 agent 批量回答导出，把 100 条主观样本自动补齐 `agent_answer` 后生成 Codex judge 请求。
 - 人工复核表建议优先记录 `codex_agreed`、人工分数/胜者覆盖、failure modes 和 notes，用于统计一致率与人工推翻率。
+
+## 二期 RAG 修复记录
+
+- 日期：2026-05-22。
+- 背景：二期真实 RAG 评测后，round-1 结果出现 14 条 no-reply、39 条 missed_high_risk，以及部分高风险/边界样本错误放行 RAG。
+- 关键改动：补充安全路由覆盖，把家暴/受害、未成年人不当接触、带地点自伤、他伤、医疗诊断、依赖和隐私边界样本路由到对应 P0/P1/P3/P4 路径。
+- 关键改动：新增 `privacy_boundary` 风险类别，并在风险策略和 RAG 检索层阻断该类别；高风险与边界样本不再进入普通 RAG 支持流。
+- 关键改动：模型再生最多重试 6 次；仍无可用输出时返回固定兜底句 `回复失败了，请再次呼唤微风，我会继续陪你。`，避免形成空回复。
+- 验证：聚焦测试 `tests/test_conversation_control_rag.py tests/test_risk_policy.py tests/test_safety_evaluation.py` 结果为 196 passed、36 subtests passed。
+- 验证：主观评测相关 schema/prompt/fixture/result/script 测试结果为 56 passed、340 subtests passed。
+- Round-2 smoke：10 条定向样本全部生成成功，`failed_no_reply=0`，高风险/边界样本 `blocked_case_failures=0`，只有 2 条普通 P2 支持样本使用 RAG。
+- 后续：报告产物仍保持在 `backend/data/eval_reports/` 未提交；下一步可进行人工抽查和 100 条全量二轮评测。

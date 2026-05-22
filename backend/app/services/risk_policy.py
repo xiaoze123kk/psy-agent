@@ -8,6 +8,7 @@ HIGH_RISK_LEVELS = {"L2", "L3"}
 BLOCKED_CONTEXT_CATEGORIES = {
     "prompt_attack",
     "diagnosis_or_medical_request",
+    "privacy_boundary",
     "dangerous_request",
 }
 
@@ -19,6 +20,7 @@ DOMAIN_BY_CATEGORY = {
     "victimization_risk": "victimization",
     "clinical_red_flag": "clinical_red_flag",
     "diagnosis_or_medical_request": "medical_request",
+    "privacy_boundary": "privacy_boundary",
     "dependency_risk": "dependency",
     "sexual_boundary": "sexual_boundary",
     "prompt_attack": "prompt_attack",
@@ -225,7 +227,7 @@ def risk_confidence_for_state(state: Mapping[str, Any]) -> str:
 def length_profile_for_state(state: Mapping[str, Any], *, domain: str, immediacy: str, phase: str) -> str:
     risk_level = str(state.get("risk_level") or "L0")
     text = _text(state)
-    if domain in {"medical_request", "prompt_attack", "sexual_boundary"}:
+    if domain in {"medical_request", "prompt_attack", "sexual_boundary", "privacy_boundary"}:
         return "firm_brief"
     if _has_any(text, ("多陪我", "讲点什么", "多说一点", "别停", "陪我说")):
         return "holding_longer"
@@ -337,6 +339,12 @@ def build_risk_response_policy(state: Mapping[str, Any]) -> dict[str, Any]:
     elif domain == "medical_request":
         allowed_moves = ["brief_boundary", "symptom_organization", "prepare_professional_questions"]
         forbidden_moves += ["medication_or_dosage_advice", "stop_medication_advice"]
+    elif domain == "victimization":
+        allowed_moves = ["brief_validation", "name_safety_priority", "trusted_person_support", "avoid_secrecy"]
+        forbidden_moves += ["pressure_to_disclose_details", "encourage_secrecy", "deep_analysis_first_turn"]
+    elif domain == "privacy_boundary":
+        allowed_moves = ["brief_boundary", "minimal_data", "safe_alternative"]
+        forbidden_moves += ["request_personal_identifiers", "repeat_private_identifiers"]
     elif domain == "dependency":
         allowed_moves = ["warm_presence", "avoid_exclusive_support", "expand_support_gently"]
         forbidden_moves += ["exclusive_attachment", "forever_available_promise"]

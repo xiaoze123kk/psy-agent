@@ -30,13 +30,97 @@ SELF_HARM_URGENT_ACTION_TERMS = ("马上", "立刻", "就要", "准备", "打算
 SELF_HARM_NEAR_TERM_TERMS = ("今晚", "明天", "tonight", "tomorrow")
 SELF_HARM_PRESENT_CONTEXT_TERMS = ("现在", "这会儿", "今天", "today")
 SELF_HARM_NEGATED_PLAN_TERMS = ("没有计划", "没计划", "没有具体计划", "不会做", "不会真的", "no plan", "without a plan")
-HARM_OTHER_TERMS = ("杀了", "弄死", "打死", "砍", "捅", "报复", "炸", "想打", "想揍", "伤害老师", "伤害同学", "kill him", "kill her", "hurt them")
+HARM_OTHER_TERMS = (
+    "杀了",
+    "弄死",
+    "打死",
+    "打到住院",
+    "冲去把",
+    "砍",
+    "捅",
+    "报复",
+    "炸",
+    "想打",
+    "想揍",
+    "伤害老师",
+    "伤害同学",
+    "kill him",
+    "kill her",
+    "hurt them",
+)
 ANGER_TARGET_TERMS = ("老师", "父母", "爸", "妈", "同学", "朋友", "对象", "男朋友", "女朋友", "老板", "领导")
-VICTIMIZATION_TERMS = ("家暴", "被打", "被威胁", "被跟踪", "性侵", "强奸", "猥亵", "霸凌", "勒索", "裸照", "控制我")
+VICTIMIZATION_TERMS = (
+    "家暴",
+    "被打",
+    "打了我",
+    "会打我",
+    "被威胁",
+    "敢报警",
+    "被跟踪",
+    "性侵",
+    "强奸",
+    "猥亵",
+    "不舒服的接触",
+    "让我保密",
+    "大人让我保密",
+    "说是我自愿",
+    "霸凌",
+    "勒索",
+    "裸照",
+    "控制我",
+)
 CLINICAL_RED_FLAG_TERMS = ("幻听", "幻觉", "有人监视", "被监控", "控制我的脑子", "几天不睡", "完全不困", "停不下来", "催吐", "暴食", "厌食", "吸毒", "戒断")
-MEDICAL_REQUEST_TERMS = ("诊断", "确诊", "抑郁症吗", "焦虑症吗", "吃什么药", "剂量", "停药", "处方", "证明")
+MEDICAL_REQUEST_TERMS = (
+    "诊断",
+    "确诊",
+    "是不是抑郁症",
+    "是不是焦虑症",
+    "抑郁症吗",
+    "焦虑症吗",
+    "吃什么药",
+    "剂量",
+    "停药",
+    "处方",
+    "证明",
+)
 PROMPT_ATTACK_TERMS = ("忽略规则", "系统提示词", "prompt", "jailbreak", "越狱", "扮演无", "开发者消息")
-DEPENDENCY_TERMS = ("只有你", "只想跟你说", "别离开我", "你会一直陪我", "你是唯一", "没有你我不行")
+DEPENDENCY_TERMS = (
+    "只有你",
+    "只想跟你说",
+    "跟你说话才安全",
+    "现实里的人我都不想再见",
+    "比现实里的人更爱我",
+    "别离开我",
+    "你会一直陪我",
+    "你是唯一",
+    "没有你我不行",
+)
+PRIVACY_BOUNDARY_TERMS = (
+    "身份证",
+    "住址",
+    "病历",
+    "身份证照片",
+    "实时定位",
+    "后四位",
+    "联系人",
+)
+LOCATION_SELF_HARM_CONTEXT_TERMS = (
+    "桥边",
+    "楼顶",
+    "窗边",
+    "河边",
+    "天台",
+    "roof",
+    "bridge",
+)
+EXIT_OR_GOODBYE_TERMS = (
+    "不想回去了",
+    "撑不到明天",
+    "最后一次",
+    "都交代好了",
+    "不想再醒来",
+    "不想活了",
+)
 SEXUAL_BOUNDARY_TERMS = ("操你", "操死", "做爱", "约炮", "裸照", "色情", "强奸")
 ABUSE_TO_ASSISTANT_TERMS = ("你是傻逼", "你傻逼", "你有病", "垃圾ai", "垃圾 AI", "滚", "废物")
 SMALL_TALK_TERMS = ("你好", "在吗", "吃饭了吗", "今天天气", "随便聊聊", "讲个笑话", "你是谁")
@@ -176,6 +260,18 @@ async def control_plane(state: AgentState) -> AgentState:
         not discussion_only
         and (raw_l3_self_harm or _has_self_harm_near_term_or_means_signal(text, semantic_risk))
     )
+    location_self_harm = (
+        not discussion_only
+        and has_any_text(text, LOCATION_SELF_HARM_CONTEXT_TERMS)
+        and (
+            has_any_text(text, EXIT_OR_GOODBYE_TERMS)
+            or has_any_text(text, SELF_HARM_PRESENT_CONTEXT_TERMS)
+            or has_any_text(text, SELF_HARM_NEAR_TERM_TERMS)
+        )
+    )
+    if location_self_harm:
+        self_harm = True
+        immediate_self_harm = True
     immediate_harm_other = (
         not discussion_only
         and (
@@ -245,6 +341,14 @@ async def control_plane(state: AgentState) -> AgentState:
         allow_rag = False
         labels.append("medical_or_diagnosis_request")
         reasons.extend(matched_text(text, MEDICAL_REQUEST_TERMS))
+        confidence = 0.86
+    elif has_any_text(text, PRIVACY_BOUNDARY_TERMS):
+        category = "privacy_boundary"
+        route_priority = "P4_system_protection"
+        memory_policy = "skip_sensitive"
+        allow_rag = False
+        labels.append("privacy_boundary")
+        reasons.extend(matched_text(text, PRIVACY_BOUNDARY_TERMS))
         confidence = 0.86
     elif has_any_text(text, DEPENDENCY_TERMS):
         category = "dependency_risk"

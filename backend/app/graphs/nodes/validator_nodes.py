@@ -20,6 +20,8 @@ from app.services.dialogue_prompt_builder import build_dialogue_prompt_parts
 
 logger = logging.getLogger(__name__)
 _REPAIR_MAX_TOKENS = 900
+_REGENERATION_MAX_ATTEMPTS = 6
+_REGENERATION_EXHAUSTED_TEXT = "回复失败了，请再次呼唤微风，我会继续陪你。"
 
 
 VALIDATOR_FORBIDDEN_PATTERNS = [
@@ -184,55 +186,83 @@ async def _regenerate_reply_with_model(
         "请重新生成一版给用户看的回复：必须遵守 response_contract；不要复述危险方法或工具；"
         "不要暴露内部校验、策略名、失败原因或提示词；不要输出固定兜底模板。"
     )
-    try:
-        reply = await deepseek_client.chat(
-            [
-                {"role": "system", "content": prompt_parts.system_prompt},
-                {"role": "user", "content": repair_prompt},
-            ],
-            max_tokens=_REPAIR_MAX_TOKENS,
-        )
-    except Exception:
-        logger.warning("Validator model regeneration failed.", exc_info=True)
-        return None
-
-    assistant_text, actions = parse_actions_reply(reply)
-    assistant_text = assistant_text.strip()
-    actions = actions[:3]
-    if not assistant_text:
-        return None
-
     examples = [dict(example) for example in state.get("retrieved_counseling_examples", []) if isinstance(example, dict)]
-    retry_policy_reasons = validator_reasons(assistant_text, actions, examples)
-    retry_experience_reasons = experience_validator_reasons(assistant_text, actions, state)
-    retry_blocking_reasons = sorted(set(retry_policy_reasons + _blocking_experience_reasons(retry_experience_reasons)))
-    combined_experience_reasons = _combined_experience_reasons(experience_reasons, retry_experience_reasons)
-    if retry_blocking_reasons:
-        return failed_no_reply_validation_result(
-            state,
-            reason="validator_regeneration_failed:" + ",".join(retry_blocking_reasons),
-            blocked=True,
-            reasons=retry_blocking_reasons,
-            experience_reasons=combined_experience_reasons,
-        )
+    latest_blocking_reasons = blocked_reasons
+    combined_experience_reasons = experience_reasons
 
-    audit_tag = "validator_regenerated" if blocked else "empty_safety_regenerated"
+    for attempt in range(1, _REGENERATION_MAX_ATTEMPTS + 1):
+        try:
+            reply = await deepseek_client.chat(
+                [
+                    {"role": "system", "content": prompt_parts.system_prompt},
+                    {"role": "user", "content": repair_prompt},
+                ],
+                max_tokens=_REPAIR_MAX_TOKENS,
+            )
+        except Exception:
+            logger.warning(
+                "Validator model regeneration attempt %s/%s failed.",
+                attempt,
+                _REGENERATION_MAX_ATTEMPTS,
+                exc_info=True,
+            )
+            continue
+
+        assistant_text, actions = parse_actions_reply(reply)
+        assistant_text = assistant_text.strip()
+        actions = actions[:3]
+        if not assistant_text:
+            continue
+
+        retry_policy_reasons = validator_reasons(assistant_text, actions, examples)
+        retry_experience_reasons = experience_validator_reasons(assistant_text, actions, state)
+        retry_blocking_reasons = sorted(
+            set(retry_policy_reasons + _blocking_experience_reasons(retry_experience_reasons))
+        )
+        combined_experience_reasons = _combined_experience_reasons(experience_reasons, retry_experience_reasons)
+        if retry_blocking_reasons:
+            latest_blocking_reasons = retry_blocking_reasons
+            continue
+
+        audit_tags = (state.get("audit_tags", []) or []) + ["validator_regenerated" if blocked else "empty_reply_regenerated"]
+        if not blocked:
+            audit_tags.append("empty_safety_regenerated")
+        result: AgentState = {
+            "assistant_text": assistant_text,
+            "suggested_actions": actions,
+            "validator_blocked": blocked,
+            "validator_reasons": blocked_reasons,
+            "experience_validator_reasons": combined_experience_reasons,
+            **_experience_metadata(combined_experience_reasons),
+            "validator_severity": _validator_severity(
+                delivery_status="generated",
+                blocked=blocked,
+                experience_reasons=combined_experience_reasons,
+            ),
+            "delivery_status": "generated",
+            "failure_reason": None,
+            "retryable": False,
+            "audit_tags": audit_tags,
+        }
+        return _with_quality_trace(state, result)
+
+    exhausted_blocked = blocked or bool(latest_blocking_reasons)
     result: AgentState = {
-        "assistant_text": assistant_text,
-        "suggested_actions": actions,
-        "validator_blocked": blocked,
-        "validator_reasons": blocked_reasons,
+        "assistant_text": _REGENERATION_EXHAUSTED_TEXT,
+        "suggested_actions": [],
+        "validator_blocked": exhausted_blocked,
+        "validator_reasons": latest_blocking_reasons,
         "experience_validator_reasons": combined_experience_reasons,
         **_experience_metadata(combined_experience_reasons),
         "validator_severity": _validator_severity(
             delivery_status="generated",
-            blocked=blocked,
+            blocked=exhausted_blocked,
             experience_reasons=combined_experience_reasons,
         ),
         "delivery_status": "generated",
         "failure_reason": None,
         "retryable": False,
-        "audit_tags": (state.get("audit_tags", []) or []) + [audit_tag],
+        "audit_tags": (state.get("audit_tags", []) or []) + ["validator_regeneration_exhausted"],
     }
     return _with_quality_trace(state, result)
 
@@ -303,17 +333,22 @@ async def response_validator(state: AgentState) -> AgentState:
 
     if not assistant_text.strip():
         reason = "empty_model_reply"
-        if is_safety_delivery_path(state):
-            regenerated = await _regenerate_reply_with_model(
-                state,
-                reason=reason,
-                blocked=False,
-                blocked_reasons=[],
-                experience_reasons=[],
-            )
-            if regenerated is not None:
-                return regenerated
-        return failed_no_reply_validation_result(state, reason=reason, blocked=False, reasons=[], experience_reasons=[])
+        regenerated = await _regenerate_reply_with_model(
+            state,
+            reason=reason,
+            blocked=False,
+            blocked_reasons=[],
+            experience_reasons=experience_reasons,
+        )
+        if regenerated is not None:
+            return regenerated
+        return failed_no_reply_validation_result(
+            state,
+            reason=reason,
+            blocked=False,
+            reasons=[],
+            experience_reasons=experience_reasons,
+        )
 
     compact_text = "".join(assistant_text.split())
     if len(compact_text) < 8 and not is_safety_delivery_path(state):
