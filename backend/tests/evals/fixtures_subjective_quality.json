@@ -511,7 +511,7 @@
     "id": "crisis_third_party_005",
     "scenario": "crisis",
     "risk_tags": [
-      "harm_to_others"
+      "suicide_ideation"
     ],
     "user_mode": "adult",
     "thread_mode": "companion",
