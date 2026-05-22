@@ -54,3 +54,23 @@
 - 验证：`.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_schemas.py tests\evals\test_subjective_eval_prompts.py tests\evals\test_subjective_eval_fixtures.py tests\evals\test_subjective_eval_results.py tests\test_run_subjective_evals_script.py -q`：56 passed、340 subtests passed。
 - Round-2 smoke：开启 RAG、Milvus、本地 embedding 和 180 秒检索超时后，针对 10 条样本生成 `phase2_rag_round2_smoke_answers.jsonl` 与 `phase2_rag_round2_smoke_summary.json`；结果为 total 10、generated 10、failed_no_reply 0、rag_used 2、blocked_case_failures 0。
 - 后续：建议先人工抽查 round-2 smoke 的高风险话术质量，再决定是否重跑 100 条全量 RAG 评测并做 Codex judge 汇总。
+
+## Round-2 全量 RAG 评测与中文报告
+
+- 日期：2026-05-22。
+- 背景：用户要求重跑评测打分，并确认必须使用 RAG、报告使用中文；A/B 评测也需要纳入总口径。
+- 关键产物：`backend/data/eval_reports/phase2_rag_round2_agent_answers.jsonl`、`phase2_rag_round2_codex_subjective_results.jsonl`、`phase2_rag_round2_codex_all_results.jsonl`、`phase2_rag_round2_codex_summary.json`、`phase2_rag_round2_evaluation_readout_zh.md`。
+- 运行口径：100 条真实 agent 回答开启本地 embedding + Milvus + rerank；高风险/边界样本允许被安全策略阻断 RAG；最终打分包含 100 条 safety、100 条 quality、14 条 A/B pairwise，共 214 条 judge 结果。
+- 运行结果：100/100 生成成功，failed/no-reply 为 0；RAG 命中 62/100，RAG 阻断或未使用 38/100。
+- Codex 初评：质量均分 2.82，fatal issue 行数 118，需要人工复核行数 139；A/B 中 B 胜率 0.79。
+- 主要残留：高风险/边界大类仍有 27 条命中 RAG；hard failure 中 `missed_high_risk` 33、`missing_real_world_support` 19、`missing_teen_trusted_adult` 7、`privacy_boundary` 22、`rag_used_in_blocked_context` 26。
+- 验证：`.\.venv\Scripts\python.exe scripts\run_subjective_evals.py validate-results --results data\eval_reports\phase2_rag_round2_codex_all_results.jsonl` 返回 `valid=true`、`result_count=214`；`summarize-report` 可正常生成 JSON 与 Markdown 汇总。
+- 后续：人工优先复核 fatal issue、低分样本和高风险/边界仍命中 RAG 的样本；下一轮修复重点是更细的危机/受害/隐私/依赖/医疗边界路由。
+
+## 质量均分提质 Spec
+
+- 日期：2026-05-22。
+- 背景：用户指出 `quality_score_avg=2.82` 太低，需要先写 spec 再进入修复。进一步拆分发现 54 条 fatal quality 样本均分被 hard failure 封顶到 2.00，46 条非 fatal 样本均分为 3.77，因此问题核心是高风险/边界场景的安全失败与 RAG 误介入，而不是普通陪伴质量整体偏低。
+- 关键产出：新增设计文档 `docs/superpowers/specs/2026-05-22-agent-evaluation-quality-improvement-design.md`。
+- 设计方向：采用“报告口径分层 + agent 高风险修复”的方案，明确不调松安全闸门、不关闭 RAG 刷分；下一轮目标是综合 quality 达到 3.30 以上，同时普通场景保持 3.70 以上。
+- 后续：用户审核 spec 后，再进入 implementation plan；计划应优先覆盖高风险/边界 RAG leak、`missed_high_risk`、`missing_real_world_support`、`missing_teen_trusted_adult` 和 `privacy_boundary`。
