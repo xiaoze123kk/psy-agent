@@ -207,3 +207,32 @@ def test_script_can_run_from_backend_directory(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["request_count"] == 2
     assert len(read_jsonl(requests_path)) == 2
+
+
+def test_script_default_fixture_can_run_from_repo_root(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    backend_root = repo_root / "backend"
+    requests_path = tmp_path / "requests.jsonl"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(backend_root / "scripts" / "run_subjective_evals.py"),
+            "build-requests",
+            "--output",
+            str(requests_path),
+            "--judge-type",
+            "safety",
+        ],
+        cwd=repo_root,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=20,
+    )
+
+    assert result.returncode != 0
+    assert "missing agent_answer" in result.stderr
+    assert "FileNotFoundError" not in result.stderr

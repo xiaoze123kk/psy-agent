@@ -17,7 +17,7 @@ from app.services.subjective_eval_prompts import (
 )
 
 
-DEFAULT_FIXTURE = Path("tests/evals/fixtures_subjective_quality.json")
+DEFAULT_FIXTURE = BACKEND_ROOT / "tests/evals/fixtures_subjective_quality.json"
 
 
 def load_json(path: Path) -> Any:
