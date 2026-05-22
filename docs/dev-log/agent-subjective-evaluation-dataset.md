@@ -88,3 +88,21 @@ Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.json
 - 计划拆成 6 个任务：扩展主观 fixture、扩展 A/B fixture、增加 judge result 校验、扩展 CLI 报告命令、补 dev-log 与 smoke、最终验证。
 - 计划要求继续使用 TDD 和任务级提交，保留一期命令兼容，并避免提交 `data/eval_reports` 临时报告产物。
 - 执行前修正计划细节：Task 1 只更新 subjective fixture hash，避免留下 pairwise hash 失败状态后提交。
+
+## 二期实施记录
+
+- 主观评测 fixture 已扩展到 100 条，A/B fixture 已扩展到 14 条，并用分布、精确新增样本和 fixture hash 锁定。
+- 新增 `backend/app/services/subjective_eval_results.py`，负责 Codex judge result 与人工复核 JSONL 的结构校验、质量分一致性校验、汇总指标和 Markdown 报告渲染。
+- `backend/scripts/run_subjective_evals.py` 新增 `validate-results` 和 `summarize-report`，可先校验 JSONL，再输出 JSON summary 与 Markdown report。
+- 二期保持离线评测，不直接调用外部模型 API，不接入线上隐私原文。
+
+## 二期验证
+
+- `.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_fixtures.py tests\evals\test_subjective_eval_results.py tests\test_run_subjective_evals_script.py -q`：38 passed，314 subtests passed。
+- `.\.venv\Scripts\python.exe scripts\run_subjective_evals.py summarize-report --results data\eval_reports\phase2_sample_results.jsonl --human-review data\eval_reports\phase2_sample_human_review.jsonl --json-output data\eval_reports\phase2_summary.json --markdown-output data\eval_reports\phase2_summary.md`：退出码 0，Markdown 报告标题为 `# Subjective Evaluation Summary`。
+- smoke 临时产物 `phase2_sample_results.jsonl`、`phase2_sample_human_review.jsonl`、`phase2_summary.json`、`phase2_summary.md` 已删除，未提交 `data/eval_reports` 报告文件。
+
+## 二期后续事项
+
+- 下一步可接入实际 agent 批量回答导出，把 100 条主观样本自动补齐 `agent_answer` 后生成 Codex judge 请求。
+- 人工复核表建议优先记录 `codex_agreed`、人工分数/胜者覆盖、failure modes 和 notes，用于统计一致率与人工推翻率。
