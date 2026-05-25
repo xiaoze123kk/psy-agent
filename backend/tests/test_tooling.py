@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -394,17 +392,19 @@ class WebSearchToolTests(unittest.TestCase):
         self.assertEqual(previews[0]["status"], "error")
         self.assertEqual(previews[0]["error"], "search_failed: timeout")
 
-    def test_tool_plan_and_handler_do_not_write_ad_hoc_debug_log_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            debug_path = os.path.join(tmpdir, "debug_tooling.log")
-            with patch("app.services.tooling._DEBUG_LOG_PATH", debug_path, create=True), patch(
-                "app.services.search_service.search_web",
-                return_value=([], None),
-            ):
-                plan = build_dialogue_tool_plan(make_state())
-                plan.tool_handlers["web_search"]({"query": "help"})
+    def test_tool_plan_and_handler_record_diagnostics_with_module_logger(self) -> None:
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([], None),
+        ), self.assertLogs("app.services.tooling", level="DEBUG") as logs:
+            plan = build_dialogue_tool_plan(make_state())
+            plan.tool_handlers["web_search"]({"query": "help"})
 
-            self.assertFalse(os.path.exists(debug_path))
+        log_text = "\n".join(logs.output)
+        self.assertIn("Dialogue tool plan built", log_text)
+        self.assertIn("web_search tool completed", log_text)
+        self.assertIn("status=completed", log_text)
+        self.assertNotIn("debug_tooling.log", log_text)
 
     def test_prefetch_visit_china_query_uses_current_year_dynamically(self) -> None:
         with patch("app.services.tooling.datetime") as fake_datetime:

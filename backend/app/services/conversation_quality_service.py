@@ -14,7 +14,9 @@ from app.db.models import ConversationTurn
 QUESTION_MARKS = ("\uff1f", "?")
 REGENERATION_AUDIT_TAGS = {
     "validator_regenerated",
+    "empty_reply_regenerated",
     "empty_safety_regenerated",
+    "validator_regeneration_exhausted",
 }
 PAUSE_TERMS = (
     "先停",

@@ -1,0 +1,118 @@
+INFO:     Will watch for changes in these directories: ['E:\\心理咨询agent\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [81436] using WatchFiles
+INFO:     Started server process [84540]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'tests\test_conversation_control_rag.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [84540]
+WARNING:  WatchFiles detected changes in 'app\graphs\nodes\control_nodes.py'. Reloading...
+INFO:     Started server process [86476]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [86476]
+WARNING:  WatchFiles detected changes in 'app\graphs\nodes\control_nodes.py'. Reloading...
+INFO:     Started server process [91308]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [91308]
+INFO:     Started server process [94732]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'tests\test_conversation_control_rag.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:DeepSeek chat completion request failed: 
+DeepSeek chat completion request failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DeepSeek chat completion request failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DeepSeek chat completion request failed: 
+DeepSeek chat completion request failed: 
+Local embedding worker start failed: 
+DeepSeek chat completion request failed: 
+Local embedding worker start failed: 
+DeepSeek chat completion request failed: 
+DeepSeek chat completion request failed: 
+DeepSeek chat completion request failed: 
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DuckDuckGo search failed for query: 张雪峰 你知道吗 他最近去世 官方 2026
+DeepSeek chat completion request failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DuckDuckGo search failed for query: 张雪峰 去世 最新 官方 2026
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DuckDuckGo search failed for query: 张雪峰 去世 最新 官方 2026
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DuckDuckGo search failed for query: 张雪峰 去世 最新 官方 2026
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+E:\心理咨询agent\backend\app\services\search_service.py:207: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+DuckDuckGo search failed for query: 特朗普访华 2026 时间
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 
+Local embedding worker start failed: 
+Session digest LLM update failed: 

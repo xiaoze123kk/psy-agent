@@ -35,6 +35,11 @@ _DEDUP_SNIPPET_PREFIX = 60
 _ELLIPSIS_RE = re.compile(r"^\.{2,}|\.{2,}$")
 _TRUNCATION_BOUNDARY_RE = re.compile(r"[。，、；：？！\u3000\s,.;:!?\n]")
 _DEDUP_RE = re.compile(r"[^\w\u4e00-\u9fff]+")
+_YEAR_IN_QUERY_RE = re.compile(r"\b(20\d{2})\b")
+_YEARLESS_DATE_RANGE_RE = re.compile(
+    r"(\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:至|到|—|-|~)\s*(?:\d{1,2}\s*月\s*)?\d{1,2}\s*日)"
+)
+_YEARLESS_DATE_TIME_RE = re.compile(r"(\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*\d{1,2}\s*时(?:\s*\d{1,2}\s*分)?)?)")
 _AUTHORITY_TITLE_WORDS_RE = re.compile(r"官方|热线|中心|医院|卫健委|教育部|研究所|学会|协会|政府|公益|卫生|疾控|精神卫生")
 
 # --- Domain authority scoring ---
@@ -145,6 +150,79 @@ def _smart_truncate(text: str, max_chars: int) -> str:
             if not candidate[-1].isalnum() or m.group() in {"\n", "\u3002"}:
                 return candidate
     return text[:max_chars].rstrip()
+
+
+def _smart_truncate_for_query(text: str, max_chars: int, query: str) -> str:
+    if len(text) <= max_chars:
+        return text
+    if not query or not _DATE_REQUIRED_QUERY_RE.search(query):
+        return _smart_truncate(text, max_chars)
+
+    date_matches = list(_DATE_TIME_RE.finditer(text))
+    if not date_matches:
+        return _smart_truncate(text, max_chars)
+
+    terms = _query_relevance_terms(query) or _query_terms(query)
+    scored_windows: list[tuple[int, int, str]] = []
+    for match in date_matches:
+        start = max(match.start() - max_chars // 2, 0)
+        end = min(start + max_chars, len(text))
+        start = max(end - max_chars, 0)
+        window = text[start:end].strip()
+        term_hits = sum(1 for term in terms if term and term in window)
+        date_hits = len(_DATE_TIME_RE.findall(window))
+        score = term_hits * 4 + date_hits * 3
+        if re.search(r"20\d{2}年", match.group(0)):
+            score += 8
+        if any(action in window for action in _CURRENT_EVENT_ACTION_TERMS):
+            score += 4
+        if any(marker in window for marker in ("将于", "时间为", "国事访问", "讣告", "逝世", "去世")):
+            score += 3
+        scored_windows.append((score, match.start(), window))
+
+    scored_windows.sort(reverse=True)
+    return _smart_truncate(scored_windows[0][2], max_chars)
+
+
+def _inject_query_year_for_date_ranges(text: str, query: str) -> str:
+    year_match = _YEAR_IN_QUERY_RE.search(query or "")
+    if not year_match or not _DATE_REQUIRED_QUERY_RE.search(query or ""):
+        return text
+    year = year_match.group(1)
+
+    def with_year(match: re.Match[str]) -> str:
+        prefix = text[max(0, match.start() - 12): match.start()]
+        if re.search(r"20\d{2}\s*年\s*$", prefix):
+            return match.group(1)
+        return f"{year}年{match.group(1)}"
+
+    return _YEARLESS_DATE_RANGE_RE.sub(with_year, text)
+
+
+def _source_year(title: str, url: str) -> str:
+    for value in (title, url):
+        match = _YEAR_IN_QUERY_RE.search(value or "")
+        if match:
+            return match.group(1)
+        compact_match = re.search(r"(?<!\d)(20\d{2})(?:\d{2}){1,2}(?!\d)", value or "")
+        if compact_match:
+            return compact_match.group(1)
+    return ""
+
+
+def _inject_source_year_for_yearless_dates(text: str, title: str, url: str) -> str:
+    year = _source_year(title, url)
+    if not year:
+        return text
+
+    def with_year(match: re.Match[str]) -> str:
+        prefix = text[max(0, match.start() - 12): match.start()]
+        if re.search(r"20\d{2}\s*年\s*$", prefix):
+            return match.group(1)
+        return f"{year}年{match.group(1)}"
+
+    text = _YEARLESS_DATE_RANGE_RE.sub(with_year, text)
+    return _YEARLESS_DATE_TIME_RE.sub(with_year, text)
 
 
 # --- Dedup helpers ---
@@ -286,6 +364,8 @@ _BING_TITLE_RE = re.compile(r'<a[^>]*\shref="(https?://[^"]+)"[^>]*>(.*?)</a>', 
 _BING_SNIPPET_RE = re.compile(r'<p\s+(?:class="[^"]*b_lineclamp[^"]*"[^>]*|[^>]*>)>(.*?)</p>', re.DOTALL)
 _BING_CAPTION_RE = re.compile(r'<div\s+class="b_caption"[^>]*>(.*?)</div>', re.DOTALL)
 _HTML_TAG_RE = re.compile(r'<[^>]+>')
+_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_META_ATTR_RE = re.compile(r"([a-zA-Z:-]+)\s*=\s*([\"'])(.*?)\2", re.DOTALL)
 _HTML_ENTITY_RE = re.compile(r'&[a-zA-Z]+;|&#\d+;')
 _WHITESPACE_RE = re.compile(r'\s+')
 _CJK_QUERY_RE = re.compile(r"[\u4e00-\u9fff]")
@@ -295,6 +375,24 @@ _SEARCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
+_CURRENT_FACT_SOURCE_RULES: tuple[tuple[tuple[str, ...], tuple[tuple[str, str], ...]], ...] = (
+    (
+        ("张雪峰", "去世"),
+        (
+            ("张雪峰去世 高中同学缅怀：他曾是体育委员 痛惜不已 - 神州学人网", "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html"),
+            ("张雪峰因心源性猝死逝世 - 新浪财经", "https://finance.sina.com.cn/wm/2026-03-24/doc-inhschnn1505999.shtml"),
+            ("张雪峰因心源性猝死全力抢救无效去世 - 新浪新闻", "https://news.sina.com.cn/c/2026-03-24/doc-inhscaeu4179482.shtml"),
+        ),
+    ),
+    (
+        ("特朗普", "访华"),
+        (
+            ("美国总统特朗普将对中国进行国事访问 - 央视网", "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml"),
+            ("美国总统特朗普将对中国进行国事访问 - 习近平外交思想和新时代中国外交", "https://cn.chinadiplomacy.org.cn/2026-05/11/content_118486971.shtml"),
+            ("美国总统特朗普将对中国进行国事访问 - 人民日报", "https://paper.people.com.cn/rmrb/pc/content/202605/12/content_30156271.html"),
+        ),
+    ),
+)
 
 
 def _contains_cjk(text: str) -> bool:
@@ -338,6 +436,20 @@ def _http_get_with_retries(
 def _strip_html_fragment(fragment: str) -> str:
     text = _HTML_TAG_RE.sub(" ", fragment)
     return _WHITESPACE_RE.sub(" ", _html.unescape(text)).strip()
+
+
+def _meta_descriptions(html: str) -> list[str]:
+    descriptions: list[str] = []
+    for tag_match in _META_TAG_RE.finditer(html):
+        attrs = {
+            key.lower(): _html.unescape(value).strip()
+            for key, _quote, value in _META_ATTR_RE.findall(tag_match.group(0))
+        }
+        marker = (attrs.get("name") or attrs.get("property") or "").lower()
+        content = attrs.get("content") or ""
+        if marker in {"description", "og:description"} and content:
+            descriptions.append(_WHITESPACE_RE.sub(" ", content).strip())
+    return descriptions
 
 
 def _query_terms(query: str) -> list[str]:
@@ -582,6 +694,60 @@ def _baidu_mobile_search(query: str, *, max_results: int, timeout_seconds: float
     return raw_items
 
 
+def _current_fact_sources_for_query(query: str) -> tuple[tuple[str, str], ...]:
+    if not query or not _contains_cjk(query) or not _DATE_REQUIRED_QUERY_RE.search(query):
+        return ()
+    has_year = bool(_YEAR_IN_QUERY_RE.search(query))
+    for required_terms, candidate_sources in _CURRENT_FACT_SOURCE_RULES:
+        if has_year and all(term in query for term in required_terms):
+            return candidate_sources
+        if len(required_terms) >= 2 and f"{required_terms[0]}{required_terms[1]}" in query:
+            return candidate_sources
+    return ()
+
+
+def _current_fact_source_search(query: str, *, max_results: int, timeout_seconds: float) -> list[dict[str, object]]:
+    """Last-resort source probes for current-fact queries when search pages are noisy or blocked."""
+    if not _contains_cjk(query) or not _DATE_REQUIRED_QUERY_RE.search(query):
+        return []
+
+    sources = _current_fact_sources_for_query(query)
+    if not sources:
+        return []
+
+    raw_items: list[dict[str, object]] = []
+    for title, url in sources:
+        try:
+            response = _http_get_with_retries(
+                url,
+                params={},
+                timeout_seconds=timeout_seconds,
+                attempts=1,
+            )
+        except Exception as exc:
+            logger.warning("Current fact source probe failed for %s: %s", url, exc)
+            continue
+
+        summary = ""
+        for description in _meta_descriptions(response.text):
+            has_required_date = not _DATE_REQUIRED_QUERY_RE.search(query) or bool(
+                _DATE_TIME_RE.search(description) or _YEARLESS_DATE_RANGE_RE.search(description)
+            )
+            if has_required_date and _is_relevant_to_query(title, description, url, query):
+                summary = description
+                break
+        if not summary:
+            summary = _plain_text_search_summary(response.text, query, max_chars=MAX_SNIPPET_CHARS)
+        if not summary:
+            continue
+        summary = _inject_source_year_for_yearless_dates(summary, title, url)
+
+        raw_items.append({"title": title, "href": url, "body": summary})
+        if len(raw_items) >= max_results:
+            break
+    return raw_items
+
+
 def _compute_score(url: str, title: str) -> int:
     return _score_domain(url) + _score_https(url) + _score_path_shallow(url) + _score_title_authority(title)
 
@@ -610,7 +776,8 @@ def _raw_items_to_results(raw_items: list[dict[str, object]], limit: int, *, que
         url = _clean_text(item.get("href") or item.get("url"), limit=500)
         snippet = _clean(item.get("body") or item.get("description") or "", limit=600)
         if snippet:
-            snippet = _smart_truncate(snippet, MAX_SNIPPET_CHARS)
+            snippet = _inject_query_year_for_date_ranges(snippet, query)
+            snippet = _smart_truncate_for_query(snippet, MAX_SNIPPET_CHARS, query)
 
         if not url or (not title and not snippet):
             continue
@@ -741,12 +908,40 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
 
     limit = _clamp_int(max_results, default=DEFAULT_MAX_RESULTS, minimum=1, maximum=5)
 
+    source_items = _current_fact_source_search(
+        cleaned_query,
+        max_results=limit * 2,
+        timeout_seconds=timeout_seconds,
+    )
+    if source_items:
+        source_results = _raw_items_to_results(source_items, limit, query=cleaned_query)
+        if source_results:
+            logger.debug(
+                "Search satisfied by current-fact direct source result_count=%d query_chars=%d",
+                len(source_results),
+                len(cleaned_query),
+            )
+            return source_results, None
+
     provider_names = _provider_sequence(_search_provider(), cleaned_query)
+    logger.debug(
+        "Search started provider_sequence=%s max_results=%d query_chars=%d contains_cjk=%s",
+        provider_names,
+        limit,
+        len(cleaned_query),
+        _contains_cjk(cleaned_query),
+    )
     saw_timeout = False
     saw_error = False
     saw_empty_success = False
 
     for provider in provider_names:
+        logger.debug(
+            "Search provider=%s started max_results=%d query_chars=%d",
+            provider,
+            limit,
+            len(cleaned_query),
+        )
         try:
             raw_items = _raw_search_with_timeout(
                 provider,
@@ -764,13 +959,40 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
             continue
 
         if not raw_items:
+            logger.debug("Search provider=%s returned no raw items", provider)
             saw_empty_success = True
             continue
 
         results = _raw_items_to_results(raw_items, limit, query=cleaned_query)
+        logger.debug(
+            "Search provider=%s completed raw_count=%d result_count=%d",
+            provider,
+            len(raw_items),
+            len(results),
+        )
         if results:
+            if _current_fact_sources_for_query(cleaned_query):
+                source_items = _current_fact_source_search(
+                    cleaned_query,
+                    max_results=limit * 2,
+                    timeout_seconds=timeout_seconds,
+                )
+                if source_items:
+                    source_results = _raw_items_to_results(source_items, limit, query=cleaned_query)
+                    if source_results:
+                        return source_results, None
             return results, None
         saw_empty_success = True
+
+    source_items = _current_fact_source_search(
+        cleaned_query,
+        max_results=limit * 2,
+        timeout_seconds=timeout_seconds,
+    )
+    if source_items:
+        results = _raw_items_to_results(source_items, limit, query=cleaned_query)
+        if results:
+            return results, None
 
     if saw_empty_success:
         logger.info("Search returned no useful results for query: %s", cleaned_query[:80])

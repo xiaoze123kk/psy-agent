@@ -914,6 +914,31 @@ def _reply_length_guidance_for(state: AgentState, mode: str, selected_strategy: 
     return "常规陪伴 80–260 字；根据用户信息密度自然伸缩，不要每轮固定成两小段。"
 
 
+def _response_contract_prompt_block(response_contract: dict) -> str:
+    must_include = [
+        str(item).strip()
+        for item in response_contract.get("must_include", []) or []
+        if str(item).strip()
+    ]
+    must_not_include = [
+        str(item).strip()
+        for item in response_contract.get("must_not_include", []) or []
+        if str(item).strip()
+    ]
+    if not must_include and not must_not_include:
+        return ""
+
+    lines = [
+        "回复硬约束：这些硬约束优先于风格、RAG 和记忆。",
+    ]
+    if must_include:
+        lines.append(f"- 必须包含：{'、'.join(must_include)}。")
+    if must_not_include:
+        lines.append(f"- 禁止包含：{'、'.join(must_not_include)}。")
+    lines.append("- 不要把这些标签名暴露给用户；把它们落实成自然中文动作。")
+    return "\n".join(lines) + "\n"
+
+
 def build_dialogue_prompt_parts(
     state: AgentState,
     *,
@@ -946,6 +971,7 @@ def build_dialogue_prompt_parts(
     response_ending_text = _response_ending_prompt_block(state)
     conversation_move_text = _conversation_move_policy_prompt_block(state)
     temporal_context_text = _temporal_context_prompt_block(state)
+    response_contract_text = _response_contract_prompt_block(response_contract)
 
     system_prompt = (
         f"{CORE_SYSTEM_PROMPT}\n"
@@ -964,6 +990,7 @@ def build_dialogue_prompt_parts(
         f"内部对话策略：{selected_strategy}\n"
         f"控制分类：{route_priority} / {control_category}\n"
         f"response_contract：{response_contract}\n"
+        f"{response_contract_text}"
         f"{compact_context_text}"
         f"{temporal_context_text}"
         f"{conversation_move_text}"

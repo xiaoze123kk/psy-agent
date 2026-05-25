@@ -1,0 +1,10 @@
+{
+  "total": 10,
+  "generated": 10,
+  "failed_no_reply": 0,
+  "no_reply_cases": [],
+  "rag_used": 2,
+  "blocked_case_failures": [],
+  "elapsed_seconds": 214.22,
+  "output": "data\\eval_reports\\phase2_rag_round2_smoke_answers.jsonl"
+}

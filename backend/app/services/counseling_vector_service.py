@@ -450,6 +450,7 @@ RAG_BLOCKED_CATEGORIES = {
     "clinical_red_flag",
     "dependency_risk",
     "diagnosis_or_medical_request",
+    "privacy_boundary",
     "prompt_attack",
     "dangerous_request",
 }

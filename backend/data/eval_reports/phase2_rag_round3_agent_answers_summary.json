@@ -1,0 +1,10 @@
+{
+  "total": 100,
+  "completed_before": 0,
+  "completed_now": 100,
+  "generated": 100,
+  "rag_used": 41,
+  "failed": 0,
+  "elapsed_seconds": 1850.93,
+  "output": "data\\eval_reports\\phase2_rag_round3_agent_answers.jsonl"
+}
