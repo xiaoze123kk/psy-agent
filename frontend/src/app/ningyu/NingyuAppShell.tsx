@@ -6,6 +6,7 @@ import bgNight from "../../imports/wcbg_night.png";
 import logo from "../../imports/wind-chat-logo.png";
 import { api } from "../../api";
 import { useAppState } from "../state";
+import { useSession } from "../session";
 import {
   conversationFeedbackOptions,
   formatDuration,
@@ -2028,6 +2029,7 @@ export function NingyuAppShell() {
                   onFeedbackSubmit={handleFeedbackSubmit}
                   onToggleSafetyEntry={handleToggleSafetyEntry}
                   onRetrySafetyState={handleRetrySafetyState}
+                  onLogout={handleLogout}
                 />
               </AccessibleLayer>
             ) : null}

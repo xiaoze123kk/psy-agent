@@ -38,6 +38,7 @@ export interface RegisterResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface LoginRequest {
@@ -61,6 +62,7 @@ export interface LoginResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface RefreshTokenResponse {
@@ -76,6 +78,7 @@ export interface RefreshTokenResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface CurrentUserResponse {
@@ -90,6 +93,38 @@ export interface CurrentUserResponse {
   memory_mode: MemoryMode;
   companion_style: string;
   save_transcript: boolean;
+}
+
+export interface PasswordResetQuestionRequest {
+  username: string;
+}
+
+export interface PasswordResetQuestionResponse {
+  username: string;
+  security_question: string;
+}
+
+export interface PasswordResetVerifyRequest {
+  username: string;
+  answer: string;
+}
+
+export interface PasswordResetVerifyResponse {
+  reset_token: string;
+}
+
+export interface PasswordResetRequest {
+  reset_token: string;
+  new_password: string;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface ChangePasswordResponse {
+  ok: boolean;
 }
 
 export interface StartThreadRequest {

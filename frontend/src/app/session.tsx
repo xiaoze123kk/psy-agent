@@ -14,6 +14,8 @@ import type { CurrentUserResponse, LoginRequest, RegisterRequest } from "../type
 const REMEMBERED_USERNAME_KEY = "warp_te.remembered_username";
 const REMEMBERED_AUTO_LOGIN_KEY = "warp_te.remembered_auto_login";
 
+let _restoringPromise: Promise<void> | null = null;
+
 export function getRememberedUsername(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(REMEMBERED_USERNAME_KEY) ?? null;
