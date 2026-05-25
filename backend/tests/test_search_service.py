@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import unittest
 from unittest.mock import patch
 
-from app.services.search_service import SearchResult, _generic_anchor_results, _http_get_with_retries, _plain_text_search_summary, search_web
+from app.services.search_service import SearchResult, _current_fact_source_search, _generic_anchor_results, _http_get_with_retries, _plain_text_search_summary, _raw_items_to_results, search_web
 
 
 os.environ["SEARCH_PROVIDER"] = "ddg"
@@ -366,7 +365,10 @@ class SearchServiceRelevanceTests(unittest.TestCase):
             "href": "https://baike.baidu.com/item/张/31793",
             "body": "形声字。从弓，长声。这里介绍汉字张的字义。",
         }
-        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]):
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[],
+        ):
             results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
 
         self.assertEqual(results, [])
@@ -377,7 +379,10 @@ class SearchServiceRelevanceTests(unittest.TestCase):
             "href": "https://www.hancibao.com/zi/5f20",
             "body": "2026年5月13日 · 【张】字Unicode码为U+5F20，位于Unicode编码中日韩统一表意文字区。",
         }
-        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]):
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[],
+        ):
             results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
 
         self.assertEqual(results, [])
@@ -426,6 +431,65 @@ class SearchServiceSummaryExtractionTests(unittest.TestCase):
         self.assertEqual(results[0]["href"], "https://www.spp.gov.cn/spp/zdgz/202605/t20260511.html")
         self.assertIn("5月13日至15日", results[0]["body"])
 
+    def test_time_query_summary_keeps_event_date_inside_snippet_budget(self) -> None:
+        html = """
+        <html><body>
+        <section>
+        推荐您搜索 聚焦_美国总统 特朗普 对中国进行 国事访问 _新闻频道_央视网。
+        应国家主席习近平邀请，美国总统特朗普8日下午抵达北京，开始对中国进行国事访问。
+        这是特朗普今年初就任美国总统以来首次访华，也是中方接待的重要外事活动。
+        央视网 http://news.cctv.com/s... 2026-05-08 推荐您搜索
+        外交部介绍美国总统特朗普访华安排和中方期待_中华人民共和国最高人民检察院。
+        新华社北京5月11日电（记者万倩仪、冯歆然） 应国家主席习近平邀请，美国总统特朗普将于2026年5月13日至15日对中国进行国事访问。
+        </section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "特朗普 访华 2026 国事访问 外交部")
+
+        self.assertIn("2026年5月13日至15日", summary)
+        self.assertLess(summary.index("2026年5月13日至15日"), 260)
+
+    def test_time_query_result_truncation_keeps_event_date(self) -> None:
+        body = (
+            "推荐您搜索 聚焦_美国总统 特朗普 对中国进行 国事访问 _新闻频道_央视网。"
+            + ("旧报道内容" * 40)
+            + " 外交部介绍美国总统特朗普访华安排和中方期待。"
+            + "新华社北京5月11日电（记者万倩仪、冯歆然） 应国家主席习近平邀请，"
+            + "美国总统特朗普将于2026年5月13日至15日对中国进行国事访问。"
+        )
+
+        results = _raw_items_to_results(
+            [
+                {
+                    "title": "特朗普 访华 2026 国事访问 外交部 - 搜索摘要",
+                    "href": "https://www.sogou.com/web?query=x",
+                    "body": body,
+                }
+            ],
+            3,
+            query="特朗普 访华 2026 国事访问 外交部",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
+    def test_time_query_result_adds_query_year_to_yearless_date_range(self) -> None:
+        results = _raw_items_to_results(
+            [
+                {
+                    "title": "特朗普 访华 2026 国事访问 外交部 - 搜索摘要",
+                    "href": "https://www.sogou.com/web?query=x",
+                    "body": "根据外交部5月11日通报，应中方邀请，此次国事访问时间为5月13日至15日。发布日期为2026年5月18日。",
+                }
+            ],
+            3,
+            query="特朗普 访华 2026 国事访问 外交部",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
 
 class SearchServiceErrorTests(unittest.TestCase):
     def test_http_search_requests_do_not_inherit_environment_proxy(self) -> None:
@@ -463,18 +527,20 @@ class SearchServiceErrorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls, [True, True, False])
 
-    def test_search_web_does_not_write_ad_hoc_debug_log_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            debug_path = os.path.join(tmpdir, "debug_search.log")
-            with patch("app.services.search_service._DLOG_PATH", debug_path, create=True), patch(
-                "app.services.search_service._ddg_text",
-                return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
-            ):
-                results, err = search_web("test", max_results=3)
+    def test_search_web_records_diagnostics_with_module_logger(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
+        ), self.assertLogs("app.services.search_service", level="DEBUG") as logs:
+            results, err = search_web("test", max_results=3)
 
-            self.assertEqual(len(results), 1)
-            self.assertIsNone(err)
-            self.assertFalse(os.path.exists(debug_path))
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(err)
+        log_text = "\n".join(logs.output)
+        self.assertIn("Search started", log_text)
+        self.assertIn("provider=ddg", log_text)
+        self.assertIn("result_count=1", log_text)
+        self.assertNotIn("debug_search.log", log_text)
 
     def test_bing_web_falls_back_to_ddg_when_primary_fails(self) -> None:
         with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
@@ -533,6 +599,69 @@ class SearchServiceErrorTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIn("2026年3月24日15时50分", results[0].snippet)
         ddg.assert_not_called()
+
+    def test_search_web_uses_current_fact_source_probe_after_empty_providers(self) -> None:
+        source_item = {
+            "title": "美国总统特朗普将对中国进行国事访问",
+            "href": "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml",
+            "body": "应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._raw_search_with_timeout",
+            return_value=[],
+        ), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ):
+            results, err = search_web("特朗普 访华 2026 国事访问 外交部", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
+    def test_search_web_prefers_current_fact_source_probe_for_known_time_query(self) -> None:
+        provider_item = {
+            "title": "张雪峰去世时间是什么？ 最新 2026 讣告 - 搜索摘要",
+            "href": "http://m.baidu.com/s?word=x",
+            "body": "具体时间：张雪峰的去世时间为2026年3月24日。",
+        }
+        source_item = {
+            "title": "张雪峰去世 高中同学缅怀：他曾是体育委员 痛惜不已 - 神州学人网",
+            "href": "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html",
+            "body": "张雪峰因心源性猝死全力抢救无效，于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._raw_search_with_timeout",
+            return_value=[provider_item],
+        ), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ):
+            results, err = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+
+    def test_current_fact_source_probe_extracts_direct_source_summary(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("特朗普 访华 2026 国事访问 外交部", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("特朗普", items[0]["title"])
+        self.assertIn("5月13日至15日", items[0]["body"])
 
     def test_network_error_returns_empty_and_error_message(self) -> None:
         with patch(

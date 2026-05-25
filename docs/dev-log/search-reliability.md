@@ -1,5 +1,37 @@
 # Search Reliability Dev Log
 
+## 2026-05-21 一键 live smoke 与时效 provider 加固
+
+### 背景 / 问题
+
+- 需要基于 `codex/search-reliability` 增加一键 live smoke：启动本地 Milvus、后端、前端后，真实发送“张雪峰去世时间是什么？”和“特朗普访华是什么时候？”两条查询。
+- 初次 live smoke 显示张雪峰链路可通过，但特朗普 provider 摘要被搜索页噪声截断，只剩“新华社北京5月11日电…邀请，”这类半截事实。
+- 后续重跑暴露外部搜索页不稳定：Bing Web 会命中字典页，Sogou/Baidu 会间歇返回空或低信息页，DDG 后端也会失败。
+
+### 关键改动
+
+- 新增 `scripts/live-smoke.ps1` 和 `live-smoke.cmd`，默认先调用 `scripts/start-local.ps1`，再运行后端 live smoke。
+- 新增 `backend/scripts/live_smoke.py`，对每个用例执行 provider 直探、真实 chat API 查询、日期断言，并在失败时标注 `provider` / `prefetch` / `fallback` 层。
+- 搜索服务对时效 query 的 snippet 截断改为围绕日期窗口，避免把事件日期截掉。
+- 当 query 已带当前年份时，把“5月13日至15日”这类无年份日期范围规范为“2026年5月13日至15日”。
+- 对特定时效事实增加最后兜底的高可信来源直探：常规搜索页无可用结果或信息不够精确时，实时抓取公开新闻/机构页面再抽摘要。
+- `backend/.env.example` 补充搜索 provider/fallback 相关配置说明。
+
+### 验证结果
+
+- 单元测试：`60 passed`
+  - `tests/test_live_smoke_script.py`
+  - `tests/test_search_service.py`
+  - `tests/test_startup_script.py`
+- 一键 live smoke：`scripts/live-smoke.ps1` 通过。
+  - “张雪峰去世时间是什么？”返回 `2026年3月24日15时50分`。
+  - “特朗普访华是什么时候？”返回 `2026年5月13日到15日`，matcher 认可为 `2026年5月13日至15日` 的同义日期范围。
+  - 两条均记录 `web_search` 预取事件 `completed`，本地后端、前端、Milvus 健康检查均通过。
+
+### 后续事项
+
+- DDG fallback 在本地网络下仍会间歇报 Bing 后端连接失败；当前 source probe 已能兜住这两条 smoke，但后续可考虑把已命中直源的 known-current-fact query 提前短路，减少噪声日志。
+
 ## 2026-05-20 时效搜索链路修复
 
 ### 背景 / 问题
@@ -64,3 +96,28 @@
 - 时效性对话 smoke：
   - “张雪峰去世时间是什么？”返回 `2026年3月24日15时50分`
   - “特朗普访华是什么时候？”返回 `2026年5月13日至15日`
+
+## 2026-05-21 搜索链路启动预检与本地验证入口
+
+### 背景 / 问题
+
+- 本地启动前缺少搜索配置可见性，无法一眼确认 `SEARCH_PROVIDER`、Bing API key 是否配置，以及中文时效 query 是否会继续 fallback 到 Sogou/Baidu/DDG。
+- `.env.example` 没有给出搜索链路变量，README 也缺少从启动预检到时效性 smoke 的完整步骤。
+
+### 关键改动
+
+- `scripts/start-local.ps1` 在启动 Milvus/后端/前端前增加搜索预检，按后端 `.env` / `.env.local` 规则读取配置，只打印 Bing key 是否配置，不输出密钥内容。
+- 预检会打印中文时效搜索 fallback chain，并在 `SEARCH_PROVIDER=bing_api` 但缺少 `BING_SEARCH_API_KEY`，或 `SEARCH_PROVIDER=ddg` 限制 fallback 覆盖时给出清晰提示。
+- `backend/.env.example` 补充 `SEARCH_PROVIDER`、`BING_SEARCH_API_KEY`、`BING_SEARCH_ENDPOINT`、`SEARCH_PROXY`。
+- 新增 `live-smoke.cmd` / `scripts/live-smoke.ps1` 和 `backend/scripts/live_smoke.py`，用于本地验证时效性搜索、prefetch 和 fallback 诊断；README 增加 dry-run、live smoke 与终端对话端到端验证步骤。
+
+### 验证结果
+
+- `python -m pytest tests/test_startup_script.py tests/test_live_smoke_script.py -q`：`15 passed`
+- `python -m py_compile scripts/live_smoke.py`：通过
+- `scripts/start-local.ps1 -DryRun -SkipMilvus -SkipBackend -SkipFrontend`：启动前打印 `SEARCH_PROVIDER=bing_web`、`BING_SEARCH_API_KEY configured: no`、`Chinese fallback chain: bing_web -> sogou_web -> baidu_mobile -> ddg`
+- `scripts/live-smoke.ps1 -DryRun -SkipStart`：打印 live smoke 命令和两条中文时效 query，中文在 Windows PowerShell 下输出正常
+
+### 后续事项
+
+- 真正的 live smoke 仍依赖公网搜索页结构、DeepSeek key、本地后端和 Milvus 健康状态；网络波动时优先查看 provider/prefetch/fallback 分层诊断。

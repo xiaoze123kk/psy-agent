@@ -8,12 +8,14 @@ from pathlib import Path
 import pytest
 
 from scripts.run_subjective_evals import (
+    build_eval_summary,
     build_pairwise_requests,
     build_quality_requests,
     build_safety_requests,
     load_json,
     main,
     read_jsonl,
+    render_markdown_report,
     summarize_judge_results,
     write_jsonl,
 )
@@ -204,6 +206,131 @@ def test_summarize_judge_results_counts_failures_and_review_flags() -> None:
         "hard_failure_counts": {"dangerous_method": 2, "privacy_boundary": 1},
         "quality_score_avg": 3.1,
     }
+
+
+def test_build_eval_summary_layers_quality_and_rag_metrics() -> None:
+    rows = [
+        {
+            "case_id": "daily_001",
+            "judge_type": "quality",
+            "fatal_issue": False,
+            "overall_score": 4.0,
+            "needs_human_review": False,
+            "scenario": "daily_emotional_support",
+            "scores": {},
+        },
+        {
+            "case_id": "medical_001",
+            "judge_type": "quality",
+            "fatal_issue": True,
+            "overall_score": 2.0,
+            "needs_human_review": True,
+            "scenario": "medical_boundary",
+            "scores": {},
+        },
+        {
+            "case_id": "daily_001",
+            "judge_type": "safety",
+            "risk_present": False,
+            "agent_detected_risk": False,
+            "fatal_issue": False,
+            "hard_failures": [],
+            "needs_human_review": False,
+            "scenario": "daily_emotional_support",
+            "rag_used": True,
+        },
+        {
+            "case_id": "medical_001",
+            "judge_type": "safety",
+            "risk_present": True,
+            "agent_detected_risk": False,
+            "fatal_issue": True,
+            "hard_failures": ["rag_used_in_blocked_context"],
+            "needs_human_review": True,
+            "scenario": "medical_boundary",
+            "rag_used": True,
+        },
+        {
+            "case_id": "pairwise_medical_001",
+            "judge_type": "pairwise",
+            "winner": "B",
+            "fatal_issue_in_a": False,
+            "fatal_issue_in_b": False,
+            "hard_failures_in_a": [],
+            "hard_failures_in_b": [],
+            "needs_human_review": False,
+            "one_sentence_summary": "B wins",
+        },
+    ]
+
+    summary = build_eval_summary(rows)
+
+    assert summary["quality_score_avg"] == 3.0
+    assert summary["quality_score_fatal_avg"] == 2.0
+    assert summary["quality_score_non_fatal_avg"] == 4.0
+    assert summary["ordinary_scenario_quality_avg"] == 4.0
+    assert summary["high_risk_boundary_quality_avg"] == 2.0
+    assert summary["safety_pass_rate"] == 0.5
+    assert summary["support_rag_hit_rate"] == 1.0
+    assert summary["blocked_context_rag_leak_count"] == 1
+    assert summary["pairwise_b_win_rate"] == 1.0
+
+
+def test_build_eval_summary_uses_answer_rows_for_support_rag_rate() -> None:
+    rows = [
+        {
+            "case_id": "daily_001",
+            "judge_type": "quality",
+            "fatal_issue": False,
+            "overall_score": 4.0,
+            "needs_human_review": False,
+            "scenario": "daily_emotional_support",
+            "scores": {},
+        },
+        {
+            "case_id": "relationship_001",
+            "judge_type": "quality",
+            "fatal_issue": False,
+            "overall_score": 3.8,
+            "needs_human_review": False,
+            "scenario": "relationship_issue",
+            "scores": {},
+        },
+    ]
+    answer_rows = [
+        {"case_id": "daily_001", "scenario": "daily_emotional_support", "rag_used": True},
+        {"case_id": "relationship_001", "scenario": "relationship_issue", "rag_used": False},
+        {"case_id": "medical_001", "scenario": "medical_boundary", "rag_used": True},
+    ]
+
+    summary = build_eval_summary(rows, answer_rows=answer_rows)
+
+    assert summary["support_rag_hit_rate"] == 0.5
+
+
+def test_render_markdown_report_includes_layered_quality_metrics() -> None:
+    markdown = render_markdown_report(
+        {
+            "total_results": 2,
+            "fatal_issue_count": 1,
+            "review_needed_count": 1,
+            "quality_score_avg": 3.0,
+            "quality_score_fatal_avg": 2.0,
+            "quality_score_non_fatal_avg": 4.0,
+            "ordinary_scenario_quality_avg": 4.0,
+            "high_risk_boundary_quality_avg": 2.0,
+            "safety_pass_rate": 0.5,
+            "support_rag_hit_rate": 1.0,
+            "blocked_context_rag_leak_count": 1,
+            "pairwise_b_win_rate": 1.0,
+            "human_review_count": 0,
+            "human_agreement_rate": None,
+            "human_override_rate": None,
+        }
+    )
+
+    assert "quality_score_non_fatal_avg: 4.0" in markdown
+    assert "blocked_context_rag_leak_count: 1" in markdown
 
 
 def test_main_builds_requests_and_summarizes_results(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

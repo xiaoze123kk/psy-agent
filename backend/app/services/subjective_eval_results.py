@@ -13,6 +13,19 @@ from app.services.subjective_eval_schemas import (
 
 VALID_JUDGE_TYPES = {"safety", "quality", "pairwise"}
 VALID_PAIRWISE_WINNERS = {"A", "B", "tie"}
+ORDINARY_SUPPORT_SCENARIOS = {
+    "daily_emotional_support",
+    "relationship_issue",
+    "light_moderate_distress",
+}
+HIGH_RISK_BOUNDARY_SCENARIOS = {
+    "crisis",
+    "minor_high_risk",
+    "medical_boundary",
+    "dependency_boundary",
+    "privacy_boundary",
+    "multi_turn_escalation",
+}
 
 
 def _missing_fields(row: dict[str, Any], fields: set[str]) -> list[str]:
@@ -269,22 +282,35 @@ def _average(values: list[float]) -> float | None:
 def build_eval_summary(
     rows: list[dict[str, Any]],
     *,
+    answer_rows: list[dict[str, Any]] | None = None,
     human_reviews: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    answer_rows = answer_rows or []
     human_reviews = human_reviews or []
+    collect_support_rag_from_judge_rows = not answer_rows
     judge_type_counts: Counter[str] = Counter()
     hard_failure_counts: Counter[str] = Counter()
     pairwise_winner_counts: Counter[str] = Counter()
     quality_scores: list[float] = []
+    fatal_quality_scores: list[float] = []
+    non_fatal_quality_scores: list[float] = []
+    ordinary_quality_scores: list[float] = []
+    high_risk_boundary_quality_scores: list[float] = []
     dimension_scores: dict[str, list[float]] = defaultdict(list)
     scenario_scores: dict[str, list[float]] = defaultdict(list)
     fatal_issue_count = 0
     review_needed_count = 0
     top_review_cases: list[str] = []
+    safety_rows = 0
+    safety_passes = 0
+    support_rag_known = 0
+    support_rag_hits = 0
+    blocked_context_rag_leak_count = 0
 
     for row in rows:
         judge_type = str(row.get("judge_type", "unknown"))
         judge_type_counts[judge_type] += 1
+        scenario = str(row.get("scenario") or "")
 
         if row.get("fatal_issue") is True or row.get("fatal_issue_in_a") is True or row.get("fatal_issue_in_b") is True:
             fatal_issue_count += 1
@@ -298,25 +324,57 @@ def build_eval_summary(
         if isinstance(hard_failures, list):
             for failure in hard_failures:
                 hard_failure_counts[str(failure)] += 1
+                if str(failure) == "rag_used_in_blocked_context":
+                    blocked_context_rag_leak_count += 1
         for field in ("hard_failures_in_a", "hard_failures_in_b"):
             hard_failures = row.get(field)
             if isinstance(hard_failures, list):
                 for failure in hard_failures:
                     hard_failure_counts[str(failure)] += 1
 
+        if judge_type == "safety":
+            safety_rows += 1
+            if row.get("fatal_issue") is False:
+                safety_passes += 1
+
         if judge_type == "quality" and _is_finite_number(row.get("overall_score")):
             overall_score = float(row["overall_score"])
             quality_scores.append(overall_score)
+            if row.get("fatal_issue") is True:
+                fatal_quality_scores.append(overall_score)
+            else:
+                non_fatal_quality_scores.append(overall_score)
             if _is_non_empty_string(row.get("scenario")):
-                scenario_scores[str(row["scenario"])].append(overall_score)
+                scenario_scores[scenario].append(overall_score)
+            if scenario in ORDINARY_SUPPORT_SCENARIOS:
+                ordinary_quality_scores.append(overall_score)
+            if scenario in HIGH_RISK_BOUNDARY_SCENARIOS:
+                high_risk_boundary_quality_scores.append(overall_score)
             scores = row.get("scores")
             if isinstance(scores, dict):
                 for dimension, value in scores.items():
                     if isinstance(value, dict) and _is_finite_number(value.get("score")):
                         dimension_scores[str(dimension)].append(float(value["score"]))
+        if (
+            collect_support_rag_from_judge_rows
+            and scenario in ORDINARY_SUPPORT_SCENARIOS
+            and isinstance(row.get("rag_used"), bool)
+        ):
+            support_rag_known += 1
+            if row.get("rag_used") is True:
+                support_rag_hits += 1
 
         if judge_type == "pairwise" and row.get("winner") in VALID_PAIRWISE_WINNERS:
             pairwise_winner_counts[str(row["winner"])] += 1
+
+    for row in answer_rows:
+        if not isinstance(row, dict):
+            continue
+        scenario = str(row.get("scenario") or "")
+        if scenario in ORDINARY_SUPPORT_SCENARIOS and isinstance(row.get("rag_used"), bool):
+            support_rag_known += 1
+            if row.get("rag_used") is True:
+                support_rag_hits += 1
 
     reviewed = len(human_reviews)
     agreed = sum(1 for row in human_reviews if row.get("codex_agreed") is True)
@@ -330,6 +388,13 @@ def build_eval_summary(
         "hard_failure_counts": dict(sorted(hard_failure_counts.items())),
         "review_needed_count": review_needed_count,
         "quality_score_avg": _average(quality_scores),
+        "quality_score_fatal_avg": _average(fatal_quality_scores),
+        "quality_score_non_fatal_avg": _average(non_fatal_quality_scores),
+        "ordinary_scenario_quality_avg": _average(ordinary_quality_scores),
+        "high_risk_boundary_quality_avg": _average(high_risk_boundary_quality_scores),
+        "safety_pass_rate": round(safety_passes / safety_rows, 2) if safety_rows else None,
+        "support_rag_hit_rate": round(support_rag_hits / support_rag_known, 2) if support_rag_known else None,
+        "blocked_context_rag_leak_count": blocked_context_rag_leak_count,
         "dimension_score_avg": {key: _average(values) for key, values in sorted(dimension_scores.items())},
         "scenario_score_avg": {key: _average(values) for key, values in sorted(scenario_scores.items())},
         "pairwise_winner_counts": dict(sorted(pairwise_winner_counts.items())),
@@ -349,6 +414,13 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
         f"- fatal_issue_count: {summary.get('fatal_issue_count', 0)}",
         f"- review_needed_count: {summary.get('review_needed_count', 0)}",
         f"- quality_score_avg: {summary.get('quality_score_avg')}",
+        f"- quality_score_fatal_avg: {summary.get('quality_score_fatal_avg')}",
+        f"- quality_score_non_fatal_avg: {summary.get('quality_score_non_fatal_avg')}",
+        f"- ordinary_scenario_quality_avg: {summary.get('ordinary_scenario_quality_avg')}",
+        f"- high_risk_boundary_quality_avg: {summary.get('high_risk_boundary_quality_avg')}",
+        f"- safety_pass_rate: {summary.get('safety_pass_rate')}",
+        f"- support_rag_hit_rate: {summary.get('support_rag_hit_rate')}",
+        f"- blocked_context_rag_leak_count: {summary.get('blocked_context_rag_leak_count')}",
         f"- pairwise_b_win_rate: {summary.get('pairwise_b_win_rate')}",
         f"- human_review_count: {summary.get('human_review_count', 0)}",
         f"- human_agreement_rate: {summary.get('human_agreement_rate')}",

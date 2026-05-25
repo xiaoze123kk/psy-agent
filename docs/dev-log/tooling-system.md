@@ -128,6 +128,34 @@
 
 ---
 
+## 临时调试日志落盘清理
+
+### 修复 (2026-05-21)
+
+#### 背景 / 问题
+
+- 根目录残留 `backend/debug_search.log` 和 `backend/debug_tooling.log`，内容对应搜索服务和工具门控测试运行轨迹。
+- 当前源码已没有 `_DLOG_PATH` / `_DEBUG_LOG_PATH` 写盘实现，但回归测试仍通过补丁不存在的临时路径来表达约束，不能证明必要诊断已统一进入正常 logger。
+
+#### 关键改动
+
+- `search_service.search_web` 增加 DEBUG logger 诊断，记录 provider 序列、当前 provider、raw/result 数量、query 长度和 CJK 标记；不再写独立 debug 文件。
+- `tooling.build_dialogue_tool_plan` 和 `web_search` handler 增加 DEBUG logger 诊断，记录门控 allowed/blocked 和工具执行状态/结果数；不记录到 `debug_tooling.log`。
+- 更新相关测试，改为断言诊断信息进入模块 logger，且日志文本不包含临时文件名。
+- 删除已残留的两个临时日志文件，并确认相关测试不会重新生成 `backend/debug_*.log`。
+
+#### 验证结果
+
+- RED：新增 logger 预期后，最小测试因没有 DEBUG 日志失败。
+- GREEN：`backend/.venv/Scripts/python.exe -m pytest tests/test_search_service.py tests/test_tooling.py -q` -> `95 passed`。
+- 清理后检查 `backend/debug_*.log`，无文件重新生成。
+
+#### 后续事项
+
+- 如果后续需要更细的线上排障，应继续通过模块 logger 和集中日志配置控制级别，避免新增临时文件路径或 ad-hoc open/write。
+
+---
+
 ## 架构说明
 
 ```

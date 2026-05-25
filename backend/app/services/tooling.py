@@ -699,6 +699,13 @@ def _build_web_search_handler(state: Mapping[str, Any], capture: ToolAuditCaptur
         }
         if error:
             output["error"] = error
+        logger.debug(
+            "web_search tool completed status=%s result_count=%d error=%s query_chars=%d",
+            status,
+            len(items),
+            error or "",
+            len(query),
+        )
         return output
 
     return web_search_tool
@@ -995,6 +1002,7 @@ def build_dialogue_tool_plan(
 ) -> DialogueToolPlan:
     tooling_enabled = state.get("tooling_enabled")
     if tooling_enabled is not True:
+        logger.debug("Dialogue tooling disabled tooling_enabled=%s", tooling_enabled)
         return DialogueToolPlan(
             tools=[],
             tool_handlers={},
@@ -1030,11 +1038,20 @@ def build_dialogue_tool_plan(
         handlers["summarize_session"] = _build_summarize_session_handler(state, capture)
 
     specs = [TOOL_SPEC_BY_NAME[name] for name in allowed_names if name in TOOL_SPEC_BY_NAME]
+    blocked_names = gate.blocked_tool_names()
+    logger.debug(
+        "Dialogue tool plan built risk_level=%s memory_mode=%s gate_mode=%s allowed=%s blocked=%s",
+        gate.risk_level,
+        gate.memory_mode,
+        gate.tool_gate_mode,
+        allowed_names,
+        blocked_names,
+    )
     return DialogueToolPlan(
         tools=[spec.to_deepseek_tool() for spec in specs],
         tool_handlers=handlers,
         allowed_tool_names=allowed_names,
-        blocked_tool_names=gate.blocked_tool_names(),
+        blocked_tool_names=blocked_names,
         prompt_hint=_tool_prompt_hint(allowed_names),
         audit_capture=capture,
     )

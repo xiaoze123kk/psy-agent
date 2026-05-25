@@ -122,6 +122,52 @@ For a one-shot smoke test:
 python scripts/terminal_chat.py --message "我最近有点累"
 ```
 
+## 时效性搜索本地验证
+
+先在 `backend/.env.local` 明确搜索配置；不使用 Bing API 时也保留空 key，便于启动预检说明实际链路：
+
+```dotenv
+SEARCH_PROVIDER=bing_web
+BING_SEARCH_API_KEY=
+BING_SEARCH_ENDPOINT=https://api.bing.microsoft.com/v7.0/search
+SEARCH_PROXY=
+```
+
+从项目根目录 dry-run 一次启动入口，确认启动前会打印搜索预检：
+
+```powershell
+.\start-local.cmd -DryRun -SkipMilvus -SkipBackend -SkipFrontend
+```
+
+预期能看到 `SEARCH_PROVIDER`、`BING_SEARCH_API_KEY configured`、`Chinese fallback chain`，以及是否会退回 `Sogou` / `Baidu` / `DDG`。如果设置 `SEARCH_PROVIDER=bing_api` 但没有 `BING_SEARCH_API_KEY`，预检会提示 Bing API 缺关键配置，并说明后续依赖 fallback。
+
+只验证时效性搜索链路时，可直接跑 live smoke。`-SkipStart` 表示复用已启动的本地服务；去掉它会先调用 `scripts/start-local.ps1`：
+
+```powershell
+.\live-smoke.cmd -SkipStart
+```
+
+脚本会打印当前 provider、Bing key 是否配置、prefetch query、fallback 预期，并验证两条中文时效问题：
+
+```text
+张雪峰去世时间是什么？
+特朗普访华是什么时候？
+```
+
+如果只想确认命令而不发起查询：
+
+```powershell
+.\live-smoke.cmd -DryRun -SkipStart
+```
+
+对话入口的端到端验证仍使用终端聊天；需要 `DEEPSEEK_API_KEY` 可用：
+
+```bash
+python scripts/terminal_chat.py --new-thread --message "特朗普访华是什么时候？"
+```
+
+返回内容应以当前搜索结果为准；若外部搜索页结构或网络可达性异常，先查看 `live-smoke` 的 `Provider query`、`Provider status`、`FAIL layer` 和结果摘要。
+
 ## Structure
 
 - `app/api/v1/endpoints`: API route skeletons

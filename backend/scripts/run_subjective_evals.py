@@ -173,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     report_parser = subparsers.add_parser("summarize-report")
     report_parser.add_argument("--results", type=Path, required=True)
+    report_parser.add_argument("--answers", type=Path)
     report_parser.add_argument("--human-review", type=Path)
     report_parser.add_argument("--json-output", type=Path, required=True)
     report_parser.add_argument("--markdown-output", type=Path, required=True)
@@ -218,6 +219,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "summarize-report":
         rows = read_jsonl(args.results)
         errors = validate_rows(rows, source=args.results)
+        answer_rows: list[Any] = read_jsonl(args.answers) if args.answers else []
         human_reviews: list[Any] = []
         if args.human_review:
             human_reviews = read_jsonl(args.human_review)
@@ -237,7 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"valid": False, "errors": errors}, ensure_ascii=False, indent=2))
             return 1
 
-        summary = build_eval_summary(rows, human_reviews=human_reviews)
+        summary = build_eval_summary(rows, answer_rows=answer_rows, human_reviews=human_reviews)
         args.json_output.parent.mkdir(parents=True, exist_ok=True)
         args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
         args.json_output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

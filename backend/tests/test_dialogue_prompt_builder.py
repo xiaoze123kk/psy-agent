@@ -359,6 +359,33 @@ class DialoguePromptBuilderTests(unittest.TestCase):
         self.assertIn("micro_step", parts.user_prompt)
         self.assertIn("只给一个低门槛动作", parts.user_prompt)
 
+    def test_prompt_renders_response_contract_musts_as_readable_guardrails(self) -> None:
+        parts = build_dialogue_prompt_parts(
+            self.make_state(
+                risk_level="L3",
+                route_priority="P0_immediate_safety",
+                control_category="self_harm_risk",
+            ),
+            mode="crisis",
+            response_contract={
+                "allow_rag": False,
+                "max_questions": 1,
+                "must_include": ["real_world_support", "teen_trusted_adult"],
+                "must_not_include": ["dangerous_methods", "dependency_reinforcement"],
+            },
+            examples_text="",
+            memory_text="",
+        )
+
+        self.assertIn("回复硬约束", parts.user_prompt)
+        self.assertIn("必须包含", parts.user_prompt)
+        self.assertIn("real_world_support", parts.user_prompt)
+        self.assertIn("teen_trusted_adult", parts.user_prompt)
+        self.assertIn("禁止包含", parts.user_prompt)
+        self.assertIn("dangerous_methods", parts.user_prompt)
+        self.assertIn("dependency_reinforcement", parts.user_prompt)
+        self.assertIn("这些硬约束优先于风格、RAG 和记忆", parts.user_prompt)
+
     def test_prompt_allows_very_short_replies_for_light_chat(self) -> None:
         parts = build_dialogue_prompt_parts(
             self.make_state(normalized_text="哈哈", user_text="哈哈"),
