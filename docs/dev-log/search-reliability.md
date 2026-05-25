@@ -1,5 +1,60 @@
 # Search Reliability Dev Log
 
+## 2026-05-25 本地启动脚本补齐 Milvus 与 RAG readiness
+
+### 背景 / 问题
+
+- 只启动前后端时，Milvus 没有一起启动，前端 trace 会显示 `milvus_unavailable`，咨询 RAG 被跳过。
+- Milvus 启动后，旧后端进程仍可能以 `uvicorn --reload` 方式运行；在 Windows + Python 3.13 下，本地 embedding worker/reload 组合不稳定，导致 RAG 卡在 `embedding_unavailable` 或 graph timeout。
+- 需要一个统一入口保证“Milvus、后端、前端、RAG 检索”一起可用，并把入口写进 `AGENTS.md`。
+
+### 关键改动
+
+- `scripts/start-backend.ps1` 默认改为无 `--reload` 单进程启动，设置 `LOCAL_EMBEDDING_USE_WORKER=1`、`EMBEDDING_TIMEOUT_SECONDS=120`、`RAG_RETRIEVAL_TIMEOUT_SECONDS=120`，并会重启已有的项目后端进程，避免沿用旧的非 RAG-capable 后端。
+- `scripts/start-local.ps1` 在启动 Milvus 和后端后，默认调用 `backend/scripts/check_rag_ready.py`，通过 Milvus 可用、embedding 向量生成、咨询 RAG 检索命中后，才继续启动前端。
+- 新增 `backend/scripts/check_rag_ready.py`，输出结构化 JSON，失败时区分 `milvus_unavailable`、`embedding_unavailable`、`rag_empty` 等原因。
+- `AGENTS.md` 补充脚本位置和职责：全套启动优先 `scripts/start-local.ps1` / `start-local.cmd`，单独脚本和 RAG readiness 的用途也写明。
+
+### 验证结果
+
+- 红灯测试：`tests/test_startup_script.py` 最初失败 6 项，覆盖缺少 RAG ready、后端仍含 `--reload`、缺少 `check_rag_ready.py`、AGENTS 未记录脚本职责。
+- 修复后运行：
+  - `backend/.venv/Scripts/python.exe -m pytest tests/test_startup_script.py -q`
+  - 结果：`12 passed`
+
+### 后续事项
+
+- 首次本地启动时，embedding/reranker worker 加载模型可能需要几十秒；`start-local.ps1` 默认等待 RAG readiness，是为了避免前端已经可用但 RAG 实际不可用的假启动状态。
+
+## 2026-05-25 known-current-fact 直源短路
+
+### 背景 / 问题
+
+- 之前张雪峰去世时间、特朗普访华时间这类 smoke query 已有高可信来源 probe，但触发位置偏后：通常先走 Bing/Sogou/Baidu/DDG 等公开搜索页，只有搜索为空或已带年份的特定 query 才进入直源兜底。
+- 公开搜索页容易产生导航、字典页、旧新闻或截断摘要噪声；对已知且可枚举高可信来源的 current-fact query，应优先抓取直源并短路，减少噪声链路。
+
+### 关键改动
+
+- `search_web` 在 provider fallback 前先尝试 known-current-fact direct source probe；直源能提取出有效结果时直接返回，不再调用公开搜索 provider。
+- 直源匹配支持用户原句无年份的 query，例如“张雪峰去世时间是什么？”、“特朗普访华是什么时候？”，同时保留已带当前年份的 prefetch query 兼容。
+- 直源摘要若只写“5月13日至15日”或“3月24日15时50分”这类无年份日期，会从直源标题/URL 推断年份并规范为“2026年5月13日至15日”“2026年3月24日15时50分”；兼容 `202603/t20260325...` 这类紧凑 URL 日期。
+- live smoke 用例新增可信直源 host 断言；provider probe 现在会区分“日期对了但来源只是搜索页”和“日期来自可信直源”。
+
+### 验证结果
+
+- 先写失败测试并确认红灯：
+  - `test_search_web_short_circuits_known_current_fact_before_public_search` 失败于公开搜索 provider 被调用。
+  - `test_current_fact_source_probe_supports_no_year_known_query` 失败于无年份 query 没有进入直源 probe。
+  - `test_current_fact_source_probe_infers_year_from_compact_source_url` 失败于紧凑 URL 日期没有被用于补年份。
+  - `test_live_smoke_script.py` 失败于缺少 trusted source 断言函数。
+- 修复后运行：
+  - `backend/.venv/Scripts/python.exe -m pytest tests/test_search_service.py tests/test_tooling.py tests/test_live_smoke_script.py -q`
+  - 结果：`113 passed`
+
+### 后续事项
+
+- 当前直源规则仍是白名单式 known-current-fact 映射；后续如果增加更多 smoke query，应同步补 direct source rules、可信 host 断言和对应单测。
+
 ## 2026-05-21 一键 live smoke 与时效 provider 加固
 
 ### 背景 / 问题

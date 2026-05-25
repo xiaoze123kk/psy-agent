@@ -4,10 +4,12 @@ param(
     [switch]$SkipMilvus,
     [switch]$SkipBackend,
     [switch]$SkipFrontend,
+    [switch]$SkipRagCheck,
     [switch]$RecreateMilvus,
     [string]$MilvusDataRoot = $(if ($env:MILVUS_DATA_ROOT) { $env:MILVUS_DATA_ROOT } else { "E:\milvus-data" }),
     [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173
+    [int]$FrontendPort = 5173,
+    [int]$RagReadyTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -189,6 +191,34 @@ function Invoke-StartupScript {
     }
 }
 
+function Assert-RagReady {
+    $ragScript = Join-Path $BackendDir "scripts\check_rag_ready.py"
+    $venvPython = Join-Path $BackendDir ".venv\Scripts\python.exe"
+    $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { "python" }
+
+    if ($DryRun) {
+        Write-Host "[dry-run] $python $ragScript --timeout-seconds $RagReadyTimeoutSeconds"
+        Write-Step "RAG readiness check passed."
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $ragScript)) {
+        throw "RAG readiness script not found: $ragScript"
+    }
+
+    Write-Step "Checking Milvus, embedding, and counseling RAG readiness."
+    Push-Location $BackendDir
+    try {
+        & $python $ragScript --timeout-seconds $RagReadyTimeoutSeconds
+        if ($LASTEXITCODE -ne 0) {
+            throw "RAG readiness check failed with exit code $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+    Write-Step "RAG readiness check passed."
+}
+
 if ($DryRun) {
     Write-Step "Dry run enabled."
 }
@@ -216,6 +246,12 @@ if ($SkipBackend) {
         $backendArgs += "-DryRun"
     }
     Invoke-StartupScript "start-backend.ps1" $backendArgs
+}
+
+if ($SkipRagCheck -or $SkipMilvus -or $SkipBackend) {
+    Write-Step "Skipping RAG readiness check."
+} else {
+    Assert-RagReady
 }
 
 if ($SkipFrontend) {

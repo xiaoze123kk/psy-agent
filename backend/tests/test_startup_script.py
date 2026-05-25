@@ -13,9 +13,11 @@ START_BACKEND_SCRIPT = REPO_ROOT / "scripts" / "start-backend.ps1"
 START_FRONTEND_SCRIPT = REPO_ROOT / "scripts" / "start-frontend.ps1"
 LIVE_SMOKE_SCRIPT = REPO_ROOT / "scripts" / "live-smoke.ps1"
 BACKEND_LIVE_SMOKE_SCRIPT = REPO_ROOT / "backend" / "scripts" / "live_smoke.py"
+BACKEND_RAG_READY_SCRIPT = REPO_ROOT / "backend" / "scripts" / "check_rag_ready.py"
 START_CMD = REPO_ROOT / "start-local.cmd"
 LIVE_SMOKE_CMD = REPO_ROOT / "live-smoke.cmd"
 BACKEND_ENV_EXAMPLE = REPO_ROOT / "backend" / ".env.example"
+AGENTS_MD = REPO_ROOT / "AGENTS.md"
 
 
 def test_start_local_script_exists_with_expected_entrypoints() -> None:
@@ -25,6 +27,8 @@ def test_start_local_script_exists_with_expected_entrypoints() -> None:
     assert "start-agent-milvus.ps1" in script
     assert "start-backend.ps1" in script
     assert "start-frontend.ps1" in script
+    assert "Assert-RagReady" in script
+    assert "check_rag_ready.py" in script
     assert "Write-SearchPreflight" in script
     assert "Start-MilvusWithDockerRun" not in script
     assert "psych-agent-milvus-standalone-live" not in script
@@ -83,9 +87,25 @@ def test_start_backend_script_uses_uvicorn_on_backend_port() -> None:
 
     assert "-m\", \"uvicorn\", \"app.main:app\"" in script
     assert "BackendPort = 8000" in script
+    assert "[switch]$Reload" in script
+    assert "$args += \"--reload\"" in script
+    assert "LOCAL_EMBEDDING_USE_WORKER" in script
+    assert "RAG_RETRIEVAL_TIMEOUT_SECONDS" in script
+    assert "EMBEDDING_TIMEOUT_SECONDS" in script
     assert "uvicorn.local.out.log" in script
     assert "uvicorn.local.err.log" in script
     assert "Test-PortListening" in script
+
+
+def test_backend_rag_ready_script_checks_milvus_embedding_and_retrieval() -> None:
+    script = BACKEND_RAG_READY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "milvus_store.is_available" in script
+    assert "embedding_client.embed_query" in script
+    assert "retrieve_counseling_examples_with_trace" in script
+    assert "rag_ready" in script
+    assert "milvus_unavailable" in script
+    assert "embedding_unavailable" in script
 
 
 def test_start_frontend_script_uses_vite_on_frontend_port() -> None:
@@ -139,6 +159,7 @@ def test_start_local_script_dry_run_does_not_start_services() -> None:
     assert "Chinese fallback chain: bing_web -> sogou_web -> baidu_mobile -> ddg" in result.stdout
     assert "Fallback to Sogou: yes; Baidu: yes; DDG: yes" in result.stdout
     assert "start-agent-milvus.ps1" not in result.stdout
+    assert "Skipping RAG readiness check" in result.stdout
     assert "Local stack entrypoint is ready" in result.stdout
 
 
@@ -248,7 +269,22 @@ def test_start_backend_and_frontend_scripts_dry_run() -> None:
 
     assert backend.returncode == 0, backend.stderr
     assert "uvicorn app.main:app" in backend.stdout
+    assert "--reload" not in backend.stdout
+    assert "LOCAL_EMBEDDING_USE_WORKER=1" in backend.stdout
     assert "Backend entrypoint is ready" in backend.stdout
     assert frontend.returncode == 0, frontend.stderr
     assert "npm.cmd run dev" in frontend.stdout
     assert "Frontend entrypoint is ready" in frontend.stdout
+
+
+def test_agents_documents_full_stack_startup_script_and_rag_checks() -> None:
+    agents = AGENTS_MD.read_text(encoding="utf-8")
+
+    assert "scripts/start-local.ps1" in agents
+    assert "start-local.cmd" in agents
+    assert "scripts/start-agent-milvus.ps1" in agents
+    assert "scripts/start-backend.ps1" in agents
+    assert "scripts/start-frontend.ps1" in agents
+    assert "backend/scripts/check_rag_ready.py" in agents
+    assert "RAG" in agents
+    assert "无 `--reload`" in agents
