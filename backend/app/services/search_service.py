@@ -39,6 +39,7 @@ _YEAR_IN_QUERY_RE = re.compile(r"\b(20\d{2})\b")
 _YEARLESS_DATE_RANGE_RE = re.compile(
     r"(\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:至|到|—|-|~)\s*(?:\d{1,2}\s*月\s*)?\d{1,2}\s*日)"
 )
+_YEARLESS_DATE_TIME_RE = re.compile(r"(\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*\d{1,2}\s*时(?:\s*\d{1,2}\s*分)?)?)")
 _AUTHORITY_TITLE_WORDS_RE = re.compile(r"官方|热线|中心|医院|卫健委|教育部|研究所|学会|协会|政府|公益|卫生|疾控|精神卫生")
 
 # --- Domain authority scoring ---
@@ -196,6 +197,32 @@ def _inject_query_year_for_date_ranges(text: str, query: str) -> str:
         return f"{year}年{match.group(1)}"
 
     return _YEARLESS_DATE_RANGE_RE.sub(with_year, text)
+
+
+def _source_year(title: str, url: str) -> str:
+    for value in (title, url):
+        match = _YEAR_IN_QUERY_RE.search(value or "")
+        if match:
+            return match.group(1)
+        compact_match = re.search(r"(?<!\d)(20\d{2})(?:\d{2}){1,2}(?!\d)", value or "")
+        if compact_match:
+            return compact_match.group(1)
+    return ""
+
+
+def _inject_source_year_for_yearless_dates(text: str, title: str, url: str) -> str:
+    year = _source_year(title, url)
+    if not year:
+        return text
+
+    def with_year(match: re.Match[str]) -> str:
+        prefix = text[max(0, match.start() - 12): match.start()]
+        if re.search(r"20\d{2}\s*年\s*$", prefix):
+            return match.group(1)
+        return f"{year}年{match.group(1)}"
+
+    text = _YEARLESS_DATE_RANGE_RE.sub(with_year, text)
+    return _YEARLESS_DATE_TIME_RE.sub(with_year, text)
 
 
 # --- Dedup helpers ---
@@ -668,10 +695,13 @@ def _baidu_mobile_search(query: str, *, max_results: int, timeout_seconds: float
 
 
 def _current_fact_sources_for_query(query: str) -> tuple[tuple[str, str], ...]:
-    if not _YEAR_IN_QUERY_RE.search(query or ""):
+    if not query or not _contains_cjk(query) or not _DATE_REQUIRED_QUERY_RE.search(query):
         return ()
+    has_year = bool(_YEAR_IN_QUERY_RE.search(query))
     for required_terms, candidate_sources in _CURRENT_FACT_SOURCE_RULES:
-        if all(term in query for term in required_terms):
+        if has_year and all(term in query for term in required_terms):
+            return candidate_sources
+        if len(required_terms) >= 2 and f"{required_terms[0]}{required_terms[1]}" in query:
             return candidate_sources
     return ()
 
@@ -710,6 +740,7 @@ def _current_fact_source_search(query: str, *, max_results: int, timeout_seconds
             summary = _plain_text_search_summary(response.text, query, max_chars=MAX_SNIPPET_CHARS)
         if not summary:
             continue
+        summary = _inject_source_year_for_yearless_dates(summary, title, url)
 
         raw_items.append({"title": title, "href": url, "body": summary})
         if len(raw_items) >= max_results:
@@ -876,6 +907,21 @@ def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS, timeout_se
         return [], None
 
     limit = _clamp_int(max_results, default=DEFAULT_MAX_RESULTS, minimum=1, maximum=5)
+
+    source_items = _current_fact_source_search(
+        cleaned_query,
+        max_results=limit * 2,
+        timeout_seconds=timeout_seconds,
+    )
+    if source_items:
+        source_results = _raw_items_to_results(source_items, limit, query=cleaned_query)
+        if source_results:
+            logger.debug(
+                "Search satisfied by current-fact direct source result_count=%d query_chars=%d",
+                len(source_results),
+                len(cleaned_query),
+            )
+            return source_results, None
 
     provider_names = _provider_sequence(_search_provider(), cleaned_query)
     logger.debug(

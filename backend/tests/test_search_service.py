@@ -643,6 +643,28 @@ class SearchServiceErrorTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIn("2026年3月24日15时50分", results[0].snippet)
 
+    def test_search_web_short_circuits_known_current_fact_before_public_search(self) -> None:
+        source_item = {
+            "title": "张雪峰去世 高中同学缅怀：他曾是体育委员 痛惜不已 - 神州学人网",
+            "href": "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html",
+            "body": "张雪峰因心源性猝死全力抢救无效，于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ) as source_search, patch(
+            "app.services.search_service._raw_search_with_timeout",
+            side_effect=AssertionError("public search should not run when direct source is available"),
+        ) as public_search:
+            results, err = search_web("张雪峰去世时间是什么？", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("chisa.edu.cn", results[0].url)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        source_search.assert_called_once()
+        public_search.assert_not_called()
+
     def test_current_fact_source_probe_extracts_direct_source_summary(self) -> None:
         class FakeResponse:
             text = """
@@ -662,6 +684,45 @@ class SearchServiceErrorTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertIn("特朗普", items[0]["title"])
         self.assertIn("5月13日至15日", items[0]["body"])
+
+    def test_current_fact_source_probe_supports_no_year_known_query(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("特朗普访华是什么时候？", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("特朗普", items[0]["title"])
+        self.assertIn("2026年5月13日至15日", items[0]["body"])
+
+    def test_current_fact_source_probe_infers_year_from_compact_source_url(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="张雪峰因心源性猝死全力抢救无效，于3月24日15时50分在苏州逝世。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("张雪峰去世时间是什么？", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("2026年3月24日15时50分", items[0]["body"])
 
     def test_network_error_returns_empty_and_error_message(self) -> None:
         with patch(

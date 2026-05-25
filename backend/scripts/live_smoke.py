@@ -10,6 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 
@@ -24,6 +25,7 @@ class SmokeCase:
     question: str
     expected_date: str
     expected_patterns: tuple[str, ...]
+    expected_source_hosts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ CASES: tuple[SmokeCase, ...] = (
         question="张雪峰去世时间是什么？",
         expected_date="2026年3月24日15时50分",
         expected_patterns=(r"2026\s*年\s*3\s*月\s*24\s*日\s*15\s*时\s*50\s*分",),
+        expected_source_hosts=("chisa.edu.cn", "finance.sina.com.cn", "news.sina.com.cn"),
     ),
     SmokeCase(
         id="trump_china_visit",
@@ -47,6 +50,7 @@ CASES: tuple[SmokeCase, ...] = (
             r"2026\s*年\s*5\s*月\s*13\s*日\s*(?:至|到|—|-|~)\s*(?:5\s*月\s*)?15\s*日",
             r"2026-0?5-13\s*(?:至|到|-|~)\s*(?:2026-)?0?5-15",
         ),
+        expected_source_hosts=("news.cctv.com", "cn.chinadiplomacy.org.cn", "paper.people.com.cn"),
     ),
 )
 
@@ -56,6 +60,22 @@ def contains_expected_date(text: object, case: SmokeCase) -> bool:
     if not body.strip():
         return False
     return any(re.search(pattern, body) for pattern in case.expected_patterns)
+
+
+def contains_expected_source(text: object, case: SmokeCase) -> bool:
+    body = str(text or "")
+    if not body.strip():
+        return False
+    urls = re.findall(r"https?://[^\s\"'<>]+", body)
+    hosts = {
+        (urlparse(url).hostname or "").lower()
+        for url in urls
+    }
+    for expected_host in case.expected_source_hosts:
+        host = expected_host.lower()
+        if any(actual == host or actual.endswith(f".{host}") for actual in hosts):
+            return True
+    return False
 
 
 def _trim(text: object, *, limit: int = 500) -> str:
@@ -140,6 +160,12 @@ def diagnose_failure(
         return Diagnosis("provider", f"direct provider probe errored: {provider_error}")
     if not contains_expected_date(provider_text, case):
         return Diagnosis("provider", f"direct provider probe did not contain expected date {case.expected_date}")
+    if not contains_expected_source(provider_text, case):
+        return Diagnosis(
+            "provider",
+            "direct provider probe did not include a trusted direct source "
+            f"({', '.join(case.expected_source_hosts)})",
+        )
 
     tooling = _tooling_summary(chat_payload)
     tool_names = [str(name) for name in tooling.get("tool_names", [])] if isinstance(tooling.get("tool_names"), list) else []
@@ -236,7 +262,10 @@ def run_live_smoke(args: argparse.Namespace) -> int:
         print(f"[live-smoke] Case {case.id}: {case.question}")
         query, provider_text, provider_error = _provider_probe(case, timeout_seconds=args.provider_timeout_seconds)
         provider_has_date = contains_expected_date(provider_text, case)
-        provider_status = "ok" if provider_has_date and not provider_error else "missing_expected_date"
+        provider_has_source = contains_expected_source(provider_text, case)
+        provider_status = "ok" if provider_has_date and provider_has_source and not provider_error else "missing_expected_date"
+        if provider_has_date and not provider_has_source and not provider_error:
+            provider_status = "missing_trusted_source"
         if provider_error:
             provider_status = f"error: {provider_error}"
         print(f"[live-smoke] Provider query: {query}")
