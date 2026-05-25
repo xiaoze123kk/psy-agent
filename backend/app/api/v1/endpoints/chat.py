@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,6 +32,7 @@ from app.services.chat_service import (
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 def format_sse_event(event: str, data: dict) -> str:
@@ -70,6 +72,7 @@ def build_send_message_response(
             delivery_status=str(assistant_result.get("delivery_status", "failed_no_reply")),
             failure_reason=assistant_result.get("failure_reason"),
             retryable=bool(assistant_result.get("retryable", False)),
+            trace_summary=assistant_result.get("trace_summary", {}),
         )
 
     return SendMessageResponse(
@@ -96,6 +99,7 @@ def build_send_message_response(
             delivery_status=str(assistant_result.get("delivery_status", "generated")),
             failure_reason=assistant_result.get("failure_reason"),
             retryable=bool(assistant_result.get("retryable", False)),
+            trace_summary=assistant_result.get("trace_summary", {}),
             memory_job_id=assistant_result.get("memory_job_id"),
             memory_job_status=str(assistant_result.get("memory_job_status", "skipped")),
             created_at=assistant_message.created_at,
@@ -103,6 +107,7 @@ def build_send_message_response(
         delivery_status=str(assistant_result.get("delivery_status", "generated")),
         failure_reason=assistant_result.get("failure_reason"),
         retryable=bool(assistant_result.get("retryable", False)),
+        trace_summary=assistant_result.get("trace_summary", {}),
     )
 
 
@@ -221,20 +226,25 @@ async def stream_message(
 
     thread = get_thread_for_user(db, current_user.id, thread_id)
 
-    async def event_generator():
-        async for event, data in process_message_turn_stream(
-            db,
-            user=current_user,
-            thread=thread,
-            payload=payload,
-        ):
-            yield format_sse_event(event, data)
+    async def event_stream():
+        try:
+            async for event, data in process_message_turn_stream(
+                db,
+                user=current_user,
+                thread=thread,
+                payload=payload,
+            ):
+                yield format_sse_event(event, data)
+        except Exception:
+            logger.exception("SSE stream failed.")
+            yield format_sse_event("error", {"message": "stream_failed", "retryable": True})
 
     return StreamingResponse(
-        event_generator(),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

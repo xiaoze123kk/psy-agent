@@ -12,6 +12,7 @@ from app.api.v1.endpoints import auth, me, privacy
 from app.core.security import create_access_token, create_refresh_token, hash_token
 from app.db.models import (
     Base,
+    CompanionStyle,
     ConversationThread,
     Message,
     MoodLog,
@@ -22,7 +23,6 @@ from app.db.models import (
     UserMemory,
     UserProfile,
     UserSettings,
-    VoiceSession,
     utcnow,
 )
 from app.db.session import get_db_session
@@ -74,9 +74,6 @@ class PrivacyApiTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode="summary_only",
                     companion_style="gentle",
-                    voice_enabled=True,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]
@@ -111,8 +108,7 @@ class PrivacyApiTests(unittest.TestCase):
             completed_at=utcnow(),
         )
         feedback = UserFeedback(user_id=user.id, target_type="assistant_message", target_id="msg-1", rating=4)
-        voice_session = VoiceSession(user_id=user.id, thread_id=thread.id, mode="companion", save_transcript=True)
-        self.db.add_all([message, memory, hidden_memory, mood, history, feedback, voice_session])
+        self.db.add_all([message, memory, hidden_memory, mood, history, feedback])
         self.db.commit()
         return {
             "thread": thread,
@@ -122,7 +118,6 @@ class PrivacyApiTests(unittest.TestCase):
             "mood": mood,
             "history": history,
             "feedback": feedback,
-            "voice_session": voice_session,
         }
 
     def test_privacy_summary_counts_current_user_data(self) -> None:
@@ -141,13 +136,30 @@ class PrivacyApiTests(unittest.TestCase):
         self.assertEqual(counts["mood_logs"], 1)
         self.assertEqual(counts["test_history"], 1)
         self.assertEqual(counts["feedback"], 1)
-        self.assertEqual(counts["voice_sessions"], 1)
+        self.assertEqual(set(counts), {"memories", "chat_threads", "chat_messages", "mood_logs", "test_history", "feedback", "risk_events"})
 
     def test_data_export_excludes_other_users_and_sensitive_auth_fields(self) -> None:
         user = self.create_user("owner")
         other = self.create_user("other")
         self.seed_private_data(user)
         self.seed_private_data(other)
+        self.db.add_all(
+            [
+                CompanionStyle(
+                    user_id=user.id,
+                    title="Calm first",
+                    definition="Use a calm concise tone.",
+                    is_default=True,
+                ),
+                CompanionStyle(
+                    user_id=other.id,
+                    title="Other style",
+                    definition="Do not export this.",
+                    is_default=True,
+                ),
+            ]
+        )
+        self.db.commit()
 
         response = self.client.get("/api/v1/me/data-export?format=json", headers=self.auth_headers(user))
 
@@ -157,6 +169,8 @@ class PrivacyApiTests(unittest.TestCase):
         self.assertNotIn("password_hash", body["account"])
         self.assertNotIn("refresh_token", str(body))
         self.assertEqual(len(body["memories"]), 1)
+        self.assertEqual(body["companion_styles"][0]["title"], "Calm first")
+        self.assertNotIn("Other style", str(body["companion_styles"]))
         self.assertNotIn("internal safety memory", str(body))
         self.assertEqual(body["chat_threads"][0]["messages"][0]["content"], "只属于我的消息")
         self.assertTrue(all(thread["thread_id"] != other.id for thread in body["chat_threads"]))
@@ -233,30 +247,18 @@ class PrivacyApiTests(unittest.TestCase):
         token = self.db.get(RefreshToken, "00000000-0000-0000-0000-000000000099")
         self.assertEqual(token.status, "revoked")
 
-    def test_teen_mode_rejects_save_voice_audio(self) -> None:
-        teen = self.create_user("teenuser", user_mode="teen")
-
-        response = self.client.patch(
-            "/api/v1/me/settings",
-            headers=self.auth_headers(teen),
-            json={"save_voice_audio": True},
-        )
-        self.db.refresh(teen.settings)
-
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(teen.settings.save_voice_audio)
-
-    def test_settings_can_update_save_transcript(self) -> None:
+    def test_settings_response_excludes_voice_fields(self) -> None:
         user = self.create_user("owner")
 
         response = self.client.patch(
             "/api/v1/me/settings",
             headers=self.auth_headers(user),
-            json={"save_transcript": False},
+            json={"memory_mode": "off"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.json()["save_transcript"])
+        self.assertEqual(response.json()["memory_mode"], "off")
+        self.assertEqual(set(response.json()), {"memory_mode", "companion_style"})
 
 
 if __name__ == "__main__":

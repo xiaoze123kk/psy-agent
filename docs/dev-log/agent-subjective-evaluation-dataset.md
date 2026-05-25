@@ -1,0 +1,120 @@
+# 开发日志：Agent 主观评测集设计
+
+## 日期
+
+2026-05-22
+
+## 背景 / 问题
+
+项目已有自动化评测设计和 42 条对话质量 fixture，但用户希望新增一套更贴近心理咨询 agent 主观体验的评测集，并明确由 Codex / 大模型先打分，后续再人工审核。
+
+这类评测不能只看“聊得暖不暖”，需要先过安全边界，再评价咨询陪伴质量，最后用 A/B 对比支持 agent 版本迭代。
+
+## 关键改动
+
+- 新增设计文档：`docs/superpowers/specs/2026-05-22-agent-subjective-evaluation-dataset-design.md`。
+- 明确采用“安全闸门 + 主观质量 + A/B 版本对比”的三层评测结构。
+- 设计 Codex judge 的 Safety Judge、Quality Judge、Pairwise Judge 结构化 JSON 输出。
+- 规划 50 条 gold set 校准，再扩展到 200 条分层样本。
+- 明确高风险样本、Codex 分歧样本和 A/B 顺序交换不一致样本必须进入人工复核。
+
+## 验证结果
+
+- 本次只新增方案文档，未修改后端、前端或数据库代码。
+- 已检查当前工作区存在多处既有未提交改动，本次文档新增与这些改动无关。
+
+## 后续事项
+
+- 用户确认设计后，进入实施计划阶段。
+- 下一步应定义主观评测 fixture schema、Codex judge prompt 和 50 条 gold set。
+- 后续接入统一 eval 报告时，需要记录 Codex 与人工复核的一致率、人工推翻率和 A/B 胜率。
+
+## 实施记录
+
+- 新增 `backend/app/services/subjective_eval_schemas.py`，负责主观评测 schema、风险标签词表、质量维度权重、hard failure 分数上限、A/B 优先级和人工复核路由。
+- 新增 `backend/app/services/subjective_eval_prompts.py`，负责 Safety Judge、Quality Judge、Pairwise Judge 的 Codex 请求提示词，并加入被评测数据隔离规则，避免回答内容中的提示注入影响评委指令。
+- 新增 `backend/tests/evals/fixtures_subjective_quality.json`，包含 50 条 gold set，覆盖日常情绪支持、关系议题、轻中度困扰、危机、未成年人、医疗边界、依赖边界、隐私边界和多轮升级。
+- 新增 `backend/tests/evals/fixtures_pairwise_quality.json`，包含 6 条 A/B 对比样本，覆盖低价值感、危机方法、依赖、用药、风险后话题转移和隐私边界。
+- 新增 `backend/scripts/run_subjective_evals.py`，用于生成 Codex judge 请求 JSONL，并汇总 Codex 返回的 JSONL 结果。
+- 语义校准：`crisis_third_party_005` 的用户内容是“朋友说他不想活了”，风险标签从 `harm_to_others` 改为 `suicide_ideation`，避免把第三方自杀意念误计为他伤风险。
+
+## 本轮验证
+
+- `.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_schemas.py -q`
+- `.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_prompts.py -q`
+- `.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_fixtures.py -q`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_run_subjective_evals_script.py -q`
+- smoke：`run_subjective_evals.py build-requests` 使用临时 2 条带 `agent_answer` 样本生成 4 条 safety/quality 请求，验证后删除临时产物。
+- smoke：`run_subjective_evals.py build-pairwise-requests` 使用默认 6 条 A/B fixture 生成 6 条 pairwise 请求，验证后删除临时产物。
+
+## 使用方式
+
+先把待评测 agent 输出补到主观 fixture 或同结构文件的 `agent_answer` 字段，然后生成 Safety/Quality 请求包：
+
+```powershell
+cd E:\心理咨询agent\backend
+.\.venv\Scripts\python.exe scripts\run_subjective_evals.py build-requests --fixture data\eval_reports\subjective_answers.json --output data\eval_reports\subjective_requests.jsonl --judge-type both
+```
+
+生成 A/B 请求包：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_subjective_evals.py build-pairwise-requests --output data\eval_reports\pairwise_requests.jsonl
+```
+
+Codex 按请求 JSONL 逐条返回 JSON 后，保存为 `subjective_results.jsonl`，再生成汇总：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_subjective_evals.py summarize-results --results data\eval_reports\subjective_results.jsonl --output data\eval_reports\subjective_summary.json
+```
+
+## 后续事项
+
+- 接入实际 agent 批量回答导出，把 50 条 gold set 自动补齐 `agent_answer`。
+- 建立人工复核表，记录 Codex 与人工审核的一致率、人工推翻率、hard failure 误报/漏报和 A/B 胜率。
+- 如果后续扩展 risk tag，需要同步更新 `RISK_TAGS`、fixture 和快照测试。
+
+## 二期设计记录
+
+- 用户确认二期采用“约 100 条样本 + 最小人审/报告闭环”的折中方案，而不是只扩样本或只做工具。
+- 新增二期设计文档：`docs/superpowers/specs/2026-05-22-agent-subjective-evaluation-phase2-design.md`。
+- 二期目标包括：主观 fixture 扩到 100 条、A/B fixture 扩到 14 条、增加 Codex judge result 校验、增加人工复核 JSONL、输出 JSON 和 Markdown 报告。
+- 二期仍保持离线和可审计，不直接调用外部模型 API，不接入线上隐私原文，不建设完整标注平台。
+- 设计决定直接扩展现有 `fixtures_subjective_quality.json` 和 `fixtures_pairwise_quality.json`，避免默认脚本和测试分裂成 phase1 / phase2 两套入口。
+
+## 二期计划记录
+
+- 用户确认二期设计后，新增实施计划：`docs/superpowers/plans/2026-05-22-agent-subjective-evaluation-phase2.md`。
+- 计划拆成 6 个任务：扩展主观 fixture、扩展 A/B fixture、增加 judge result 校验、扩展 CLI 报告命令、补 dev-log 与 smoke、最终验证。
+- 计划要求继续使用 TDD 和任务级提交，保留一期命令兼容，并避免提交 `data/eval_reports` 临时报告产物。
+- 执行前修正计划细节：Task 1 只更新 subjective fixture hash，避免留下 pairwise hash 失败状态后提交。
+
+## 二期实施记录
+
+- 主观评测 fixture 已扩展到 100 条，A/B fixture 已扩展到 14 条，并用分布、精确新增样本和 fixture hash 锁定。
+- 新增 `backend/app/services/subjective_eval_results.py`，负责 Codex judge result 与人工复核 JSONL 的结构校验、质量分一致性校验、汇总指标和 Markdown 报告渲染。
+- `backend/scripts/run_subjective_evals.py` 新增 `validate-results` 和 `summarize-report`，可先校验 JSONL，再输出 JSON summary 与 Markdown report。
+- 二期保持离线评测，不直接调用外部模型 API，不接入线上隐私原文。
+
+## 二期验证
+
+- `.\.venv\Scripts\python.exe -m pytest tests\evals\test_subjective_eval_fixtures.py tests\evals\test_subjective_eval_results.py tests\test_run_subjective_evals_script.py -q`：38 passed，314 subtests passed。
+- `.\.venv\Scripts\python.exe scripts\run_subjective_evals.py summarize-report --results data\eval_reports\phase2_sample_results.jsonl --human-review data\eval_reports\phase2_sample_human_review.jsonl --json-output data\eval_reports\phase2_summary.json --markdown-output data\eval_reports\phase2_summary.md`：退出码 0，Markdown 报告标题为 `# Subjective Evaluation Summary`。
+- smoke 临时产物 `phase2_sample_results.jsonl`、`phase2_sample_human_review.jsonl`、`phase2_summary.json`、`phase2_summary.md` 已删除，未提交 `data/eval_reports` 报告文件。
+
+## 二期后续事项
+
+- 下一步可接入实际 agent 批量回答导出，把 100 条主观样本自动补齐 `agent_answer` 后生成 Codex judge 请求。
+- 人工复核表建议优先记录 `codex_agreed`、人工分数/胜者覆盖、failure modes 和 notes，用于统计一致率与人工推翻率。
+
+## 二期 RAG 修复记录
+
+- 日期：2026-05-22。
+- 背景：二期真实 RAG 评测后，round-1 结果出现 14 条 no-reply、39 条 missed_high_risk，以及部分高风险/边界样本错误放行 RAG。
+- 关键改动：补充安全路由覆盖，把家暴/受害、未成年人不当接触、带地点自伤、他伤、医疗诊断、依赖和隐私边界样本路由到对应 P0/P1/P3/P4 路径。
+- 关键改动：新增 `privacy_boundary` 风险类别，并在风险策略和 RAG 检索层阻断该类别；高风险与边界样本不再进入普通 RAG 支持流。
+- 关键改动：模型再生最多重试 6 次；仍无可用输出时返回固定兜底句 `回复失败了，请再次呼唤微风，我会继续陪你。`，避免形成空回复。
+- 验证：聚焦测试 `tests/test_conversation_control_rag.py tests/test_risk_policy.py tests/test_safety_evaluation.py` 结果为 196 passed、36 subtests passed。
+- 验证：主观评测相关 schema/prompt/fixture/result/script 测试结果为 56 passed、340 subtests passed。
+- Round-2 smoke：10 条定向样本全部生成成功，`failed_no_reply=0`，高风险/边界样本 `blocked_case_failures=0`，只有 2 条普通 P2 支持样本使用 RAG。
+- 后续：报告产物仍保持在 `backend/data/eval_reports/` 未提交；下一步可进行人工抽查和 100 条全量二轮评测。

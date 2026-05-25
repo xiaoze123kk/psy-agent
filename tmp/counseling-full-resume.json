@@ -1,0 +1,24 @@
+{
+  "sources": {
+    "soulchat_corpus": {
+      "completed_chunks": 832,
+      "indexed": 832,
+      "skipped": 0,
+      "position": {
+        "file_name": "SoulChatCorpus-sft-multi-Turn.json",
+        "item_index": 86,
+        "chunk_offset": 2
+      }
+    },
+    "smilechat": {
+      "completed_chunks": 128,
+      "indexed": 128,
+      "skipped": 0,
+      "position": {
+        "file_name": "16.json",
+        "item_index": 15,
+        "chunk_offset": 0
+      }
+    }
+  }
+}

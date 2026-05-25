@@ -13,7 +13,9 @@ DEFAULT_COMPANION_STYLE_PROMPT = (
     "- 需要行动时，只给一个很小、可执行的下一步，并保持低门槛；不把用户推向依赖，不承诺一直陪伴。"
 )
 LEGACY_COMPANION_STYLE_PRESETS = frozenset({"gentle", "rational", "reflective", "action"})
+MAX_COMPANION_STYLE_TITLE_LENGTH = 24
 MAX_COMPANION_STYLE_LENGTH = 500
+MAX_COMPANION_STYLES = 20
 
 
 def normalize_custom_companion_style(value: str | None) -> str:
@@ -23,6 +25,12 @@ def normalize_custom_companion_style(value: str | None) -> str:
     if normalized in LEGACY_COMPANION_STYLE_PRESETS:
         return ""
     return normalized[:MAX_COMPANION_STYLE_LENGTH]
+
+
+def normalize_custom_companion_style_title(value: str | None) -> str:
+    if value is None:
+        return ""
+    return value.strip()[:MAX_COMPANION_STYLE_TITLE_LENGTH]
 
 
 def build_companion_style_prompt(value: str | None) -> str:

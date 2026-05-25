@@ -4,8 +4,9 @@ import os
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -24,6 +25,7 @@ from app.db.models import (
 from app.services.memory_service import (
     build_memory_index,
     consolidate_user_memories,
+    index_memory_embeddings,
     maybe_auto_consolidate_user_memories,
     retrieve_memories_for_turn,
     upsert_memory_candidates,
@@ -83,9 +85,6 @@ class MemoryServiceTests(unittest.TestCase):
                     user_id=user.id,
                     memory_mode=memory_mode,
                     companion_style="gentle",
-                    voice_enabled=False,
-                    save_voice_audio=False,
-                    save_transcript=True,
                     crisis_resource_region="CN",
                 ),
             ]
@@ -220,6 +219,155 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertNotIn(expired.id, result_ids)
         self.assertNotIn(do_not_use.id, result_ids)
 
+    def test_retrieve_prioritizes_correction_memory_for_style_feedback(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户明确纠正：不要一上来就分析，先听我说完。",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户喜欢温柔的陪伴语气。",
+            importance=5,
+        )
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近持续讨论工作压力。",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="别一上来分析，先听我说",
+            memory_mode="long_term",
+            limit=3,
+        )
+
+        self.assertEqual(results[0]["memory_id"], target.id)
+        self.assertEqual(results[0]["memory_type"], "correction")
+
+    def test_retrieve_uses_session_digest_themes_for_vague_query(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户在讨论职场压力和任务分配",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="state",
+            content="用户最近很累，想多休息",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="我还是很累",
+            recent_messages=[{"role": "user", "content": "我还是很累"}],
+            session_digest={
+                "key_themes": ["职场压力"],
+                "emotional_arc": "紧绷 -> 疲惫",
+                "unresolved_threads": ["工作安排"],
+            },
+            memory_mode="long_term",
+            limit=5,
+        )
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertEqual(results[0]["memory_id"], target.id)
+
+    def test_retrieve_uses_goal_state_to_prioritize_user_context_memories(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="用户最近几轮都在讨论工作压力。",
+            importance=5,
+        )
+        self.add_memory(
+            user,
+            memory_type="goal",
+            content="用户目标：理清楚和主管沟通任务边界这件事。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="profile",
+            content="用户在重要沟通前会先写提纲。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮他梳理边界。",
+            importance=3,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户希望先被安抚，再拆一个小步骤。",
+            importance=3,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="继续这个",
+            memory_mode="long_term",
+            goal_state={
+                "current_goal": "理清楚和主管沟通任务边界这件事",
+                "usage_goals": ["先安抚再拆小步骤"],
+                "goal_hints": ["和主管沟通任务边界"],
+                "open_threads": ["任务边界"],
+            },
+            limit=5,
+        )
+
+        result_types = [item["memory_type"] for item in results]
+        summary_index = result_types.index("session_summary")
+        for memory_type in ("goal", "profile", "correction", "preference"):
+            self.assertLess(result_types.index(memory_type), summary_index)
+
+    def test_retrieve_uses_correction_over_conflicting_preference(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        target = self.add_memory(
+            user,
+            memory_type="correction",
+            content="用户纠正：不要直接给模板，先帮我梳理边界。",
+            importance=3,
+        )
+        old_preference = self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户曾经喜欢直接给模板和建议。",
+            importance=5,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="继续这个",
+            memory_mode="long_term",
+            goal_state={
+                "current_goal": "用户澄清当前想谈：主管那件事",
+                "clarification_answer": "别直接给模板，先帮我梳理边界",
+            },
+            limit=2,
+        )
+
+        self.assertEqual(results[0]["memory_id"], target.id)
+        self.assertLess(
+            [item["memory_id"] for item in results].index(target.id),
+            [item["memory_id"] for item in results].index(old_preference.id),
+        )
+
     def test_memory_modes_and_high_risk_internal_safety_filtering(self) -> None:
         user = self.create_user(memory_mode="summary_only")
         summary = self.add_memory(user, memory_type="session_summary", content="last session about exam stress")
@@ -264,8 +412,64 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual([item["memory_id"] for item in summary_only], [summary.id])
         self.assertNotIn(preference.id, [item["memory_id"] for item in summary_only])
         self.assertEqual(off_results, [])
-        self.assertEqual([item["memory_id"] for item in high_risk_results], [safety.id])
-        self.assertEqual([item["memory_id"] for item in high_risk_index], [safety.id])
+        self.assertEqual(
+            {item["memory_id"] for item in high_risk_results},
+            {safety.id, preference.id},
+        )
+        self.assertEqual(
+            {item["memory_id"] for item in high_risk_index},
+            {safety.id, preference.id},
+        )
+
+    def test_summary_only_build_memory_index_respects_memory_types_before_limit(self) -> None:
+        user = self.create_user(memory_mode="summary_only")
+        for index in range(200):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"preference memory {index}",
+                importance=5,
+            )
+        summary = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="last session summary about exam stress",
+            importance=1,
+        )
+
+        results = build_memory_index(
+            self.db,
+            user.id,
+            memory_mode="summary_only",
+        )
+
+        self.assertEqual([item["memory_id"] for item in results], [summary.id])
+
+    def test_summary_only_retrieve_memories_respects_memory_types_before_limit(self) -> None:
+        user = self.create_user(memory_mode="summary_only")
+        for index in range(200):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"preference memory {index}",
+                importance=5,
+            )
+        summary = self.add_memory(
+            user,
+            memory_type="session_summary",
+            content="last session summary about exam stress",
+            importance=1,
+        )
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="exam stress",
+            memory_mode="summary_only",
+            limit=5,
+        )
+
+        self.assertEqual([item["memory_id"] for item in results], [summary.id])
 
     def test_vector_hits_are_merged_into_hybrid_retrieval(self) -> None:
         user = self.create_user(memory_mode="long_term")
@@ -301,6 +505,129 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(results[0]["why_selected"], "vector_semantic_match")
         self.assertEqual(fake_store.calls[0]["user_id"], user.id)
         self.assertIn("support_strategy", fake_store.calls[0]["memory_types"])
+
+    def test_index_memory_embeddings_loads_existing_rows_once_for_multiple_memories(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        first = self.add_memory(user, memory_type="preference", content="prefers grounding before advice")
+        second = self.add_memory(user, memory_type="support_strategy", content="box breathing helps when anxious")
+        existing = memory_service.MemoryEmbedding(
+            memory_id=first.id,
+            user_id=user.id,
+            embedding=[0.1, 0.2],
+            embedding_model="test-model",
+            embedding_key="test:embedding:2",
+            content_hash="old-hash",
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        original_env = os.environ.get("MEMORY_EMBEDDINGS_ENABLED")
+        os.environ["MEMORY_EMBEDDINGS_ENABLED"] = "1"
+        original_client = memory_service.embedding_client
+
+        class FakeEmbeddingClient:
+            is_configured = True
+            model = "test-model"
+            embedding_key = "test:embedding:2"
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [[float(index + 1), float(index + 2)] for index, _ in enumerate(texts)]
+
+        fake_client = FakeEmbeddingClient()
+        memory_service.embedding_client = fake_client
+        original_store = memory_service.milvus_store
+
+        class FakeMilvusStore:
+            is_enabled = True
+
+            def upsert_memory_vectors(self, rows):
+                self.rows = rows
+
+        memory_service.milvus_store = FakeMilvusStore()
+        select_count = 0
+
+        def count_memory_embedding_selects(conn, cursor, statement, parameters, context, executemany):
+            nonlocal select_count
+            normalized = statement.lower()
+            if "select" in normalized and "from memory_embeddings" in normalized:
+                select_count += 1
+
+        event.listen(self.engine, "before_cursor_execute", count_memory_embedding_selects)
+        try:
+            import asyncio
+
+            asyncio.run(index_memory_embeddings(self.db, [first, second]))
+            self.db.commit()
+        finally:
+            event.remove(self.engine, "before_cursor_execute", count_memory_embedding_selects)
+            memory_service.embedding_client = original_client
+            memory_service.milvus_store = original_store
+            if original_env is None:
+                os.environ.pop("MEMORY_EMBEDDINGS_ENABLED", None)
+            else:
+                os.environ["MEMORY_EMBEDDINGS_ENABLED"] = original_env
+
+        embeddings = list(
+            self.db.scalars(
+                select(memory_service.MemoryEmbedding)
+                .where(memory_service.MemoryEmbedding.user_id == user.id)
+                .order_by(memory_service.MemoryEmbedding.memory_id)
+            )
+        )
+        self.db.refresh(existing)
+        embeddings_by_memory_id = {row.memory_id: row for row in embeddings}
+
+        self.assertEqual(select_count, 1)
+        self.assertEqual(len(embeddings), 2)
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding, [1.0, 2.0])
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding_model, "test-model")
+        self.assertEqual(embeddings_by_memory_id[first.id].embedding_key, "test:embedding:2")
+        self.assertEqual(embeddings_by_memory_id[second.id].embedding, [2.0, 3.0])
+        self.assertEqual(existing.embedding, [1.0, 2.0])
+
+    def test_index_memory_embeddings_retries_and_logs_milvus_upsert_failure(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        memory = self.add_memory(user, memory_type="support_strategy", content="box breathing helps when anxious")
+
+        original_env = os.environ.get("MEMORY_EMBEDDINGS_ENABLED")
+        os.environ["MEMORY_EMBEDDINGS_ENABLED"] = "1"
+        original_client = memory_service.embedding_client
+        original_store = memory_service.milvus_store
+
+        class FakeEmbeddingClient:
+            is_configured = True
+            model = "test-model"
+            embedding_key = "test:embedding:2"
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [[1.0, 2.0] for _ in texts]
+
+        class FailingMilvusStore:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            def upsert_memory_vectors(self, rows):
+                self.call_count += 1
+                return False
+
+        fake_store = FailingMilvusStore()
+        memory_service.embedding_client = FakeEmbeddingClient()
+        memory_service.milvus_store = fake_store
+        try:
+            import asyncio
+
+            with self.assertLogs("app.services.memory_service", level="WARNING") as logs:
+                asyncio.run(index_memory_embeddings(self.db, [memory]))
+        finally:
+            memory_service.embedding_client = original_client
+            memory_service.milvus_store = original_store
+            if original_env is None:
+                os.environ.pop("MEMORY_EMBEDDINGS_ENABLED", None)
+            else:
+                os.environ["MEMORY_EMBEDDINGS_ENABLED"] = original_env
+
+        self.assertEqual(fake_store.call_count, 3)
+        self.assertTrue(any(memory.id in message for message in logs.output))
 
     def test_vector_retrieval_recall_and_precision_metrics(self) -> None:
         user = self.create_user(memory_mode="long_term")
@@ -422,6 +749,71 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(memory.version, 2)
         self.assertEqual([operation.action for operation in operations], ["create", "update"])
 
+    def test_upsert_accepts_correction_memory_candidates(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000021",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "correction",
+                        "content": "用户明确纠正：不要一上来就分析，先听我说完。",
+                        "importance": 5,
+                        "tags": ["纠错"],
+                    }
+                ],
+            },
+        )
+        self.db.commit()
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertEqual(written[0].memory_type, "correction")
+        self.assertEqual(written[0].visibility, "user_visible")
+        self.assertIn("纠错", written[0].tags)
+
+    def test_upsert_correction_marks_conflicting_preference_for_review(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        old_preference = self.add_memory(
+            user,
+            memory_type="preference",
+            content="用户曾经喜欢直接给模板和建议。",
+            importance=5,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000022",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "correction",
+                        "content": "用户纠正：不要直接给模板，先帮我梳理边界。",
+                        "importance": 5,
+                        "tags": ["纠错"],
+                    }
+                ],
+            },
+        )
+        self.db.commit()
+        self.db.refresh(old_preference)
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertEqual(written[0].memory_type, "correction")
+        self.assertEqual(old_preference.review_state, "needs_review")
+        self.assertEqual(old_preference.structured_value["memory_conflict"]["superseded_by"], written[0].id)
+
     def test_upsert_blocks_sensitive_visible_and_allows_high_risk_safety_summary(self) -> None:
         user = self.create_user(memory_mode="long_term")
         thread = self.create_thread(user)
@@ -466,6 +858,196 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(written[0].memory_type, "safety_summary")
         self.assertEqual(written[0].visibility, "internal_safety")
 
+    def test_upsert_ignores_expired_memory_when_finding_similar_match(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        expired = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=5,
+            expires_at=utcnow() - timedelta(days=1),
+        )
+        decoy = self.add_memory(
+            user,
+            memory_type="preference",
+            content="enjoys tea and quiet mornings",
+            importance=1,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000101",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers reassurance before advice",
+                        "importance": 5,
+                    }
+                ],
+                "session_summary": "prefers reassurance before advice",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.commit()
+        self.db.refresh(expired)
+        self.db.refresh(decoy)
+
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertNotIn(written[0].id, {expired.id, decoy.id})
+        self.assertEqual(expired.version, 1)
+        self.assertEqual(decoy.version, 1)
+        self.assertEqual(len(memories), 3)
+
+    def test_upsert_ignores_do_not_use_memory_when_finding_similar_match(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        blocked = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers grounding before advice",
+            importance=5,
+            review_state="do_not_use",
+        )
+        decoy = self.add_memory(
+            user,
+            memory_type="preference",
+            content="enjoys tea and quiet mornings",
+            importance=1,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000102",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers grounding before advice",
+                        "importance": 5,
+                    }
+                ],
+                "session_summary": "prefers grounding before advice",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.commit()
+        self.db.refresh(blocked)
+        self.db.refresh(decoy)
+
+        memories = list(self.db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        self.assertEqual(decisions[0]["status"], "created")
+        self.assertNotIn(written[0].id, {blocked.id, decoy.id})
+        self.assertEqual(blocked.version, 1)
+        self.assertEqual(decoy.version, 1)
+        self.assertEqual(len(memories), 3)
+
+    def test_find_similar_memory_prefilter_skips_unrelated_candidates(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        anchor = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=4,
+        )
+        for idx in range(24):
+            self.add_memory(
+                user,
+                memory_type="preference",
+                content=f"completely unrelated note about tea and weather {idx}",
+                importance=5,
+            )
+
+        similarity_calls = 0
+        original_similarity = memory_service._content_similarity
+
+        def counted_similarity(left: str, right: str) -> float:
+            nonlocal similarity_calls
+            similarity_calls += 1
+            return original_similarity(left, right)
+
+        with patch("app.services.memory_service._content_similarity", side_effect=counted_similarity):
+            written, decisions = upsert_memory_candidates(
+                self.db,
+                user=user,
+                thread=thread,
+                assistant_message_id="00000000-0000-0000-0000-000000000103",
+                assistant_result={
+                    "should_write_memory": True,
+                    "risk_level": "L0",
+                    "memory_candidates": [
+                        {
+                            "memory_type": "preference",
+                            "content": "prefers reassurance before advice.",
+                            "importance": 4,
+                        }
+                    ],
+                    "session_summary": "prefers reassurance before advice.",
+                    "memory_policy": "write_safe_summary",
+                },
+            )
+
+        self.db.refresh(anchor)
+
+        self.assertEqual(decisions[0]["status"], "updated")
+        self.assertEqual(written[0].id, anchor.id)
+        self.assertLessEqual(similarity_calls, 2)
+        self.assertEqual(anchor.version, 2)
+
+    def test_find_similar_memory_prefilter_still_allows_similar_merge(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        thread = self.create_thread(user)
+        anchor = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers reassurance before advice",
+            importance=4,
+        )
+        self.add_memory(
+            user,
+            memory_type="preference",
+            content="unrelated tea preference with no overlap",
+            importance=5,
+        )
+
+        written, decisions = upsert_memory_candidates(
+            self.db,
+            user=user,
+            thread=thread,
+            assistant_message_id="00000000-0000-0000-0000-000000000104",
+            assistant_result={
+                "should_write_memory": True,
+                "risk_level": "L0",
+                "memory_candidates": [
+                    {
+                        "memory_type": "preference",
+                        "content": "prefers reassurance before advice.",
+                        "importance": 4,
+                    }
+                ],
+                "session_summary": "prefers reassurance before advice.",
+                "memory_policy": "write_safe_summary",
+            },
+        )
+        self.db.refresh(anchor)
+
+        self.assertEqual(decisions[0]["status"], "updated")
+        self.assertEqual(written[0].id, anchor.id)
+        self.assertEqual(anchor.version, 2)
+
     def test_consolidate_merges_expires_writes_state_and_audit(self) -> None:
         user = self.create_user(memory_mode="long_term")
         first = self.add_memory(user, memory_type="preference", content="prefers reassurance first")
@@ -484,8 +1066,20 @@ class MemoryServiceTests(unittest.TestCase):
             ]
         )
         self.db.commit()
+        deleted_vector_ids: list[str] = []
 
-        result = consolidate_user_memories(self.db, user_id=user.id, force=True)
+        class FakeMilvusStore:
+            def delete_memory_vectors(self, memory_ids: list[str]) -> bool:
+                deleted_vector_ids.extend(memory_ids)
+                return True
+
+        original_store = memory_service.milvus_store
+        memory_service.milvus_store = FakeMilvusStore()
+        try:
+            result = consolidate_user_memories(self.db, user_id=user.id, force=True)
+        finally:
+            memory_service.milvus_store = original_store
+
         self.db.commit()
         self.db.refresh(first)
         self.db.refresh(duplicate)
@@ -503,6 +1097,7 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual([first.status, duplicate.status].count("deleted"), 1)
         self.assertIn(duplicate.supersedes_id or first.supersedes_id, {first.id, duplicate.id})
         self.assertEqual(expired.status, "expired")
+        self.assertEqual(set(deleted_vector_ids), {expired.id, duplicate.id if duplicate.status == "deleted" else first.id})
         self.assertIsNotNone(state_memory)
         self.assertEqual(state_memory.structured_value["log_count"], 3)
         self.assertAlmostEqual(state_memory.structured_value["avg_mood_score"], 3.0)

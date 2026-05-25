@@ -333,6 +333,11 @@ class MilvusVectorStore:
                 ("contraindications", 512),
                 ("quality_score", 32),
                 ("safety_score", 32),
+                ("chunk_type", 32),
+                ("original_external_id", 180),
+                ("phase", 32),
+                ("display_text", 2048),
+                ("process_quality_score", 32),
             ],
         )
 
@@ -468,6 +473,28 @@ class MilvusVectorStore:
             return False
         return self._upsert(self.memory_collection, rows)
 
+    def delete_memory_vectors(self, memory_ids: list[str]) -> bool:
+        ids = [str(memory_id) for memory_id in dict.fromkeys(memory_ids) if str(memory_id)]
+        if not ids:
+            return True
+        return self._delete_by_ids(self.memory_collection, ids)
+
+    def _delete_by_ids(self, collection_name: str, ids: list[str]) -> bool:
+        if not self._endpoint_reachable():
+            return False
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            if not client.has_collection(collection_name, timeout=self.request_timeout_seconds):
+                return True
+            expr = "id in [" + ",".join(f'"{self._escape_filter_value(item_id)}"' for item_id in ids) + "]"
+            client.delete(collection_name=collection_name, filter=expr, timeout=self.request_timeout_seconds)
+        except Exception as exc:  # pragma: no cover - requires Milvus runtime
+            logger.warning("Milvus delete failed for %s: %s", collection_name, exc)
+            return False
+        return True
+
     def _upsert(self, collection_name: str, rows: list[dict[str, Any]]) -> bool:
         if not self._endpoint_reachable():
             return False
@@ -558,6 +585,11 @@ class MilvusVectorStore:
                 "contraindications",
                 "quality_score",
                 "safety_score",
+                "chunk_type",
+                "original_external_id",
+                "phase",
+                "display_text",
+                "process_quality_score",
                 "content",
             ],
         )

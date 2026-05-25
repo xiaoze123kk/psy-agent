@@ -8,7 +8,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 def generate_uuid() -> str:
@@ -27,6 +27,7 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text)
+    token_version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -35,6 +36,7 @@ class User(Base):
     profile: Mapped["UserProfile"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     settings: Mapped["UserSettings"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     threads: Mapped[list["ConversationThread"]] = relationship(back_populates="user")
+    companion_styles: Mapped[list["CompanionStyle"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -46,6 +48,8 @@ class UserProfile(Base):
     user_mode: Mapped[str] = mapped_column(String(16))
     usage_goals: Mapped[list[str]] = mapped_column(JSON, default=list)
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    security_question: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    security_answer_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -58,13 +62,29 @@ class UserSettings(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     memory_mode: Mapped[str] = mapped_column(String(24), default="summary_only")
     companion_style: Mapped[str] = mapped_column(Text, default="")
-    voice_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    save_voice_audio: Mapped[bool] = mapped_column(Boolean, default=False)
-    save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)
     crisis_resource_region: Mapped[str] = mapped_column(String(12), default="CN")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(back_populates="settings")
+
+
+class CompanionStyle(Base):
+    __tablename__ = "companion_styles"
+    __table_args__ = (
+        Index("idx_companion_styles_user_updated_at", "user_id", "updated_at"),
+        Index("idx_companion_styles_user_default", "user_id", "is_default"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(80))
+    definition: Mapped[str] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="companion_styles")
 
 
 class ConversationThread(Base):
@@ -76,6 +96,7 @@ class ConversationThread(Base):
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     mode: Mapped[str] = mapped_column(String(32), default="companion")
     last_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_digest: Mapped[dict] = mapped_column(JSON, default=dict)
     last_risk_level: Mapped[str] = mapped_column(String(8), default="L0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -521,11 +542,24 @@ class RefreshToken(Base):
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    auto_login: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TestAttempt(Base):
@@ -553,23 +587,6 @@ class TestHistory(Base):
     result_code: Mapped[str] = mapped_column(String(32))
     result_label: Mapped[str] = mapped_column(String(80))
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class VoiceSession(Base):
-    __tablename__ = "voice_sessions"
-
-    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=generate_uuid)
-    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    thread_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False),
-        ForeignKey("conversation_threads.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active / ended / error
-    mode: Mapped[str] = mapped_column(String(20), default="companion")
-    save_transcript: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserFeedback(Base):

@@ -1,5 +1,6 @@
 from app.graphs.main_graph import build_main_graph
-from app.services.graph_trace_service import GraphTraceCollector
+from app.services.graph_trace_service import GraphTraceCollector, summarize_conversation_move_policy
+from app.services.temporal_context_service import build_temporal_context
 
 
 def _memory_references(memories: list[dict] | None, risk_level: str) -> list[dict]:
@@ -77,15 +78,34 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
     }
     safe_keys = (
         "risk_level",
+        "risk_domain",
+        "immediacy",
+        "risk_confidence",
+        "protective_signals",
+        "risk_phase",
+        "tool_gate_mode",
         "risk_source",
         "requires_safety_check",
         "intent",
         "route_priority",
         "control_category",
+        "conversation_move_policy",
+        "conversation_quality_trace",
+        "memory_policy",
+        "memory_policy_reason",
         "rag_used",
         "rag_skipped_reason",
+        "rag_trace_summary",
         "validator_blocked",
+        "validator_reasons",
+        "experience_validator_reasons",
+        "experience_validator_warnings",
+        "experience_validator_blocking_reasons",
+        "validator_severity",
         "delivery_status",
+        "failure_reason",
+        "retryable",
+        "should_write_memory",
     )
     for key in safe_keys:
         value = state.get(key)
@@ -93,12 +113,25 @@ def _safe_graph_update(node: str, state: dict, node_update: object) -> dict[str,
             continue
         if value == "" or value == [] or value == {}:
             continue
+        if key == "conversation_move_policy":
+            value = summarize_conversation_move_policy(value)
+            if not value:
+                continue
         event[key] = value
 
     if node == "response_validator" and isinstance(node_update, dict):
         event["validator_blocked"] = bool(node_update.get("validator_blocked", False))
         if node_update.get("delivery_status"):
             event["delivery_status"] = str(node_update["delivery_status"])
+    if isinstance(node_update, dict):
+        if "retrieved_memories" in node_update and isinstance(node_update["retrieved_memories"], list):
+            event["retrieved_memory_count"] = len(node_update["retrieved_memories"])
+        if "retrieved_counseling_examples" in node_update and isinstance(node_update["retrieved_counseling_examples"], list):
+            event["retrieved_example_count"] = len(node_update["retrieved_counseling_examples"])
+        if "memory_candidates" in node_update and isinstance(node_update["memory_candidates"], list):
+            event["memory_candidate_count"] = len(node_update["memory_candidates"])
+        if "memory_write_decisions" in node_update and isinstance(node_update["memory_write_decisions"], list):
+            event["memory_write_decision_count"] = len(node_update["memory_write_decisions"])
     return event
 
 
@@ -129,6 +162,13 @@ def _assistant_token_payload(payload: object) -> dict[str, object] | None:
     return {"text": text}
 
 
+def _optional_text(value: object) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    text = str(value)
+    return "" if text.lower() == "none" else text
+
+
 class GraphRuntime:
     _compiled_graph = None
 
@@ -147,11 +187,18 @@ class GraphRuntime:
         user_mode: str = "adult",
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
+        session_digest: dict | None = None,
+        user_profile_digest: dict | None = None,
+        goal_state: dict | None = None,
+        user_context_pack: dict | None = None,
+        compact_context_pack: dict | None = None,
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ) -> dict[str, object]:
         return {
             "thread_id": thread_id,
@@ -161,7 +208,15 @@ class GraphRuntime:
             "user_mode": user_mode,
             "recent_messages": recent_messages or [],
             "last_summary": last_summary or "",
+            "session_digest": session_digest or {},
+            "user_profile_digest": user_profile_digest or {},
+            "goal_state": goal_state or {},
+            "user_context_pack": user_context_pack or {},
+            "compact_context_pack": compact_context_pack or {},
+            "temporal_context": build_temporal_context(),
             "memory_mode": memory_mode,
+            "crisis_resource_region": crisis_resource_region or "CN",
+            "tooling_enabled": True,
             "profile": {
                 "user_mode": user_mode,
                 "nickname": nickname or "user",
@@ -172,6 +227,7 @@ class GraphRuntime:
             },
             "memory_index": memory_index or [],
             "retrieved_memories": retrieved_memories or [],
+            "safety_context_pack": safety_context_pack or {},
         }
 
     def _graph_config(self, *, thread_id: str, user_id: str) -> dict[str, object]:
@@ -210,6 +266,17 @@ class GraphRuntime:
         mapped = {
             "assistant_text": assistant_text,
             "risk_level": risk_level,
+            "risk_domain": result.get("risk_domain", ""),
+            "immediacy": result.get("immediacy", ""),
+            "risk_confidence": result.get("risk_confidence", ""),
+            "protective_signals": result.get("protective_signals", []),
+            "risk_phase": result.get("risk_phase", ""),
+            "risk_response_policy": result.get("risk_response_policy", {}),
+            "conversation_move_policy": result.get("conversation_move_policy", {}),
+            "conversation_quality_trace": result.get("conversation_quality_trace", {}),
+            "compact_context_pack": result.get("compact_context_pack", {}),
+            "tool_gate_mode": result.get("tool_gate_mode", ""),
+            "safety_context_pack": result.get("safety_context_pack", {}),
             "intent": result.get("intent", "other"),
             "risk_reasons": result.get("risk_reasons", []),
             "semantic_risk": result.get("semantic_risk", {}),
@@ -220,12 +287,15 @@ class GraphRuntime:
             "control_category": result.get("control_category", "normal_support"),
             "control_reasons": result.get("control_reasons", []),
             "control_confidence": result.get("control_confidence", 0.0),
+            "clarification_needed": bool(result.get("clarification_needed", False)),
+            "clarification_reason": str(result.get("clarification_reason", "")),
             "risk_formulation": result.get("risk_formulation", {}),
             "response_contract": result.get("response_contract", {}),
             "memory_policy": result.get("memory_policy", "write_safe_summary"),
             "memory_policy_reason": result.get("memory_policy_reason", result.get("memory_policy", "")),
             "rag_used": bool(result.get("rag_used", False)),
-            "rag_skipped_reason": str(result.get("rag_skipped_reason", "")),
+            "rag_skipped_reason": _optional_text(result.get("rag_skipped_reason")),
+            "rag_trace_summary": result.get("rag_trace_summary", {}),
             "example_ids": [
                 str(example.get("chunk_id") or "")
                 for example in retrieved_examples
@@ -238,8 +308,13 @@ class GraphRuntime:
             ],
             "validator_blocked": bool(result.get("validator_blocked", False)),
             "validator_reasons": result.get("validator_reasons", []),
+            "experience_validator_reasons": result.get("experience_validator_reasons", []),
+            "experience_validator_warnings": result.get("experience_validator_warnings", []),
+            "experience_validator_blocking_reasons": result.get("experience_validator_blocking_reasons", []),
+            "validator_severity": result.get("validator_severity", "passed"),
             "suggested_actions": [] if delivery_status == "failed_no_reply" else result.get("suggested_actions", []),
             "session_summary": "" if delivery_status == "failed_no_reply" else result.get("session_summary", ""),
+            "session_digest": {} if delivery_status == "failed_no_reply" else result.get("session_digest", {}),
             "memory_candidates": [] if delivery_status == "failed_no_reply" else result.get("memory_candidates", []),
             "should_write_memory": False if delivery_status == "failed_no_reply" else result.get("should_write_memory", False),
             "memory_write_decisions": result.get("memory_write_decisions", []),
@@ -248,6 +323,8 @@ class GraphRuntime:
             "delivery_status": delivery_status,
             "failure_reason": result.get("failure_reason"),
             "retryable": bool(result.get("retryable", delivery_status == "failed_no_reply")),
+            "tool_events": result.get("tool_events", []),
+            "tool_trace_summary": result.get("tool_trace_summary", {}),
         }
         if graph_trace is not None:
             mapped["graph_trace"] = graph_trace
@@ -282,11 +359,18 @@ class GraphRuntime:
         user_mode: str = "adult",
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
+        session_digest: dict | None = None,
+        user_profile_digest: dict | None = None,
+        goal_state: dict | None = None,
+        user_context_pack: dict | None = None,
+        compact_context_pack: dict | None = None,
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ) -> dict[str, object]:
         input_state = self._build_input_state(
             thread_id=thread_id,
@@ -296,11 +380,18 @@ class GraphRuntime:
             user_mode=user_mode,
             recent_messages=recent_messages,
             last_summary=last_summary,
+            session_digest=session_digest,
+            user_profile_digest=user_profile_digest,
+            goal_state=goal_state,
+            user_context_pack=user_context_pack,
+            compact_context_pack=compact_context_pack,
             memory_mode=memory_mode,
             companion_style=companion_style,
             nickname=nickname,
+            crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
+            safety_context_pack=safety_context_pack,
         )
         result, graph_trace = await self._invoke_graph_with_trace(
             input_state,
@@ -317,11 +408,18 @@ class GraphRuntime:
         user_mode: str = "adult",
         recent_messages: list[dict] | None = None,
         last_summary: str | None = None,
+        session_digest: dict | None = None,
+        user_profile_digest: dict | None = None,
+        goal_state: dict | None = None,
+        user_context_pack: dict | None = None,
+        compact_context_pack: dict | None = None,
         memory_mode: str = "summary_only",
         companion_style: str = "",
         nickname: str | None = None,
+        crisis_resource_region: str = "CN",
         retrieved_memories: list[dict] | None = None,
         memory_index: list[dict] | None = None,
+        safety_context_pack: dict | None = None,
     ):
         input_state = self._build_input_state(
             thread_id=thread_id,
@@ -331,11 +429,18 @@ class GraphRuntime:
             user_mode=user_mode,
             recent_messages=recent_messages,
             last_summary=last_summary,
+            session_digest=session_digest,
+            user_profile_digest=user_profile_digest,
+            goal_state=goal_state,
+            user_context_pack=user_context_pack,
+            compact_context_pack=compact_context_pack,
             memory_mode=memory_mode,
             companion_style=companion_style,
             nickname=nickname,
+            crisis_resource_region=crisis_resource_region,
             retrieved_memories=retrieved_memories,
             memory_index=memory_index,
+            safety_context_pack=safety_context_pack,
         )
         config = self._graph_config(thread_id=thread_id, user_id=user_id)
         state = dict(input_state)

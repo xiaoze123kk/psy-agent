@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import desc, select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -26,9 +26,11 @@ from app.services.memory_service import (
     MEMORY_TYPE_LABELS,
     MEMORY_TYPE_ORDER,
     consolidate_user_memories,
+    count_memory_operations,
     list_memory_operations,
     log_memory_operation,
     record_memory_feedback,
+    remove_memory_vectors,
     retrieve_memories_for_turn_async,
 )
 
@@ -77,21 +79,30 @@ def build_memory_document(memories: list[UserMemory]) -> str:
 
 @router.get("", response_model=ListMemoriesResponse)
 async def list_memories(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> ListMemoriesResponse:
+    memory_filters = (
+        UserMemory.user_id == current_user.id,
+        UserMemory.status == "active",
+        UserMemory.visibility == "user_visible",
+    )
+    total = int(db.scalar(select(func.count(UserMemory.id)).where(*memory_filters)) or 0)
     memories = list(
         db.scalars(
             select(UserMemory)
-            .where(
-                UserMemory.user_id == current_user.id,
-                UserMemory.status == "active",
-                UserMemory.visibility == "user_visible",
-            )
+            .where(*memory_filters)
             .order_by(desc(UserMemory.updated_at))
+            .limit(limit)
+            .offset(offset)
         )
     )
     return ListMemoriesResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
         items=[
             MemoryItemResponse(
                 memory_id=memory.id,
@@ -136,12 +147,17 @@ async def search_memories(
 
 @router.get("/audit", response_model=MemoryAuditResponse)
 async def memory_audit(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> MemoryAuditResponse:
-    operations = list_memory_operations(db, user_id=current_user.id, limit=limit)
+    total = count_memory_operations(db, user_id=current_user.id)
+    operations = list_memory_operations(db, user_id=current_user.id, limit=limit, offset=offset)
     return MemoryAuditResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
         items=[
             MemoryAuditItem(
                 operation_id=operation.id,
@@ -270,6 +286,7 @@ async def delete_memory(
         after_value={"content": memory.content, "status": memory.status},
         actor="user",
     )
+    remove_memory_vectors([memory.id])
     db.commit()
     return MemoryMutationResponse(memory_id=memory.id, status="deleted")
 
@@ -279,15 +296,21 @@ async def clear_memories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> StatusResponse:
+    memory_ids = list(
+        db.scalars(
+            select(UserMemory.id).where(
+                UserMemory.user_id == current_user.id,
+                UserMemory.status == "active",
+                UserMemory.visibility == "user_visible",
+            )
+        )
+    )
     rows = db.execute(
         update(UserMemory)
-        .where(
-            UserMemory.user_id == current_user.id,
-            UserMemory.status == "active",
-            UserMemory.visibility == "user_visible",
-        )
+        .where(UserMemory.id.in_(memory_ids))
         .values(status="deleted", updated_at=utcnow())
     )
+    remove_memory_vectors(memory_ids)
     log_memory_operation(
         db,
         user_id=current_user.id,

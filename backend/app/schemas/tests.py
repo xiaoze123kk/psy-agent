@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
@@ -80,6 +80,7 @@ class CompleteAttemptResponse(BaseModel):
     suggested_actions: list[str]
     continue_chat_context: ContinueChatContext
     profile: TestResultProfile
+    result_image_base64: str | None = None
 
 
 class TestHistoryItem(BaseModel):

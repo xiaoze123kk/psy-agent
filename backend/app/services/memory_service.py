@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
-import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from difflib import SequenceMatcher
 from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -23,39 +22,57 @@ from app.db.models import (
 )
 from app.services.embedding_service import embedding_client
 from app.services.milvus_service import milvus_store
+from app.services.memory_scoring import (
+    clean_text as _clean_text,
+    content_similarity as _content_similarity,
+    should_compare_memory_content as _should_compare_memory_content,
+    term_similarity as _term_similarity,
+    tokenize as _tokenize,
+)
+from app.services.safety_context_service import SAFETY_CONTEXT_MEMORY_TYPES
+
+
+logger = logging.getLogger(__name__)
 
 
 VISIBLE_MEMORY_TYPES = {
     "profile",
+    "correction",
     "preference",
     "session_summary",
     "recurring_trigger",
     "support_strategy",
     "relationship",
     "state",
+    "goal",
 }
 INTERNAL_MEMORY_TYPES = {"safety_summary"}
 ALL_MEMORY_TYPES = VISIBLE_MEMORY_TYPES | INTERNAL_MEMORY_TYPES
+MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS = 3
 
 MEMORY_TYPE_LABELS = {
     "profile": "基础画像",
+    "correction": "纠错偏好",
     "session_summary": "对话摘要",
     "preference": "陪伴偏好",
     "recurring_trigger": "触发点",
     "support_strategy": "支持方式",
     "relationship": "关系记忆",
     "state": "长期状态",
+    "goal": "小目标",
     "safety_summary": "安全摘要",
 }
 
 MEMORY_TYPE_ORDER = [
     "profile",
+    "correction",
     "preference",
     "session_summary",
     "recurring_trigger",
     "support_strategy",
     "relationship",
     "state",
+    "goal",
     "safety_summary",
 ]
 
@@ -90,15 +107,37 @@ TAG_KEYWORDS = {
     "压力": ("压力", "考试", "工作", "学习", "任务"),
     "关系": ("朋友", "家人", "同学", "伴侣", "恋人", "关系"),
     "支持方式": ("呼吸", "练习", "陪", "安抚", "梳理", "倾听"),
+    "纠错": ("不要", "别", "纠正", "先听", "听我说", "不喜欢", "不是这个意思"),
 }
 
-
-def _clean_text(value: object, *, limit: int | None = None) -> str:
-    text = " ".join(str(value or "").replace("\r", "\n").split())
-    if limit is not None and len(text) > limit:
-        return text[: max(limit - 1, 0)] + "…"
-    return text
-
+CORRECTION_SIGNAL_TERMS = (
+    "不要",
+    "别",
+    "纠正",
+    "先听",
+    "听我说",
+    "不是",
+    "不喜欢",
+    "先帮我",
+    "别直接",
+    "不要直接",
+)
+CONFLICT_MEMORY_TYPES = {"preference", "support_strategy"}
+CONFLICT_TOPIC_TERMS = (
+    "直接",
+    "模板",
+    "建议",
+    "分析",
+    "提问",
+    "追问",
+    "安抚",
+    "倾听",
+    "先听",
+    "梳理",
+    "边界",
+    "步骤",
+    "节奏",
+)
 
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -109,6 +148,8 @@ def _aware(value: datetime) -> datetime:
 def _normalize_memory_type(memory_type: object) -> str:
     raw = str(memory_type or "session_summary").strip()
     aliases = {
+        "feedback": "correction",
+        "style_feedback": "correction",
         "trigger": "recurring_trigger",
         "safety": "safety_summary",
         "summary": "session_summary",
@@ -130,34 +171,6 @@ def _derive_tags(content: str, explicit_tags: object = None) -> list[str]:
         if any(keyword in content for keyword in keywords):
             tags.append(tag)
     return sorted(set(tags))[:8]
-
-
-def _tokenize(text: str) -> set[str]:
-    lowered = text.lower()
-    ascii_words = set(re.findall(r"[a-z0-9_]{2,}", lowered))
-    cjk_chars = {char for char in lowered if "\u4e00" <= char <= "\u9fff"}
-    return ascii_words | cjk_chars
-
-
-def _term_similarity(query: str, document: str) -> float:
-    query_terms = _tokenize(query)
-    if not query_terms:
-        return 0.0
-    doc_terms = _tokenize(document)
-    if not doc_terms:
-        return 0.0
-    return len(query_terms & doc_terms) / max(len(query_terms), 1)
-
-
-def _content_similarity(left: str, right: str) -> float:
-    left_text = _clean_text(left).lower()
-    right_text = _clean_text(right).lower()
-    if not left_text or not right_text:
-        return 0.0
-    if left_text == right_text:
-        return 1.0
-    return SequenceMatcher(None, left_text, right_text).ratio()
-
 
 def _freshness_warning(memory: UserMemory) -> str:
     updated_at = memory.updated_at or memory.created_at
@@ -228,9 +241,41 @@ def log_memory_operation(
     return operation
 
 
-def _base_memory_query(db: Session, user_id: str):
+def remove_memory_vectors(memory_ids: list[str]) -> bool:
+    ids = [str(memory_id) for memory_id in dict.fromkeys(memory_ids) if str(memory_id)]
+    if not ids:
+        return True
+    try:
+        return bool(milvus_store.delete_memory_vectors(ids))
+    except Exception as exc:
+        logger.warning("Milvus memory vector delete failed: %s", exc)
+        return False
+
+
+def _upsert_memory_vectors_with_retry(rows: list[dict[str, Any]]) -> bool:
+    if not rows:
+        return True
+    memory_ids = [str(row.get("memory_id") or row.get("id") or "") for row in rows]
+    memory_ids = [memory_id for memory_id in dict.fromkeys(memory_ids) if memory_id]
+    last_error: Exception | None = None
+    for _ in range(MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS):
+        try:
+            if milvus_store.upsert_memory_vectors(rows):
+                return True
+        except Exception as exc:
+            last_error = exc
+    logger.warning(
+        "Milvus memory vector upsert failed after %s attempts for memory_ids=%s%s",
+        MEMORY_VECTOR_UPSERT_MAX_ATTEMPTS,
+        memory_ids,
+        f": {last_error}" if last_error is not None else "",
+    )
+    return False
+
+
+def _base_memory_query(db: Session, user_id: str, memory_types: set[str] | None = None):
     now = utcnow()
-    return db.scalars(
+    stmt = (
         select(UserMemory)
         .where(
             UserMemory.user_id == user_id,
@@ -241,6 +286,11 @@ def _base_memory_query(db: Session, user_id: str):
         .order_by(desc(UserMemory.importance), desc(UserMemory.updated_at))
         .limit(200)
     )
+    if memory_types is not None:
+        if not memory_types:
+            return db.scalars(select(UserMemory).where(false()))
+        stmt = stmt.where(UserMemory.memory_type.in_(tuple(memory_types)))
+    return db.scalars(stmt)
 
 
 def _allowed_memory_types_for_mode(memory_mode: str, *, include_internal: bool = False) -> set[str]:
@@ -263,16 +313,14 @@ def build_memory_index(
     limit: int = 20,
     include_internal: bool = False,
 ) -> list[dict[str, Any]]:
-    allowed_types = INTERNAL_MEMORY_TYPES if include_internal else _allowed_memory_types_for_mode(memory_mode)
+    allowed_types = set(SAFETY_CONTEXT_MEMORY_TYPES) if include_internal else _allowed_memory_types_for_mode(memory_mode)
     if not allowed_types:
         return []
 
     items = []
-    for memory in _base_memory_query(db, user_id):
-        if memory.memory_type not in allowed_types:
-            continue
+    for memory in _base_memory_query(db, user_id, memory_types=allowed_types):
         if include_internal:
-            if memory.visibility != "internal_safety":
+            if not _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level="L2"):
                 continue
         elif memory.visibility != "user_visible":
             continue
@@ -299,19 +347,87 @@ def _query_for_retrieval(
     query: str,
     recent_messages: list[dict[str, Any]] | None,
     last_summary: str | None,
+    session_digest: dict[str, Any] | None,
+    goal_state: dict[str, Any] | None,
     control_category: str | None,
 ) -> str:
     recent_text = " ".join(str(message.get("content", "")) for message in (recent_messages or [])[-4:])
-    return _clean_text(f"{query} {last_summary or ''} {control_category or ''} {recent_text}", limit=1200)
+    digest_parts: list[str] = []
+    if isinstance(session_digest, dict):
+        for key in ("key_themes", "emotional_arc", "unresolved_threads", "significant_changes", "summary_200chars"):
+            value = session_digest.get(key)
+            if isinstance(value, list):
+                digest_parts.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                digest_parts.append(value.strip())
+    digest_text = " ".join(digest_parts)
+    goal_parts: list[str] = []
+    if isinstance(goal_state, dict):
+        for key in ("current_goal", "usage_goals", "goal_hints", "open_threads", "clarification_answer"):
+            value = goal_state.get(key)
+            if isinstance(value, list):
+                goal_parts.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                goal_parts.append(value.strip())
+    goal_text = " ".join(goal_parts)
+    return _clean_text(
+        f"{query} {last_summary or ''} {control_category or ''} {goal_text} {digest_text} {recent_text}",
+        limit=1400,
+    )
 
 
-def _type_boost(memory_type: str, query_text: str, control_category: str | None) -> float:
+def _goal_state_has_context(goal_state: dict[str, Any] | None) -> bool:
+    if not isinstance(goal_state, dict):
+        return False
+    for key in ("current_goal", "usage_goals", "goal_hints", "open_threads", "clarification_answer"):
+        value = goal_state.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(str(item).strip() for item in value):
+            return True
+    return False
+
+
+def _has_correction_signal(text: str) -> bool:
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in CORRECTION_SIGNAL_TERMS)
+
+
+def _conflict_topic_terms(text: str) -> set[str]:
+    lowered = text.lower()
+    return {term for term in CONFLICT_TOPIC_TERMS if term.lower() in lowered}
+
+
+def _conflict_arbitration_boost(memory_type: str, query_text: str) -> float:
+    if not _has_correction_signal(query_text):
+        return 0.0
+    if memory_type == "correction":
+        return 0.22
+    if memory_type in CONFLICT_MEMORY_TYPES and _conflict_topic_terms(query_text):
+        return -0.12
+    return 0.0
+
+
+def _type_boost(
+    memory_type: str,
+    query_text: str,
+    control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
+) -> float:
     text = query_text.lower()
     boost = 0.0
+    if memory_type == "goal" and any(term in text for term in ("目标", "计划", "打算", "我想", "希望", "理清", "解决")):
+        boost += 0.12
     if memory_type == "session_summary" and any(term in text for term in ("上次", "继续", "刚才", "最近")):
         boost += 0.08
+    if memory_type == "session_summary" and any(term in text for term in ("职场", "工作", "压力", "主题", "方向", "讨论")):
+        boost += 0.1
     if memory_type == "preference" and any(term in text for term in ("喜欢", "希望", "不要", "别", "方式")):
         boost += 0.08
+    if memory_type == "correction" and any(
+        term in text for term in ("不要", "别", "纠正", "先听", "听我说", "不是", "不喜欢")
+    ):
+        boost += 0.16
     if memory_type in {"recurring_trigger", "state"} and any(term in text for term in ("焦虑", "睡", "压力", "每次", "总是")):
         boost += 0.07
     if memory_type == "support_strategy" and any(term in text for term in ("安抚", "呼吸", "练习", "帮助", "有效")):
@@ -320,10 +436,23 @@ def _type_boost(memory_type: str, query_text: str, control_category: str | None)
         boost += 0.07
     if control_category and memory_type in {"support_strategy", "recurring_trigger"}:
         boost += 0.03
+    if _goal_state_has_context(goal_state) and any(term in text for term in ("继续", "这个", "刚才", "还是", "接着")):
+        if memory_type == "goal":
+            boost += 0.18
+        elif memory_type in {"profile", "correction", "preference"}:
+            boost += 0.12
+        elif memory_type == "session_summary":
+            boost -= 0.04
+    boost += _conflict_arbitration_boost(memory_type, query_text)
     return boost
 
 
-def _score_memory(memory: UserMemory, query_text: str, control_category: str | None) -> tuple[float, str]:
+def _score_memory(
+    memory: UserMemory,
+    query_text: str,
+    control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
+) -> tuple[float, str]:
     document = _memory_document(memory)
     similarity = _term_similarity(query_text, document)
     importance_score = max(min(memory.importance, 5), 1) / 5
@@ -336,8 +465,10 @@ def _score_memory(memory: UserMemory, query_text: str, control_category: str | N
         + 0.28 * importance_score
         + 0.12 * freshness_score
         + 0.06 * access_score
-        + _type_boost(memory.memory_type, query_text, control_category)
+        + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
+    if memory.review_state == "needs_review":
+        score -= 0.08
     if similarity >= 0.18:
         reason = "与当前输入或近期上下文相似"
     elif memory.importance >= 4:
@@ -362,6 +493,7 @@ def _vector_score_memory(
     vector_score: float,
     query_text: str,
     control_category: str | None,
+    goal_state: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
     importance_score = max(min(memory.importance, 5), 1) / 5
     updated_at = memory.updated_at or memory.created_at
@@ -374,8 +506,10 @@ def _vector_score_memory(
         + 0.18 * importance_score
         + 0.10 * freshness_score
         + 0.04 * access_score
-        + _type_boost(memory.memory_type, query_text, control_category)
+        + _type_boost(memory.memory_type, query_text, control_category, goal_state)
     )
+    if memory.review_state == "needs_review":
+        score -= 0.08
     return round(score, 4), "vector_semantic_match"
 
 
@@ -383,7 +517,9 @@ def _memory_visible_for_turn(memory: UserMemory, *, allowed_types: set[str], ris
     if memory.memory_type not in allowed_types:
         return False
     if risk_level in {"L2", "L3"}:
-        return memory.visibility == "internal_safety" and memory.memory_type == "safety_summary"
+        if memory.memory_type == "safety_summary":
+            return memory.visibility == "internal_safety"
+        return memory.visibility == "user_visible" and memory.memory_type in SAFETY_CONTEXT_MEMORY_TYPES
     return memory.visibility == "user_visible"
 
 
@@ -441,6 +577,8 @@ def retrieve_memories_for_turn(
     query: str,
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
+    session_digest: dict[str, Any] | None = None,
+    goal_state: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -454,7 +592,7 @@ def retrieve_memories_for_turn(
     include_internal = risk_level in {"L2", "L3"}
     allowed_types = _allowed_memory_types_for_mode(memory_mode, include_internal=include_internal)
     if include_internal:
-        allowed_types = {"safety_summary"}
+        allowed_types = set(SAFETY_CONTEXT_MEMORY_TYPES)
     if not allowed_types:
         return []
 
@@ -462,6 +600,8 @@ def retrieve_memories_for_turn(
         query=query,
         recent_messages=recent_messages,
         last_summary=last_summary,
+        session_digest=session_digest,
+        goal_state=goal_state,
         control_category=control_category,
     )
 
@@ -473,7 +613,7 @@ def retrieve_memories_for_turn(
         limit=limit,
     )
     candidate_memories: dict[str, UserMemory] = {}
-    for memory in _base_memory_query(db, user_id):
+    for memory in _base_memory_query(db, user_id, memory_types=allowed_types):
         if not _memory_visible_for_turn(memory, allowed_types=allowed_types, risk_level=risk_level):
             continue
         candidate_memories[memory.id] = memory
@@ -483,13 +623,14 @@ def retrieve_memories_for_turn(
 
     candidates: list[tuple[float, str, UserMemory]] = []
     for memory in candidate_memories.values():
-        score, reason = _score_memory(memory, query_text, control_category)
+        score, reason = _score_memory(memory, query_text, control_category, goal_state)
         if memory.id in vector_scores:
             vector_score, vector_reason = _vector_score_memory(
                 memory,
                 vector_score=vector_scores[memory.id],
                 query_text=query_text,
                 control_category=control_category,
+                goal_state=goal_state,
             )
             if vector_score >= score:
                 score, reason = vector_score, vector_reason
@@ -552,6 +693,8 @@ async def retrieve_memories_for_turn_async(
     query: str,
     recent_messages: list[dict[str, Any]] | None = None,
     last_summary: str | None = None,
+    session_digest: dict[str, Any] | None = None,
+    goal_state: dict[str, Any] | None = None,
     memory_mode: str,
     risk_level: str = "L0",
     control_category: str | None = None,
@@ -564,11 +707,14 @@ async def retrieve_memories_for_turn_async(
         and _vector_retrieval_enabled()
         and milvus_store.is_available
         and embedding_client.is_configured
+        and embedding_client.is_safe_for_realtime()
     ):
         query_text = _query_for_retrieval(
             query=query,
             recent_messages=recent_messages,
             last_summary=last_summary,
+            session_digest=session_digest,
+            goal_state=goal_state,
             control_category=control_category,
         )
         query_vector = await embedding_client.embed_query(query_text)
@@ -578,6 +724,8 @@ async def retrieve_memories_for_turn_async(
         query=query,
         recent_messages=recent_messages,
         last_summary=last_summary,
+        session_digest=session_digest,
+        goal_state=goal_state,
         memory_mode=memory_mode,
         risk_level=risk_level,
         control_category=control_category,
@@ -622,6 +770,7 @@ def _find_similar_memory(
     visibility: str,
     content: str,
 ) -> UserMemory | None:
+    now = utcnow()
     rows = list(
         db.scalars(
             select(UserMemory)
@@ -630,6 +779,8 @@ def _find_similar_memory(
                 UserMemory.status == "active",
                 UserMemory.memory_type == memory_type,
                 UserMemory.visibility == visibility,
+                UserMemory.review_state != "do_not_use",
+                or_(UserMemory.expires_at.is_(None), UserMemory.expires_at > now),
             )
             .order_by(desc(UserMemory.updated_at))
             .limit(50)
@@ -640,6 +791,8 @@ def _find_similar_memory(
         return exact
     best: tuple[float, UserMemory] | None = None
     for memory in rows:
+        if not _should_compare_memory_content(memory.content, content):
+            continue
         similarity = _content_similarity(memory.content, content)
         if best is None or similarity > best[0]:
             best = (similarity, memory)
@@ -673,6 +826,74 @@ def _candidate_from_summary(default_summary: str, risk_level: str) -> dict[str, 
         "content": default_summary,
         "importance": 5 if risk_level in {"L2", "L3"} else 3,
     }
+
+
+def _memory_conflicts_with_correction(memory: UserMemory, correction: UserMemory) -> bool:
+    if correction.memory_type != "correction" or memory.memory_type not in CONFLICT_MEMORY_TYPES:
+        return False
+    correction_text = _clean_text(correction.content)
+    if not _has_correction_signal(correction_text):
+        return False
+    correction_terms = _conflict_topic_terms(correction_text)
+    if not correction_terms:
+        return False
+    memory_terms = _conflict_topic_terms(_memory_document(memory))
+    return bool(correction_terms & memory_terms)
+
+
+def _mark_conflicting_memories_for_review(db: Session, *, user_id: str, correction: UserMemory) -> list[UserMemory]:
+    if correction.visibility != "user_visible" or correction.memory_type != "correction":
+        return []
+    now = utcnow()
+    rows = list(
+        db.scalars(
+            select(UserMemory)
+            .where(
+                UserMemory.user_id == user_id,
+                UserMemory.id != correction.id,
+                UserMemory.status == "active",
+                UserMemory.visibility == "user_visible",
+                UserMemory.memory_type.in_(tuple(CONFLICT_MEMORY_TYPES)),
+                UserMemory.review_state != "do_not_use",
+                or_(UserMemory.expires_at.is_(None), UserMemory.expires_at > now),
+            )
+            .order_by(desc(UserMemory.updated_at))
+            .limit(50)
+        )
+    )
+    marked: list[UserMemory] = []
+    correction_terms = sorted(_conflict_topic_terms(correction.content))
+    for memory in rows:
+        if not _memory_conflicts_with_correction(memory, correction):
+            continue
+        structured = dict(memory.structured_value or {})
+        conflict = structured.get("memory_conflict")
+        if isinstance(conflict, dict) and conflict.get("superseded_by") == correction.id:
+            continue
+        before = _snapshot(memory)
+        structured["memory_conflict"] = {
+            "superseded_by": correction.id,
+            "superseding_type": correction.memory_type,
+            "reason": "correction_conflict",
+            "terms": correction_terms[:6],
+            "detected_at": now.isoformat(),
+        }
+        memory.structured_value = structured
+        memory.review_state = "needs_review"
+        memory.updated_at = now
+        memory.version = int(memory.version or 1) + 1
+        db.flush()
+        log_memory_operation(
+            db,
+            user_id=user_id,
+            memory_id=memory.id,
+            action="feedback",
+            before_value=before,
+            after_value=_snapshot(memory),
+            reason=f"correction_conflict:{correction.id}",
+        )
+        marked.append(memory)
+    return marked
 
 
 def upsert_memory_candidates(
@@ -772,6 +993,7 @@ def upsert_memory_candidates(
             )
             written.append(existing)
             decisions.append({"status": "updated", "memory_id": existing.id, "memory_type": memory_type})
+            _mark_conflicting_memories_for_review(db, user_id=user.id, correction=existing)
             continue
 
         memory = UserMemory(
@@ -803,6 +1025,7 @@ def upsert_memory_candidates(
         )
         written.append(memory)
         decisions.append({"status": "created", "memory_id": memory.id, "memory_type": memory_type})
+        _mark_conflicting_memories_for_review(db, user_id=user.id, correction=memory)
     return written, decisions
 
 
@@ -812,19 +1035,29 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
     active_memories = [memory for memory in memories if memory.status == "active" and memory.content]
     if not active_memories or not embedding_client.is_configured:
         return
+    is_safe_for_realtime = getattr(embedding_client, "is_safe_for_realtime", None)
+    if callable(is_safe_for_realtime) and not is_safe_for_realtime():
+        logger.warning("Skipping memory vector indexing because local realtime embedding is disabled for process safety.")
+        return
     texts = [memory.content for memory in active_memories]
     vectors = await embedding_client.embed_texts(texts)
     if not vectors or len(vectors) != len(active_memories):
         return
+    memory_ids = [memory.id for memory in active_memories]
+    existing_embeddings: dict[str, MemoryEmbedding] = {}
+    for existing in db.scalars(
+        select(MemoryEmbedding)
+        .where(
+            MemoryEmbedding.memory_id.in_(memory_ids),
+            MemoryEmbedding.embedding_key == embedding_client.embedding_key,
+        )
+        .order_by(desc(MemoryEmbedding.updated_at), desc(MemoryEmbedding.created_at))
+    ):
+        existing_embeddings.setdefault(existing.memory_id, existing)
     milvus_rows: list[dict[str, Any]] = []
     for memory, vector in zip(active_memories, vectors):
         content_hash = sha256(memory.content.encode("utf-8")).hexdigest()
-        existing = db.scalar(
-            select(MemoryEmbedding).where(
-                MemoryEmbedding.memory_id == memory.id,
-                MemoryEmbedding.embedding_key == embedding_client.embedding_key,
-            )
-        )
+        existing = existing_embeddings.get(memory.id)
         if existing is None:
             db.add(
                 MemoryEmbedding(
@@ -859,10 +1092,7 @@ async def index_memory_embeddings(db: Session, memories: list[UserMemory]) -> No
             }
         )
     if milvus_rows:
-        try:
-            milvus_store.upsert_memory_vectors(milvus_rows)
-        except Exception:
-            pass
+        _upsert_memory_vectors_with_retry(milvus_rows)
     db.flush()
 
 
@@ -887,6 +1117,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
         by_type[memory.memory_type].append(memory)
 
     touched = 0
+    deleted_memory_ids: list[str] = []
     for memory_type, group in by_type.items():
         kept: list[UserMemory] = []
         for memory in group:
@@ -912,6 +1143,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
             memory.status = "deleted"
             memory.supersedes_id = match.id
             memory.updated_at = utcnow()
+            deleted_memory_ids.append(memory.id)
             touched += 2
             db.flush()
             log_memory_operation(
@@ -932,6 +1164,7 @@ def _consolidate_duplicate_memories(db: Session, user_id: str) -> int:
                 after_value=_snapshot(memory),
                 reason=f"superseded_by:{match.id}",
             )
+    remove_memory_vectors(deleted_memory_ids)
     return touched
 
 
@@ -1050,6 +1283,7 @@ def _expire_old_memories(db: Session, user_id: str) -> int:
             after_value=_snapshot(memory),
             reason="expires_at_elapsed",
         )
+    remove_memory_vectors([memory.id for memory in expired])
     return len(expired)
 
 
@@ -1189,15 +1423,27 @@ def record_memory_feedback(
         reason=note or normalized,
         actor="user",
     )
+    if memory.status == "deleted":
+        remove_memory_vectors([memory.id])
     return memory
 
 
-def list_memory_operations(db: Session, *, user_id: str, limit: int = 50) -> list[MemoryOperation]:
+def count_memory_operations(db: Session, *, user_id: str) -> int:
+    return int(
+        db.scalar(
+            select(func.count(MemoryOperation.id)).where(MemoryOperation.user_id == user_id)
+        )
+        or 0
+    )
+
+
+def list_memory_operations(db: Session, *, user_id: str, limit: int = 50, offset: int = 0) -> list[MemoryOperation]:
     return list(
         db.scalars(
             select(MemoryOperation)
             .where(MemoryOperation.user_id == user_id)
             .order_by(desc(MemoryOperation.created_at))
             .limit(max(1, min(limit, 200)))
+            .offset(max(offset, 0))
         )
     )

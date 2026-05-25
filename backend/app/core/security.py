@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import hashlib
@@ -54,6 +54,20 @@ def verify_password(password: str, encoded_password: str) -> bool:
     return hmac.compare_digest(computed_digest, expected_digest)
 
 
+MIN_PASSWORD_LENGTH = 8
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"密码至少需要 {MIN_PASSWORD_LENGTH} 个字符。")
+    if not any(c.isupper() for c in password):
+        raise ValueError("密码需要包含至少一个大写字母。")
+    if not any(c.islower() for c in password):
+        raise ValueError("密码需要包含至少一个小写字母。")
+    if not any(c.isdigit() for c in password):
+        raise ValueError("密码需要包含至少一个数字。")
+
+
 def _sign(message: bytes) -> str:
     signature = hmac.new(
         settings.secret_key.encode("utf-8"),
@@ -67,7 +81,7 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_token(subject: str, token_type: str, expires_in_seconds: int, *, token_id: str | None = None) -> str:
+def create_token(subject: str, token_type: str, expires_in_seconds: int, *, token_id: str | None = None, token_version: int | None = None) -> str:
     payload = {
         "sub": subject,
         "type": token_type,
@@ -75,18 +89,20 @@ def create_token(subject: str, token_type: str, expires_in_seconds: int, *, toke
     }
     if token_id is not None:
         payload["jti"] = token_id
+    if token_version is not None:
+        payload["ver"] = token_version
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     payload_part = _b64encode(payload_bytes)
     signature_part = _sign(payload_bytes)
     return f"{payload_part}.{signature_part}"
 
 
-def create_access_token(subject: str) -> str:
-    return create_token(subject, "access", settings.access_token_ttl_seconds)
+def create_access_token(subject: str, token_version: int | None = None) -> str:
+    return create_token(subject, "access", settings.access_token_ttl_seconds, token_version=token_version)
 
 
-def create_refresh_token(subject: str, token_id: str) -> str:
-    return create_token(subject, "refresh", settings.refresh_token_ttl_seconds, token_id=token_id)
+def create_refresh_token(subject: str, token_id: str, ttl_seconds: int, token_version: int | None = None) -> str:
+    return create_token(subject, "refresh", ttl_seconds, token_id=token_id, token_version=token_version)
 
 
 def decode_token(token: str, expected_type: str) -> dict[str, Any]:

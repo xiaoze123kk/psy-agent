@@ -382,6 +382,7 @@ export function NingyuAppShell() {
     updatePrivacySettings,
     toggleThemeMode,
   } = useAppState();
+  const { clearSession } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
   const [shellPhase, setShellPhase] = useState<ShellPhase>("loading");
   const [isSafetyEntryOpen, setIsSafetyEntryOpen] = useState(false);
@@ -882,6 +883,10 @@ export function NingyuAppShell() {
       setShellPhase("ready");
     }, 720);
   };
+
+  const handleLogout = useCallback(async () => {
+    clearSession();
+  }, [clearSession]);
 
   const handleHighRiskChatResponse = useCallback(
     async ({
@@ -2961,6 +2966,7 @@ function RightPanel({
   onFeedbackSubmit,
   onToggleSafetyEntry,
   onRetrySafetyState,
+  onLogout,
 }: {
   isNight: boolean;
   currentUserLabel: string;
@@ -3093,6 +3099,7 @@ function RightPanel({
   onFeedbackSubmit: () => void;
   onToggleSafetyEntry: () => void;
   onRetrySafetyState: () => void;
+  onLogout: () => void;
 }) {
   const [activeToolSurface, setActiveToolSurface] = useState<"launcher" | "journey" | "actions" | "knowledge" | "tests" | "settings" | "safety">("launcher");
   const shouldShowGuidance = isSafetyEntryOpen || Boolean(highRiskSafety);
@@ -3400,6 +3407,9 @@ function RightPanel({
             <span key={tag}>{tag}</span>
           ))}
         </div>
+        <button className="ningyu-logout-button" type="button" onClick={onLogout}>
+          退出登录
+        </button>
       </section>
 
       <section className="ningyu-panel-section ningyu-panel-section--mood">

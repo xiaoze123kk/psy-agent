@@ -11,18 +11,25 @@ class AgentState(TypedDict, total=False):
     user_mode: Literal["teen", "adult"]
     locale: str
 
-    input_type: Literal["text", "voice", "test_result", "system"]
+    input_type: Literal["text", "test_result", "system"]
     user_text: str
     normalized_text: str
-    voice_transcript: str
 
     messages: list[dict]
     recent_messages: list[dict]
     last_summary: str
+    session_digest: dict
+    user_profile_digest: dict
+    goal_state: dict
+    user_context_pack: dict
+    compact_context_pack: dict
+    temporal_context: dict
 
     profile: dict
     companion_preferences: dict
     memory_mode: Literal["off", "summary_only", "long_term"]
+    crisis_resource_region: str
+    tooling_enabled: bool
 
     memory_index: list[dict]
     retrieved_memories: list[dict]
@@ -41,6 +48,20 @@ class AgentState(TypedDict, total=False):
     risk_source: str
     risk_reason_codes: list[str]
     requires_safety_check: bool
+    risk_domain: str
+    immediacy: Literal["none", "vague", "near_term", "active"]
+    risk_confidence: Literal["low", "medium", "high"]
+    protective_signals: list[str]
+    risk_phase: Literal["first_contact", "stabilizing", "still_high", "deescalating", "post_crisis"]
+    risk_response_policy: dict
+    conversation_move_policy: dict
+    conversation_quality_trace: dict
+    tool_gate_mode: Literal["normal_context", "safety_context", "blocked_context"]
+    safety_context_pack: dict
+    experience_validator_reasons: list[str]
+    experience_validator_warnings: list[str]
+    experience_validator_blocking_reasons: list[str]
+    validator_severity: Literal["passed", "warning", "repaired", "blocked", "failed"]
 
     route_priority: Literal[
         "P0_immediate_safety",
@@ -52,12 +73,15 @@ class AgentState(TypedDict, total=False):
     control_category: str
     control_reasons: list[str]
     control_confidence: float
+    clarification_needed: bool
+    clarification_reason: str
     risk_formulation: dict
     response_contract: dict
     memory_policy: Literal["write_safe_summary", "skip_sensitive", "crisis_audit_only"]
     rag_policy: dict
     rag_used: bool
     rag_skipped_reason: str
+    rag_trace_summary: dict
     retrieved_counseling_examples: list[dict]
     validator_blocked: bool
     validator_reasons: list[str]
@@ -70,6 +94,8 @@ class AgentState(TypedDict, total=False):
 
     assistant_text: str
     suggested_actions: list[str]
+    tool_events: list[dict]
+    tool_trace_summary: dict
 
     session_summary: str
     memory_candidates: list[dict]

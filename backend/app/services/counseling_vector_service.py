@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import logging
 import re
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.graphs.state import AgentState
 from app.services.embedding_service import embedding_client
+from app.services.counseling_reranker import RerankCandidate, model_reranker
 from app.services.milvus_service import milvus_store
 
 if TYPE_CHECKING:
     from app.db.models import CounselingExampleChunk, CounselingCorpusSource
+
+
+logger = logging.getLogger(__name__)
+
+CHUNK_TYPES = {"turn_pair", "process_segment", "session_sketch"}
+CONTINUATION_PATTERNS = ("继续", "还是", "刚才", "前面", "上次", "那个问题", "接着")
+
+
+RERANK_RETRIEVAL_KEY = "_retrieval_key"
 
 
 COUNSELING_CORPUS_SOURCES: dict[str, dict[str, Any]] = {
@@ -73,6 +86,38 @@ class CounselingExampleHit:
     language: str | None = None
     age_group: str | None = None
     risk_allowed: str | None = None
+    chunk_type: str = "turn_pair"
+    original_external_id: str | None = None
+    phase: str | None = None
+    display_text: str | None = None
+    process_quality_score: float | None = None
+    rerank_score: float | None = None
+    rerank_reasons: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class CounselingRetrievalResult:
+    examples: list[CounselingExampleHit]
+    trace: dict[str, object]
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((perf_counter() - started_at) * 1000))
+
+
+def _timeout_ms(timeout_seconds: float) -> int:
+    return max(1, int(max(timeout_seconds, 0.001) * 1000))
+
+
+def _retrieval_result(
+    *,
+    examples: list[CounselingExampleHit] | None = None,
+    trace: dict[str, object],
+    started_at: float,
+) -> CounselingRetrievalResult:
+    trace.setdefault("hit_count", len(examples or []))
+    trace["total_duration_ms"] = _elapsed_ms(started_at)
+    return CounselingRetrievalResult(examples=examples or [], trace=trace)
 
 
 def counseling_chunk_to_vector_row(
@@ -106,6 +151,11 @@ def counseling_chunk_to_vector_row(
         "contraindications": ",".join(_as_text_list(meta.get("contraindications"))),
         "quality_score": str(meta.get("quality_score", "")),
         "safety_score": str(meta.get("safety_score", "")),
+        "chunk_type": str(meta.get("chunk_type") or "turn_pair"),
+        "original_external_id": str(meta.get("original_external_id") or chunk.external_id),
+        "phase": str(meta.get("phase") or ""),
+        "display_text": str(meta.get("display_text") or ""),
+        "process_quality_score": str(meta.get("process_quality_score", "")),
         "vector": vector,
     }
 
@@ -116,33 +166,98 @@ async def retrieve_counseling_examples(
     mode: str,
     limit: int = 3,
 ) -> list[CounselingExampleHit]:
+    result = await retrieve_counseling_examples_with_trace(state, mode=mode, limit=limit)
+    return result.examples
+
+
+async def retrieve_counseling_examples_with_trace(
+    state: AgentState,
+    *,
+    mode: str,
+    limit: int = 3,
+    timeout_seconds: float | None = None,
+) -> CounselingRetrievalResult:
+    started_at = perf_counter()
+    timeout_budget = max(float(timeout_seconds or settings.rag_retrieval_timeout_seconds), 0.001)
+    deadline = started_at + timeout_budget
+    trace: dict[str, object] = {
+        "status": "skipped",
+        "mode": mode,
+        "timeout_ms": _timeout_ms(timeout_budget),
+        "embedding_duration_ms": 0,
+        "milvus_duration_ms": 0,
+    }
+
+    def remaining_seconds() -> float:
+        return max(deadline - perf_counter(), 0.001)
+
     if not settings.counseling_rag_enabled:
-        return []
+        trace["skipped_reason"] = "rag_disabled"
+        return _retrieval_result(trace=trace, started_at=started_at)
     allowed, _reason = counseling_rag_allowed(state)
     if not allowed:
-        return []
+        trace["skipped_reason"] = _reason or "rag_policy_disabled"
+        return _retrieval_result(trace=trace, started_at=started_at)
     if state.get("risk_level") in {"L2", "L3"}:
-        return []
+        trace["skipped_reason"] = "risk_level_blocks_rag"
+        return _retrieval_result(trace=trace, started_at=started_at)
     if not milvus_store.is_available:
-        return []
+        trace["skipped_reason"] = "milvus_unavailable"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
     query = str(state.get("normalized_text") or "").strip()
     if not query:
-        return []
+        trace["skipped_reason"] = "empty_query"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
-    vector = await embedding_client.embed_query(query)
+    embedding_started_at = perf_counter()
+    try:
+        vector = await asyncio.wait_for(embedding_client.embed_query(query), timeout=remaining_seconds())
+    except asyncio.TimeoutError:
+        trace["status"] = "timeout"
+        trace["phase"] = "embedding"
+        trace["skipped_reason"] = "rag_timeout"
+        trace["embedding_duration_ms"] = _elapsed_ms(embedding_started_at)
+        logger.warning("Counseling RAG embedding timed out after %.1fs.", timeout_budget)
+        return _retrieval_result(trace=trace, started_at=started_at)
+    trace["embedding_duration_ms"] = _elapsed_ms(embedding_started_at)
     if vector is None:
-        return []
+        trace["skipped_reason"] = "embedding_unavailable"
+        return _retrieval_result(trace=trace, started_at=started_at)
 
     hits: list[Any] = []
     seen_ids: set[str] = set()
     search_modes = _search_modes_for(mode)
+    trace["search_modes"] = [search_mode or "any" for search_mode in search_modes]
     safe_limit = min(max(limit, 0), 3)
     if safe_limit <= 0:
-        return []
-    per_query_limit = max(safe_limit * 3, 9)
+        trace["skipped_reason"] = "invalid_limit"
+        return _retrieval_result(trace=trace, started_at=started_at)
+    configured_recall_top_n = max(int(settings.counseling_recall_top_n), 0)
+    per_query_limit = max(configured_recall_top_n, safe_limit * 6, 18)
+    trace["recall_top_n"] = per_query_limit
     for search_mode in search_modes:
-        for hit in milvus_store.search_counseling_examples(vector, mode=search_mode, limit=per_query_limit):
+        search_started_at = perf_counter()
+        try:
+            search_hits = await asyncio.wait_for(
+                asyncio.to_thread(
+                    milvus_store.search_counseling_examples,
+                    vector,
+                    mode=search_mode,
+                    limit=per_query_limit,
+                ),
+                timeout=remaining_seconds(),
+            )
+        except asyncio.TimeoutError:
+            trace["status"] = "timeout"
+            trace["phase"] = "milvus_search"
+            trace["skipped_reason"] = "rag_timeout"
+            trace["milvus_duration_ms"] = int(trace.get("milvus_duration_ms", 0)) + _elapsed_ms(search_started_at)
+            logger.warning("Counseling RAG Milvus search timed out after %.1fs.", timeout_budget)
+            return _retrieval_result(trace=trace, started_at=started_at)
+        trace["milvus_duration_ms"] = int(trace.get("milvus_duration_ms", 0)) + _elapsed_ms(search_started_at)
+
+        for hit in search_hits:
             if hit.id in seen_ids:
                 continue
             seen_ids.add(hit.id)
@@ -150,13 +265,50 @@ async def retrieve_counseling_examples(
             if not content or not counseling_example_is_safe(hit.entity):
                 continue
             hits.append(hit)
-            if len(hits) >= safe_limit:
+            if len(hits) >= per_query_limit:
                 break
-        if len(hits) >= safe_limit:
+        if len(hits) >= per_query_limit:
             break
 
+    trace["recall_count"] = len(hits)
+    candidates = [_hit_to_rerank_candidate(hit, retrieval_key=str(index)) for index, hit in enumerate(hits)]
+    configured_rerank_top_n = int(settings.counseling_rerank_top_n)
+    final_limit = min(safe_limit, configured_rerank_top_n) if configured_rerank_top_n > 0 else safe_limit
+    if not candidates:
+        trace["rerank_status"] = "empty"
+        trace["rerank_reason"] = "no_candidates"
+        trace["rerank_duration_ms"] = 0
+        trace["rerank_scored_count"] = 0
+        trace["status"] = "empty"
+        trace["hit_count"] = 0
+        trace["chunk_type_counts"] = {}
+        trace["skipped_reason"] = "no_safe_examples"
+        return _retrieval_result(trace=trace, started_at=started_at)
+
+    rerank_result = await model_reranker.rerank(
+        query=query,
+        candidates=candidates,
+        limit=final_limit,
+        timeout_seconds=remaining_seconds(),
+    )
+    trace["rerank_status"] = rerank_result.status
+    trace["rerank_reason"] = rerank_result.reason
+    trace["rerank_duration_ms"] = rerank_result.duration_ms
+    trace["rerank_scored_count"] = rerank_result.scored_count
+
+    hit_by_retrieval_key = {
+        str(candidate.metadata.get(RERANK_RETRIEVAL_KEY) or ""): hit for candidate, hit in zip(candidates, hits)
+    }
+    hit_by_chunk_id = {str(hit.entity.get("chunk_id") or hit.id or ""): hit for hit in hits}
+    selected_hits: list[tuple[Any, RerankCandidate]] = []
+    for candidate in rerank_result.candidates:
+        retrieval_key = str(candidate.metadata.get(RERANK_RETRIEVAL_KEY) or "")
+        hit = hit_by_retrieval_key.get(retrieval_key) or hit_by_chunk_id.get(candidate.chunk_id)
+        if hit is not None:
+            selected_hits.append((hit, candidate))
+
     examples: list[CounselingExampleHit] = []
-    for hit in hits[:safe_limit]:
+    for hit, candidate in selected_hits[:safe_limit]:
         content = str(hit.entity.get("content") or "").strip()
         if not content or not counseling_example_is_safe(hit.entity):
             continue
@@ -180,15 +332,31 @@ async def retrieve_counseling_examples(
                 language=str(hit.entity.get("language") or "zh-CN"),
                 age_group=str(hit.entity.get("age_group") or "general"),
                 risk_allowed=str(hit.entity.get("risk_allowed") or "non_crisis"),
+                chunk_type=str(hit.entity.get("chunk_type") or "turn_pair"),
+                original_external_id=str(hit.entity.get("original_external_id") or hit.entity.get("external_id") or ""),
+                phase=str(hit.entity.get("phase") or "") or None,
+                display_text=str(hit.entity.get("display_text") or "") or None,
+                process_quality_score=_to_float(hit.entity.get("process_quality_score")),
+                rerank_score=candidate.rerank_score,
+                rerank_reasons=list(candidate.rerank_reasons or []),
             )
         )
-    return examples
+    trace["status"] = "hit" if examples else "empty"
+    trace["hit_count"] = len(examples)
+    chunk_type_counts: dict[str, int] = {}
+    for example in examples:
+        key = example.chunk_type or "turn_pair"
+        chunk_type_counts[key] = chunk_type_counts.get(key, 0) + 1
+    trace["chunk_type_counts"] = chunk_type_counts
+    if not examples:
+        trace["skipped_reason"] = "no_safe_examples"
+    return _retrieval_result(examples=examples, trace=trace, started_at=started_at)
 
 
 def _search_modes_for(mode: str) -> list[str | None]:
     normalized = (mode or "").strip().lower()
     if normalized == "companion":
-        return ["vent", "soothe", "counseling", None]
+        return [None, "vent", "soothe", "counseling"]
     if normalized == "vent":
         return ["vent", "soothe", None]
     if normalized == "soothe":
@@ -196,6 +364,81 @@ def _search_modes_for(mode: str) -> list[str | None]:
     if normalized == "counseling":
         return ["counseling", "vent", None]
     return [normalized or None, None]
+
+
+def _hit_to_rerank_candidate(hit: Any, *, retrieval_key: str) -> RerankCandidate:
+    entity = dict(hit.entity or {})
+    entity[RERANK_RETRIEVAL_KEY] = retrieval_key
+    content = str(entity.get("content") or "").strip()
+    display_text = str(entity.get("display_text") or "").strip()
+    chunk_id = str(entity.get("chunk_id") or hit.id or "")
+    vector_score = float(getattr(hit, "score", 0.0) or 0.0)
+    return RerankCandidate(
+        chunk_id=chunk_id,
+        text=display_text or content,
+        distance=1.0 - vector_score,
+        metadata=entity,
+        vector_score=vector_score,
+        mode=str(entity.get("mode") or ""),
+        chunk_type=_chunk_type_for_hit(hit),
+        original_external_id=_original_external_id_for_hit(hit),
+        source_key=str(entity.get("source_key") or ""),
+        content=content,
+        display_text=display_text,
+    )
+
+
+def _chunk_type_for_hit(hit: Any) -> str:
+    chunk_type = str(hit.entity.get("chunk_type") or "").strip()
+    return chunk_type if chunk_type in CHUNK_TYPES else "turn_pair"
+
+
+def _original_external_id_for_hit(hit: Any) -> str:
+    return str(hit.entity.get("original_external_id") or hit.entity.get("external_id") or hit.id or "")
+
+
+def _quota_for_state(state: AgentState, mode: str, limit: int) -> dict[str, int]:
+    query = str(state.get("normalized_text") or state.get("user_text") or "")
+    if any(pattern in query for pattern in CONTINUATION_PATTERNS):
+        return {"session_sketch": 1, "process_segment": 1, "turn_pair": max(limit - 2, 0)}
+    return {"process_segment": 1, "turn_pair": max(limit - 1, 0)}
+
+
+def _select_hits_by_quota(hits: list[Any], *, state: AgentState, mode: str, limit: int) -> list[Any]:
+    quota = _quota_for_state(state, mode, limit)
+    selected: list[Any] = []
+    used_by_type = {chunk_type: 0 for chunk_type in quota}
+    used_sources: dict[str, int] = {}
+
+    for desired_type in quota:
+        for hit in hits:
+            if hit in selected:
+                continue
+            chunk_type = _chunk_type_for_hit(hit)
+            if chunk_type != desired_type:
+                continue
+            if used_by_type[desired_type] >= quota[desired_type]:
+                continue
+            original_external_id = _original_external_id_for_hit(hit)
+            if used_sources.get(original_external_id, 0) >= 2:
+                continue
+            selected.append(hit)
+            used_by_type[desired_type] += 1
+            used_sources[original_external_id] = used_sources.get(original_external_id, 0) + 1
+            if len(selected) >= limit:
+                return selected
+
+    for hit in hits:
+        if hit in selected:
+            continue
+        original_external_id = _original_external_id_for_hit(hit)
+        if used_sources.get(original_external_id, 0) >= 2:
+            continue
+        selected.append(hit)
+        used_sources[original_external_id] = used_sources.get(original_external_id, 0) + 1
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 RAG_ALLOWED_PRIORITIES = {"P2_support", "P3_bridge_boundary"}
@@ -207,6 +450,7 @@ RAG_BLOCKED_CATEGORIES = {
     "clinical_red_flag",
     "dependency_risk",
     "diagnosis_or_medical_request",
+    "privacy_boundary",
     "prompt_attack",
     "dangerous_request",
 }

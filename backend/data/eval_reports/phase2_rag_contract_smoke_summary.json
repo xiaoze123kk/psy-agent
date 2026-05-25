@@ -1,0 +1,10 @@
+{
+  "total": 12,
+  "generated": 12,
+  "failed": 0,
+  "rag_used": 1,
+  "blocked_context_failures": 0,
+  "validator_blocked": 3,
+  "elapsed_seconds": 164.68,
+  "output": "E:\\心理咨询agent\\backend\\data\\eval_reports\\phase2_rag_contract_smoke_answers.jsonl"
+}

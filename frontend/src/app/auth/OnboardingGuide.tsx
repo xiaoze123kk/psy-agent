@@ -229,6 +229,7 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                             key={score}
                             className={draft[item.key as "moodScore" | "anxietyScore" | "energyScore" | "sleepQuality"] === score ? "is-active" : ""}
                             type="button"
+                            aria-pressed={draft[item.key as "moodScore" | "anxietyScore" | "energyScore" | "sleepQuality"] === score}
                             onClick={() => updateDraft(item.key as "moodScore" | "anxietyScore" | "energyScore" | "sleepQuality", score)}
                           >
                             {score}

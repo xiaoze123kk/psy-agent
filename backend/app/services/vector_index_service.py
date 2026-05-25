@@ -76,7 +76,7 @@ async def index_knowledge_chunks(
     for index in range(0, len(rows), batch_size):
         batch = rows[index : index + batch_size]
         texts = [chunk.content for chunk, _ in batch]
-        vectors = await embedding_client.embed_texts(texts)
+        vectors = await embedding_client.embed_documents(texts)
         if vectors is None:
             skipped += len(batch)
             continue
@@ -123,7 +123,7 @@ async def index_counseling_chunks(
     for index in range(0, len(chunks), batch_size):
         batch = chunks[index : index + batch_size]
         texts = [chunk.content for chunk in batch]
-        vectors = await embedding_client.embed_texts(texts)
+        vectors = await embedding_client.embed_documents(texts)
         if vectors is None:
             skipped += len(batch)
             continue

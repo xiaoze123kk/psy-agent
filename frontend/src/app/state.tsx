@@ -130,7 +130,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       ageRange,
       currentUser,
       memoryMode,
-      privacySettings,
       setMemoryMode,
       setThemeMode,
       setUserMode,

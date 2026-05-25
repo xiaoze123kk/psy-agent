@@ -6,10 +6,8 @@ info:
     心理咨询 Agent 后端接口文档。
 
     本文档覆盖 Sprint 1 闭环接口、Sprint 2 自助支持闭环，以及 Sprint 3 MVP 收口增量：
-    鉴权、文本对话、记忆管理、情绪记录、情绪趋势、每周小结、安全资源、危机事件、知识搜索、知识详情、知识问答、测试中心、语音 MVP 与用户反馈。
 
     以下脚手架或后续 Sprint 占位能力不纳入本次正式契约：
-    真 ASR/TTS/WebRTC、动漫人物测试 Beta、完整 RAG。
 servers:
   - url: http://localhost:8000
     description: 本地开发环境
@@ -36,8 +34,6 @@ tags:
     description: 知识库搜索、详情和结构化问答
   - name: tests
     description: 测试列表、答题、结果和历史记录
-  - name: voice
-    description: Sprint 3 文本模拟语音 MVP
   - name: feedback
     description: 内容评分和用户反馈
 paths:
@@ -156,10 +152,6 @@ paths:
                 user_mode: adult
                 memory_mode: summary_only
                 companion_style: gentle
-                voice_enabled: false
-                save_voice_audio: false
-                save_transcript: true
-
   /api/v1/me/settings:
     patch:
       tags: [user]
@@ -176,9 +168,6 @@ paths:
             example:
               memory_mode: long_term
               companion_style: gentle
-              voice_enabled: false
-              save_voice_audio: false
-              save_transcript: true
       responses:
         "200":
           description: 设置更新结果
@@ -723,58 +712,6 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /api/v1/voice/sessions:
-    post:
-      tags: [voice]
-      summary: 创建语音 MVP 会话
-      operationId: createVoiceSession
-      description: |
-        Sprint 3 文本模拟语音 MVP。该接口只创建语音会话协议上下文，
-        后续通过 WebSocket 传递文本模拟转写、状态事件和 AI 回复事件；
-        不代表真实 ASR/TTS/WebRTC 已接入。
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateVoiceSessionRequest"
-            example:
-              thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
-              mode: companion
-              save_transcript: true
-      responses:
-        "200":
-          description: 语音 MVP 会话创建成功
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CreateVoiceSessionResponse"
-              example:
-                voice_session_id: demo-voice-session
-                thread_id: 0f8fad5b-d9cb-469f-a165-70867728950e
-                ws_url: /api/v1/voice/sessions/demo-voice-session/ws
-                protocol: text-simulated-voice-v1
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
-  /api/v1/voice/sessions/{voice_session_id}/ws:
-    x-websocket: true
-    x-protocol: text-simulated-voice-v1
-    parameters:
-      - in: path
-        name: voice_session_id
-        required: true
-        schema:
-          type: string
-    description: |
-      WebSocket 通道。客户端发送 `user_text`、`interrupt`、`end_session`；
-      服务端发送 `session_ready`、`listening`、`transcript`、`assistant_delta`、
-      `assistant_final`、`session_ended`、`error`。高风险文本必须复用统一安全分流。
-
   /api/v1/feedback:
     post:
       tags: [feedback]
@@ -1185,7 +1122,6 @@ components:
       type: string
       enum:
         - text
-        - voice
         - test
         - system
 
@@ -1329,12 +1265,6 @@ components:
           $ref: "#/components/schemas/MemoryMode"
         companion_style:
           type: string
-        voice_enabled:
-          type: boolean
-        save_voice_audio:
-          type: boolean
-        save_transcript:
-          type: boolean
       required:
         - user_id
         - username
@@ -1345,9 +1275,6 @@ components:
         - onboarding_completed
         - memory_mode
         - companion_style
-        - voice_enabled
-        - save_voice_audio
-        - save_transcript
 
     UserSettingsUpdateRequest:
       type: object
@@ -1356,12 +1283,6 @@ components:
           $ref: "#/components/schemas/MemoryMode"
         companion_style:
           type: string
-        voice_enabled:
-          type: boolean
-        save_voice_audio:
-          type: boolean
-        save_transcript:
-          type: boolean
       additionalProperties: false
 
     UserSettingsResponse:
@@ -1369,20 +1290,8 @@ components:
       properties:
         memory_mode:
           $ref: "#/components/schemas/MemoryMode"
-        companion_style:
-          type: string
-        voice_enabled:
-          type: boolean
-        save_voice_audio:
-          type: boolean
-        save_transcript:
-          type: boolean
       required:
         - memory_mode
-        - companion_style
-        - voice_enabled
-        - save_voice_audio
-        - save_transcript
 
     PrivacyDataScope:
       type: string
@@ -1391,7 +1300,6 @@ components:
         - chat
         - moods
         - feedback
-        - voice
         - all_non_account
 
     PrivacySettingsSnapshot:
@@ -1401,18 +1309,9 @@ components:
           $ref: "#/components/schemas/MemoryMode"
         companion_style:
           type: string
-        voice_enabled:
-          type: boolean
-        save_voice_audio:
-          type: boolean
-        save_transcript:
-          type: boolean
       required:
         - memory_mode
         - companion_style
-        - voice_enabled
-        - save_voice_audio
-        - save_transcript
 
     PrivacyDataCounts:
       type: object
@@ -1429,8 +1328,6 @@ components:
           type: integer
         feedback:
           type: integer
-        voice_sessions:
-          type: integer
         risk_events:
           type: integer
       required:
@@ -1440,7 +1337,6 @@ components:
         - mood_logs
         - test_history
         - feedback
-        - voice_sessions
         - risk_events
 
     PrivacySummaryResponse:
@@ -1899,60 +1795,6 @@ components:
         - top_tags
         - suggested_actions
         - generated_by
-
-    CreateVoiceSessionRequest:
-      type: object
-      properties:
-        thread_id:
-          type: string
-          nullable: true
-        mode:
-          $ref: "#/components/schemas/ThreadMode"
-          default: companion
-        save_transcript:
-          type: boolean
-          default: true
-      additionalProperties: false
-
-    CreateVoiceSessionResponse:
-      type: object
-      properties:
-        voice_session_id:
-          type: string
-        thread_id:
-          type: string
-        ws_url:
-          type: string
-        protocol:
-          type: string
-          enum:
-            - text-simulated-voice-v1
-      required:
-        - voice_session_id
-        - thread_id
-        - ws_url
-        - protocol
-
-    VoiceSessionWebSocketEvent:
-      type: object
-      description: |
-        WebSocket 事件包。客户端事件 type 包括 user_text、interrupt、end_session；
-        服务端事件 type 包括 session_ready、listening、transcript、assistant_delta、assistant_final、session_ended、error。
-      properties:
-        type:
-          type: string
-        text:
-          type: string
-        client_event_id:
-          type: string
-        risk_level:
-          $ref: "#/components/schemas/RiskLevel"
-        suggested_actions:
-          type: array
-          items:
-            type: string
-      required:
-        - type
 
     FeedbackTargetType:
       type: string

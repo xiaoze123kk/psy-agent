@@ -1,0 +1,764 @@
+from __future__ import annotations
+
+import os
+import unittest
+from unittest.mock import patch
+
+from app.services.search_service import SearchResult, _current_fact_source_search, _generic_anchor_results, _http_get_with_retries, _plain_text_search_summary, _raw_items_to_results, search_web
+
+
+os.environ["SEARCH_PROVIDER"] = "ddg"
+
+
+_SEARCH_RESULT_MISSING_URL = {
+    "title": "Missing URL",
+    "href": "",
+    "body": "This result has no URL and should be filtered out.",
+}
+_SEARCH_RESULT_FULL = {
+    "title": "  心理援助热线  ",
+    "href": "https://example.com/hotline",
+    "body": "  全国心理援助热线：400-161-9995。提供 24 小时免费心理咨询。  ",
+}
+_SEARCH_RESULT_NEARLY_EMPTY = {
+    "title": "",
+    "href": "https://empty.example.com",
+    "body": "",
+}
+_SEARCH_RESULT_ELLIPSIS = {
+    "title": "...心理援助",
+    "href": "https://example.com/ellipsis",
+    "body": "全国心理援助热线：400-161-9995...",
+}
+_SEARCH_RESULT_HTML_ENTITY = {
+    "title": "心理&amp;援助",
+    "href": "https://example.com/entity",
+    "body": "热线电话 &amp; 在线咨询 心理健康服务",
+}
+_SEARCH_RESULT_LONG_ZH = {
+    "title": "心理援助热线",
+    "href": "https://example.com/long",
+    "body": "全国心理援助热线是为公众提供专业心理支持的公益服务。当您感到焦虑、抑郁或需要倾诉时，可以随时拨打热线电话获得帮助。经过专业培训的咨询师会倾听您的困扰，并提供有效的支持和建议。",
+}
+_SEARCH_RESULT_DUPLICATE_CONTENT = {
+    "title": "Another Source for Hotline",
+    "href": "https://other.example.com/hotline-dup",
+    "body": "全国心理援助热线 400-161-9995，24小时免费咨询。",
+}
+
+
+class SearchServiceCleaningTests(unittest.TestCase):
+    def test_removes_leading_trailing_ellipsis(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_ELLIPSIS],
+        ):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "心理援助")
+        self.assertFalse(results[0].snippet.endswith("..."))
+
+    def test_removes_html_entities(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_HTML_ENTITY],
+        ):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "心理&援助")
+        self.assertNotIn("&amp;", results[0].snippet)
+
+    def test_empty_query_returns_empty(self) -> None:
+        with patch("app.services.search_service._ddg_text", return_value=[]):
+            results, _ = search_web("   ", max_results=3)
+
+        self.assertEqual(results, [])
+
+    def test_filters_empty_titles_and_snippets(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_NEARLY_EMPTY, _SEARCH_RESULT_FULL],
+        ):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "心理援助热线")
+
+    def test_filters_results_without_url(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_MISSING_URL, _SEARCH_RESULT_FULL],
+        ):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://example.com/hotline")
+
+
+class SearchServiceDedupTests(unittest.TestCase):
+    def test_deduplicates_by_url(self) -> None:
+        same_url_results = [
+            {"title": "A", "href": "https://x.com/same", "body": "Content A with more words for testing."},
+            {"title": "B", "href": "https://x.com/same", "body": "Content B with more words for testing."},
+        ]
+        with patch("app.services.search_service._ddg_text", return_value=same_url_results):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 1)
+
+    def test_deduplicates_by_snippet_similarity(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_FULL, _SEARCH_RESULT_DUPLICATE_CONTENT],
+        ):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://example.com/hotline")
+
+    def test_keeps_different_content_same_domain(self) -> None:
+        different = [
+            {
+                "title": "Hotline A",
+                "href": "https://x.com/page1",
+                "body": "北京心理援助热线：010-82951332 提供24小时服务。",
+            },
+            {
+                "title": "Hotline B",
+                "href": "https://x.com/page2",
+                "body": "上海心理援助热线：021-12320 提供服务支持。",
+            },
+        ]
+        with patch("app.services.search_service._ddg_text", return_value=different):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 2)
+
+
+class SearchServiceTruncationTests(unittest.TestCase):
+    def test_truncates_at_word_boundary_for_ascii(self) -> None:
+        long_body = "This is a test sentence. " * 30
+        raw = [{"title": "T", "href": "https://x.com", "body": long_body}]
+
+        with patch("app.services.search_service._ddg_text", return_value=raw):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        snippet = results[0].snippet
+        self.assertLessEqual(len(snippet), 300)
+        if len(snippet) < len(long_body):
+            self.assertFalse(snippet[-1].isalnum())
+
+    def test_truncates_at_cjk_friendly_boundary(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_LONG_ZH],
+        ):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        snippet = results[0].snippet
+        self.assertLessEqual(len(snippet), 300)
+        last_char = snippet[-1]
+        if len(snippet) < 280 and last_char.isascii():
+            self.assertIn(last_char, {" ", ".", "!", "?", ",", ":", ";", "\n"})
+
+    def test_short_content_not_truncated(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[_SEARCH_RESULT_FULL],
+        ):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("400-161-9995", results[0].snippet)
+        self.assertTrue(results[0].snippet.startswith("全国心理援助热线"))
+
+    def test_respects_max_results_after_dedup(self) -> None:
+        raw_results = []
+        bodies = [
+            "北京24小时心理援助热线电话提供专业咨询服务",
+            "上海心理健康服务中心提供面对面咨询支持",
+            "广州心理咨询预约平台可在线预约咨询师",
+            "深圳危机干预中心提供紧急心理援助服务",
+            "成都心理支持热线为市民提供免费咨询",
+            "杭州心理健康教育基地开展公益心理讲座",
+            "武汉心理援助平台整合全市咨询资源信息",
+            "南京心理咨询中心提供专业的心理评估",
+        ]
+        for i in range(8):
+            raw_results.append({
+                "title": f"Result {i}",
+                "href": f"https://example.com/{i}",
+                "body": bodies[i],
+            })
+
+        with patch("app.services.search_service._ddg_text", return_value=raw_results):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 3)
+
+
+class SearchServiceScoringTests(unittest.TestCase):
+    def test_search_result_has_score_field(self) -> None:
+        sr = SearchResult(title="T", url="https://x.com", snippet="S")
+        self.assertEqual(sr.score, 0)
+        sr2 = SearchResult(title="T", url="https://x.com", snippet="S", score=105)
+        self.assertEqual(sr2.score, 105)
+
+    def test_gov_domain_scores_higher_than_random(self) -> None:
+        gov = {"title": "国家卫健委", "href": "https://www.nhc.gov.cn/health", "body": "国家卫生健康委员会心理援助热线资源汇总查询。"}
+        random = {"title": "某博客", "href": "https://blog.example.com/hotline", "body": "个人博客分享心理援助热线使用经验。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, gov]):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        # gov should be first because it scores much higher
+        self.assertIn("nhc.gov.cn", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_edu_domain_scores_higher_than_random(self) -> None:
+        edu = {"title": "北大心理系", "href": "https://www.psych.pku.edu.cn/counseling", "body": "北京大学心理学系提供专业心理咨询服务介绍。"}
+        random = {"title": "某论坛", "href": "https://bbs.example.com/thread/123", "body": "论坛用户分享个人心理咨询经验与感受。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, edu]):
+            results, _ = search_web("心理咨询", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertIn("pku.edu.cn", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_baike_scores_higher_than_random(self) -> None:
+        baike = {"title": "心理援助热线", "href": "https://baike.baidu.com/item/心理援助热线", "body": "心理援助热线是由专业机构设立的公益服务电话。"}
+        random = {"title": "随便说说", "href": "https://random.example.com/hotline", "body": "我觉得心理援助热线还挺有用的分享一些经验。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[random, baike]):
+            results, _ = search_web("心理援助热线", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertIn("baike.baidu.com", results[0].url)
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_https_scores_higher_than_http(self) -> None:
+        https = {"title": "安全页面", "href": "https://secure.example.com/hotline", "body": "安全的心理援助资源信息页面。"}
+        http = {"title": "非安全页面", "href": "http://insecure.example.com/hotline", "body": "非安全的心理援助资源介绍。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[http, https]):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertGreater(results[0].score, results[1].score)
+        self.assertTrue(results[0].url.startswith("https://"))
+
+    def test_shallow_path_scores_higher_than_deep(self) -> None:
+        shallow = {"title": "心理健康主页", "href": "https://example.com/mental-health", "body": "心理健康服务介绍页面提供咨询。"}
+        deep = {"title": "论坛帖子", "href": "https://example.com/forum/thread/999/page/3", "body": "论坛心理健康讨论帖子分享。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[deep, shallow]):
+            results, _ = search_web("心理健康", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].url, "https://example.com/mental-health")
+        self.assertGreater(results[0].score, results[1].score)
+
+    def test_authority_title_scores_higher(self) -> None:
+        authority = {"title": "北京心理援助中心官方热线", "href": "https://example.com/a", "body": "北京心理援助中心提供专业心理咨询服务。"}
+        generic = {"title": "聊聊心理援助", "href": "https://example.com/b", "body": "分享心理援助服务的个人使用心得。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[generic, authority]):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertGreater(results[0].score, results[1].score)
+        self.assertIn("北京", results[0].title)
+
+    def test_respects_max_results_after_sorting(self) -> None:
+        items = []
+        for i in range(6):
+            items.append({
+                "title": f"Result {i}",
+                "href": f"https://x{i}.com/page",
+                "body": f"内容 {i} 心理援助信息。",
+            })
+
+        with patch("app.services.search_service._ddg_text", return_value=items):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 3)
+
+    def test_score_preserved_on_result(self) -> None:
+        raw = [{"title": "T", "href": "https://example.com", "body": "心理援助热线电话提供咨询服务。"}]
+
+        with patch("app.services.search_service._ddg_text", return_value=raw):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0].score, int)
+
+
+class SearchServiceLowInfoFilterTests(unittest.TestCase):
+    def test_filters_out_short_snippet(self) -> None:
+        short = {"title": "测试", "href": "https://x.com", "body": "短"}
+        good = {"title": "完整信息", "href": "https://x.com/2", "body": "这是一条完整的心理援助热线信息内容。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[short, good]):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://x.com/2")
+
+    def test_filters_out_click_to_read_more(self) -> None:
+        boilerplate = {"title": "某文章", "href": "https://x.com/click", "body": "点击阅读更多内容查看更多详情。"}
+        good = {"title": "热线信息", "href": "https://x.com/2", "body": "北京心理援助热线提供24小时免费心理咨询服务。"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[boilerplate, good]):
+            results, _ = search_web("心理援助", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://x.com/2")
+
+    def test_keeps_low_cjk_but_high_latin_info(self) -> None:
+        latin = {
+            "title": "APA Guidelines",
+            "href": "https://apa.org/guidelines",
+            "body": "The American Psychological Association provides evidence-based guidelines for mental health professionals working with diverse populations.",
+        }
+
+        with patch("app.services.search_service._ddg_text", return_value=[latin]):
+            results, _ = search_web("psychological guidelines", max_results=3)
+
+        self.assertEqual(len(results), 1)
+
+    def test_filters_out_empty_cjk_latinsnippet(self) -> None:
+        empty = {"title": "Empty", "href": "https://x.com", "body": "a b c d"}
+
+        with patch("app.services.search_service._ddg_text", return_value=[empty]):
+            results, _ = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 0)
+
+
+class SearchServiceRelevanceTests(unittest.TestCase):
+    def test_filters_irrelevant_cjk_results_before_returning(self) -> None:
+        irrelevant = {
+            "title": "张（汉语汉字）_百度百科",
+            "href": "https://baike.baidu.com/item/张/31793",
+            "body": "形声字。从弓，长声。这里介绍汉字张的字义。",
+        }
+        relevant = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang-xuefeng",
+            "body": "张雪峰因心源性猝死抢救无效去世。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant, relevant]):
+            results, _ = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://example.com/zhang-xuefeng")
+
+    def test_time_sensitive_cjk_query_drops_all_irrelevant_results(self) -> None:
+        irrelevant = {
+            "title": "张（汉语汉字）_百度百科",
+            "href": "https://baike.baidu.com/item/张/31793",
+            "body": "形声字。从弓，长声。这里介绍汉字张的字义。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[],
+        ):
+            results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertEqual(results, [])
+
+    def test_time_sensitive_cjk_query_ignores_year_only_matches(self) -> None:
+        irrelevant = {
+            "title": "hancibao.comhttps://www.hancibao.com › zi",
+            "href": "https://www.hancibao.com/zi/5f20",
+            "body": "2026年5月13日 · 【张】字Unicode码为U+5F20，位于Unicode编码中日韩统一表意文字区。",
+        }
+        with patch("app.services.search_service._ddg_text", return_value=[irrelevant]), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[],
+        ):
+            results, _ = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertEqual(results, [])
+
+
+class SearchServiceSummaryExtractionTests(unittest.TestCase):
+    def test_extracts_date_rich_plaintext_summary(self) -> None:
+        html = """
+        <html><body>
+        <script>var q = "张雪峰 去世 时间";</script>
+        <section>
+        张雪峰于2026年3月24日15时50分因心源性猝死，经抢救无效在苏州去世。
+        </section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "张雪峰 去世 时间")
+
+        self.assertIn("2026年3月24日15时50分", summary)
+        self.assertIn("张雪峰", summary)
+
+    def test_time_query_summary_ignores_pages_without_dates(self) -> None:
+        html = """
+        <html><body>
+        <script>window.__sam_async=true;</script>
+        <nav>网页 图片 微信 视频 知乎 医疗</nav>
+        <section>张雪峰去世时间是什么? 推荐您搜索 张雪峰去世时间是什么。</section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "张雪峰去世时间是什么？")
+
+        self.assertEqual(summary, "")
+
+    def test_generic_anchor_results_filter_search_navigation_links(self) -> None:
+        html = """
+        <a href="https://www.sogou.com/aimode/search?query=x">AI</a>
+        <div>网页 图片 微信 视频 知乎 医疗</div>
+        <a href="https://www.spp.gov.cn/spp/zdgz/202605/t20260511.html">外交部介绍美国总统特朗普访华安排</a>
+        <p>新华社北京5月11日电，应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。</p>
+        """
+
+        results = _generic_anchor_results(html, max_results=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["href"], "https://www.spp.gov.cn/spp/zdgz/202605/t20260511.html")
+        self.assertIn("5月13日至15日", results[0]["body"])
+
+    def test_time_query_summary_keeps_event_date_inside_snippet_budget(self) -> None:
+        html = """
+        <html><body>
+        <section>
+        推荐您搜索 聚焦_美国总统 特朗普 对中国进行 国事访问 _新闻频道_央视网。
+        应国家主席习近平邀请，美国总统特朗普8日下午抵达北京，开始对中国进行国事访问。
+        这是特朗普今年初就任美国总统以来首次访华，也是中方接待的重要外事活动。
+        央视网 http://news.cctv.com/s... 2026-05-08 推荐您搜索
+        外交部介绍美国总统特朗普访华安排和中方期待_中华人民共和国最高人民检察院。
+        新华社北京5月11日电（记者万倩仪、冯歆然） 应国家主席习近平邀请，美国总统特朗普将于2026年5月13日至15日对中国进行国事访问。
+        </section>
+        </body></html>
+        """
+
+        summary = _plain_text_search_summary(html, "特朗普 访华 2026 国事访问 外交部")
+
+        self.assertIn("2026年5月13日至15日", summary)
+        self.assertLess(summary.index("2026年5月13日至15日"), 260)
+
+    def test_time_query_result_truncation_keeps_event_date(self) -> None:
+        body = (
+            "推荐您搜索 聚焦_美国总统 特朗普 对中国进行 国事访问 _新闻频道_央视网。"
+            + ("旧报道内容" * 40)
+            + " 外交部介绍美国总统特朗普访华安排和中方期待。"
+            + "新华社北京5月11日电（记者万倩仪、冯歆然） 应国家主席习近平邀请，"
+            + "美国总统特朗普将于2026年5月13日至15日对中国进行国事访问。"
+        )
+
+        results = _raw_items_to_results(
+            [
+                {
+                    "title": "特朗普 访华 2026 国事访问 外交部 - 搜索摘要",
+                    "href": "https://www.sogou.com/web?query=x",
+                    "body": body,
+                }
+            ],
+            3,
+            query="特朗普 访华 2026 国事访问 外交部",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
+    def test_time_query_result_adds_query_year_to_yearless_date_range(self) -> None:
+        results = _raw_items_to_results(
+            [
+                {
+                    "title": "特朗普 访华 2026 国事访问 外交部 - 搜索摘要",
+                    "href": "https://www.sogou.com/web?query=x",
+                    "body": "根据外交部5月11日通报，应中方邀请，此次国事访问时间为5月13日至15日。发布日期为2026年5月18日。",
+                }
+            ],
+            3,
+            query="特朗普 访华 2026 国事访问 外交部",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
+
+class SearchServiceErrorTests(unittest.TestCase):
+    def test_http_search_requests_do_not_inherit_environment_proxy(self) -> None:
+        class FakeResponse:
+            text = "<html></html>"
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service.httpx.get", return_value=FakeResponse()) as http_get:
+            _http_get_with_retries("https://www.sogou.com/web", params={"query": "x"}, timeout_seconds=1)
+
+        self.assertEqual(http_get.call_args.kwargs["trust_env"], False)
+
+    def test_http_search_retries_https_with_verify_false(self) -> None:
+        class FakeResponse:
+            text = "<html></html>"
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+        calls: list[bool] = []
+
+        def fake_get(*args, **kwargs):
+            calls.append(bool(kwargs.get("verify", True)))
+            if kwargs.get("verify", True):
+                raise OSError("tls failed")
+            return FakeResponse()
+
+        with patch("app.services.search_service.httpx.get", side_effect=fake_get):
+            response = _http_get_with_retries("https://www.bing.com/search", params={"q": "x"}, timeout_seconds=1)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [True, True, False])
+
+    def test_search_web_records_diagnostics_with_module_logger(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
+        ), self.assertLogs("app.services.search_service", level="DEBUG") as logs:
+            results, err = search_web("test", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(err)
+        log_text = "\n".join(logs.output)
+        self.assertIn("Search started", log_text)
+        self.assertIn("provider=ddg", log_text)
+        self.assertIn("result_count=1", log_text)
+        self.assertNotIn("debug_search.log", log_text)
+
+    def test_bing_web_falls_back_to_ddg_when_primary_fails(self) -> None:
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "Fallback", "href": "https://x.com", "body": "Fallback content body."}],
+        ):
+            results, err = search_web("crisis hotline", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Fallback")
+
+    def test_chinese_query_uses_sogou_before_baidu_or_ddg(self) -> None:
+        sogou_item = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang",
+            "body": "张雪峰于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._sogou_web_search",
+            return_value=[sogou_item],
+        ), patch("app.services.search_service._baidu_mobile_search") as baidu, patch("app.services.search_service._ddg_text") as ddg:
+            results, err = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        baidu.assert_not_called()
+        ddg.assert_not_called()
+
+    def test_chinese_query_falls_through_to_baidu_when_sogou_is_empty(self) -> None:
+        baidu_item = {
+            "title": "张雪峰去世",
+            "href": "https://example.com/zhang",
+            "body": "张雪峰于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._bing_web_search",
+            side_effect=Exception("tls handshake failed"),
+        ), patch(
+            "app.services.search_service._sogou_web_search",
+            return_value=[],
+        ), patch(
+            "app.services.search_service._baidu_mobile_search",
+            return_value=[baidu_item],
+        ), patch("app.services.search_service._ddg_text") as ddg:
+            results, err = search_web("张雪峰 去世 时间", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        ddg.assert_not_called()
+
+    def test_search_web_uses_current_fact_source_probe_after_empty_providers(self) -> None:
+        source_item = {
+            "title": "美国总统特朗普将对中国进行国事访问",
+            "href": "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml",
+            "body": "应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._raw_search_with_timeout",
+            return_value=[],
+        ), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ):
+            results, err = search_web("特朗普 访华 2026 国事访问 外交部", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年5月13日至15日", results[0].snippet)
+
+    def test_search_web_prefers_current_fact_source_probe_for_known_time_query(self) -> None:
+        provider_item = {
+            "title": "张雪峰去世时间是什么？ 最新 2026 讣告 - 搜索摘要",
+            "href": "http://m.baidu.com/s?word=x",
+            "body": "具体时间：张雪峰的去世时间为2026年3月24日。",
+        }
+        source_item = {
+            "title": "张雪峰去世 高中同学缅怀：他曾是体育委员 痛惜不已 - 神州学人网",
+            "href": "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html",
+            "body": "张雪峰因心源性猝死全力抢救无效，于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._raw_search_with_timeout",
+            return_value=[provider_item],
+        ), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ):
+            results, err = search_web("张雪峰去世时间是什么？ 最新 2026 讣告", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+
+    def test_search_web_short_circuits_known_current_fact_before_public_search(self) -> None:
+        source_item = {
+            "title": "张雪峰去世 高中同学缅怀：他曾是体育委员 痛惜不已 - 神州学人网",
+            "href": "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html",
+            "body": "张雪峰因心源性猝死全力抢救无效，于2026年3月24日15时50分在苏州逝世。",
+        }
+        with patch.dict(os.environ, {"SEARCH_PROVIDER": "bing_web"}), patch(
+            "app.services.search_service._current_fact_source_search",
+            return_value=[source_item],
+        ) as source_search, patch(
+            "app.services.search_service._raw_search_with_timeout",
+            side_effect=AssertionError("public search should not run when direct source is available"),
+        ) as public_search:
+            results, err = search_web("张雪峰去世时间是什么？", max_results=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(len(results), 1)
+        self.assertIn("chisa.edu.cn", results[0].url)
+        self.assertIn("2026年3月24日15时50分", results[0].snippet)
+        source_search.assert_called_once()
+        public_search.assert_not_called()
+
+    def test_current_fact_source_probe_extracts_direct_source_summary(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("特朗普 访华 2026 国事访问 外交部", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("特朗普", items[0]["title"])
+        self.assertIn("5月13日至15日", items[0]["body"])
+
+    def test_current_fact_source_probe_supports_no_year_known_query(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="应国家主席习近平邀请，美国总统特朗普将于5月13日至15日对中国进行国事访问。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "https://news.cctv.com/2026/05/11/ARTIgIZRwuDymw7gaEi5DYW2260511.shtml"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("特朗普访华是什么时候？", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("特朗普", items[0]["title"])
+        self.assertIn("2026年5月13日至15日", items[0]["body"])
+
+    def test_current_fact_source_probe_infers_year_from_compact_source_url(self) -> None:
+        class FakeResponse:
+            text = """
+            <html><head>
+            <meta name="description" content="张雪峰因心源性猝死全力抢救无效，于3月24日15时50分在苏州逝世。">
+            </head><body></body></html>
+            """
+            status_code = 200
+            url = "http://www.chisa.edu.cn/general/202603/t20260325_2111458613.html"
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with patch("app.services.search_service._http_get_with_retries", return_value=FakeResponse()):
+            items = _current_fact_source_search("张雪峰去世时间是什么？", max_results=1, timeout_seconds=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("2026年3月24日15时50分", items[0]["body"])
+
+    def test_network_error_returns_empty_and_error_message(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            side_effect=Exception("network timeout"),
+        ):
+            results, err = search_web("crisis hotline", max_results=3)
+        self.assertEqual(results, [])
+        self.assertEqual(err, "network_error")
+
+    def test_timeout_returns_empty_and_error_message(self) -> None:
+        import time
+
+        def slow_search(*args, **kwargs):
+            time.sleep(10)
+            return []
+
+        with patch("app.services.search_service._ddg_text", side_effect=slow_search):
+            results, err = search_web("test", max_results=3, timeout_seconds=0.1)
+        self.assertEqual(results, [])
+        self.assertEqual(err, "timeout")
+
+    def test_success_returns_no_error(self) -> None:
+        with patch(
+            "app.services.search_service._ddg_text",
+            return_value=[{"title": "X", "href": "https://x.com", "body": "Content body text here."}],
+        ):
+            results, err = search_web("test", max_results=3)
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(err)
+
+    def test_empty_query_returns_no_error(self) -> None:
+        results, err = search_web("   ", max_results=3)
+        self.assertEqual(results, [])
+        self.assertIsNone(err)
+
+
+if __name__ == "__main__":
+    unittest.main()

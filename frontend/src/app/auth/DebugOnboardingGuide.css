@@ -351,6 +351,14 @@
   border-radius: 8px;
 }
 
+.debug-guide__scores button.is-active {
+  border-color: #3a5a4a;
+  background: rgba(58, 90, 74, 0.16);
+  color: #2f4a3e;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(58, 90, 74, 0.28), 0 6px 14px rgba(58, 90, 74, 0.12);
+}
+
 .debug-guide__scores textarea {
   grid-column: 1 / -1;
   min-height: 64px;

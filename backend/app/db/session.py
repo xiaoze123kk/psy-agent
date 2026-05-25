@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,6 +16,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _apply_knowledge_beta_compat_migrations()
     _apply_user_settings_style_compat_migrations()
+    _apply_companion_styles_compat_migrations()
     if engine.dialect.name == "sqlite":
         _apply_sqlite_compat_migrations()
 
@@ -80,6 +81,87 @@ def _apply_user_settings_style_compat_migrations() -> None:
         )
 
 
+def _apply_companion_styles_compat_migrations() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        table_names = set(inspector.get_table_names())
+        if "user_settings" not in table_names or "companion_styles" not in table_names:
+            return
+
+        if engine.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO companion_styles (
+                        id,
+                        user_id,
+                        title,
+                        definition,
+                        is_default,
+                        sort_order,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        gen_random_uuid(),
+                        user_settings.user_id,
+                        '当前风格',
+                        LEFT(BTRIM(user_settings.companion_style), 500),
+                        TRUE,
+                        0,
+                        NOW(),
+                        NOW()
+                    FROM user_settings
+                    WHERE user_settings.companion_style IS NOT NULL
+                      AND BTRIM(user_settings.companion_style) <> ''
+                      AND user_settings.companion_style NOT IN ('gentle', 'rational', 'reflective', 'action')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM companion_styles
+                          WHERE companion_styles.user_id = user_settings.user_id
+                      )
+                    """
+                )
+            )
+            return
+
+        if engine.dialect.name == "sqlite":
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO companion_styles (
+                        id,
+                        user_id,
+                        title,
+                        definition,
+                        is_default,
+                        sort_order,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        lower(hex(randomblob(16))),
+                        user_settings.user_id,
+                        '当前风格',
+                        substr(trim(user_settings.companion_style), 1, 500),
+                        1,
+                        0,
+                        CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP
+                    FROM user_settings
+                    WHERE user_settings.companion_style IS NOT NULL
+                      AND trim(user_settings.companion_style) <> ''
+                      AND user_settings.companion_style NOT IN ('gentle', 'rational', 'reflective', 'action')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM companion_styles
+                          WHERE companion_styles.user_id = user_settings.user_id
+                      )
+                    """
+                )
+            )
+
+
 def _apply_sqlite_compat_migrations() -> None:
     """Keep local SQLite dev databases compatible with SQL-first migrations."""
     with engine.begin() as connection:
@@ -101,11 +183,6 @@ def _apply_sqlite_compat_migrations() -> None:
             )
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
 
-        if "user_settings" in inspector.get_table_names():
-            settings_columns = {column["name"] for column in inspector.get_columns("user_settings")}
-            if "save_transcript" not in settings_columns:
-                connection.execute(text("ALTER TABLE user_settings ADD COLUMN save_transcript BOOLEAN NOT NULL DEFAULT 1"))
-
         if "privacy_action_logs" in inspector.get_table_names():
             connection.execute(
                 text(
@@ -115,6 +192,21 @@ def _apply_sqlite_compat_migrations() -> None:
                     """
                 )
             )
+
+        if "user_profiles" in inspector.get_table_names():
+            profile_columns = {column["name"] for column in inspector.get_columns("user_profiles")}
+            if "security_question" not in profile_columns:
+                connection.execute(text("ALTER TABLE user_profiles ADD COLUMN security_question VARCHAR(200)"))
+            if "security_answer_hash" not in profile_columns:
+                connection.execute(text("ALTER TABLE user_profiles ADD COLUMN security_answer_hash TEXT"))
+
+        if "refresh_tokens" in inspector.get_table_names():
+            rt_columns = {column["name"] for column in inspector.get_columns("refresh_tokens")}
+            if "auto_login" not in rt_columns:
+                connection.execute(text("ALTER TABLE refresh_tokens ADD COLUMN auto_login BOOLEAN NOT NULL DEFAULT 0"))
+
+        if "token_version" not in user_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1"))
 
 
 def get_db_session():

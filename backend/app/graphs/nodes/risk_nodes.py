@@ -14,6 +14,33 @@ from app.services.deepseek_client import deepseek_client
 logger = logging.getLogger(__name__)
 
 Timeframe = Literal["none", "vague", "near_term"]
+RiskDomain = Literal[
+    "none",
+    "general_distress",
+    "self_harm",
+    "non_suicidal_self_injury",
+    "harm_to_others",
+    "victimization_or_coercion",
+    "medical_or_substance",
+    "acute_mental_state",
+]
+RiskExpressionType = Literal[
+    "none",
+    "idiom_or_slang",
+    "emotional_metaphor",
+    "severe_distress",
+    "severe_hopelessness",
+    "passive_death_wish",
+    "non_suicidal_self_injury_urge",
+    "self_harm_ideation",
+    "active_intent",
+    "plan_or_means",
+    "method_seeking",
+    "discussion_or_quote",
+]
+Subject = Literal["self", "third_party", "fictional", "abstract"]
+Literalness = Literal["metaphorical", "ambiguous", "literal"]
+RiskConfidence = Literal["low", "medium", "high"]
 
 
 class SemanticRiskSignals(TypedDict):
@@ -26,6 +53,12 @@ class SemanticRiskSignals(TypedDict):
     ambiguity: float
     discussion_context: bool
     third_party_context: bool
+    risk_domain: RiskDomain
+    risk_expression_type: RiskExpressionType
+    signal_family: list[str]
+    subject: Subject
+    literalness: Literalness
+    confidence: RiskConfidence
 
 
 RISK_KEYWORDS = {
@@ -82,6 +115,106 @@ RISK_KEYWORDS = {
         "cannot sleep",
         "stressed out",
         "overwhelmed",
+    ),
+}
+
+SIGNAL_FAMILY_TERMS = {
+    "death_language": (
+        "想死",
+        "自杀",
+        "结束生命",
+        "不想活",
+        "不想活了",
+        "不如死了",
+        "死了算了",
+        "去死",
+        "kill myself",
+        "end my life",
+        "want to die",
+        "better off dead",
+    ),
+    "disappear_language": (
+        "想消失",
+        "消失",
+        "不想醒来",
+        "不想再醒来",
+        "睡着不醒",
+        "不醒就好了",
+        "醒不过来",
+        "want to disappear",
+        "not wake up",
+    ),
+    "idiom_or_slang": (
+        "忙到想死",
+        "累到想死",
+        "忙死",
+        "累死",
+        "困死",
+        "烦死",
+        "笑死",
+        "急死",
+        "气死",
+        "饿死",
+        "热死",
+        "冷死",
+        "吓死",
+        "社死",
+        "要死了",
+        "要死",
+    ),
+    "self_injury_language": (
+        "伤害自己",
+        "弄疼自己",
+        "自残",
+        "割腕",
+        "hurt myself",
+        "self harm",
+        "self-harm",
+    ),
+    "hopelessness_language": (
+        "撑不下去",
+        "活不下去",
+        "没救",
+        "绝望",
+        "活着没意义",
+        "没有意义",
+        "不如死了",
+        "can't go on",
+        "hopeless",
+    ),
+    "method_seeking": (
+        "怎么自杀",
+        "怎么结束生命",
+        "如何自杀",
+        "如何结束生命",
+        "自杀会不痛",
+        "结束生命会不痛",
+        "怎么死",
+        "哪种方法",
+        "什么方法",
+        "无痛",
+        "最有效",
+        "how to kill myself",
+        "painless",
+        "method",
+    ),
+    "fictional_creative_context": (
+        "小说",
+        "角色",
+        "剧情",
+        "剧本",
+        "这段怎么写",
+        "怎么写",
+        "电影",
+        "故事",
+        "漫画",
+        "作品",
+        "创作",
+        "fiction",
+        "novel",
+        "character",
+        "story",
+        "screenplay",
     ),
 }
 
@@ -238,6 +371,75 @@ DIRECT_PERSONAL_RISK_TERMS = (
     "kill myself",
     "hurt myself",
 )
+NEGATED_PLAN_TERMS = (
+    "没有计划",
+    "没计划",
+    "没有具体计划",
+    "no plan",
+    "without a plan",
+)
+EMOTIONAL_METAPHOR_CONTEXT_TERMS = (
+    "想死想死",
+    "有一种",
+    "生活中",
+    "情绪",
+    "感受",
+    "像是",
+    "好像",
+    "仿佛",
+)
+PASSIVE_DEATH_WISH_TERMS = (
+    "不想醒来",
+    "不想再醒来",
+    "睡着不醒",
+    "不醒就好了",
+    "醒不过来",
+    "不如死了",
+    "不想活",
+    "不想活了",
+    "better off dead",
+    "not wake up",
+)
+ACTIVE_INTENT_PHRASES = (
+    "我打算自杀",
+    "我要自杀",
+    "我准备自杀",
+    "我打算结束生命",
+    "我要结束生命",
+    "我准备结束生命",
+    "我想马上结束生命",
+    "我想立刻结束生命",
+    "i want to kill myself tonight",
+    "i need to end my life",
+    "i am going to kill myself",
+)
+RISK_DOMAIN_VALUES = (
+    "none",
+    "general_distress",
+    "self_harm",
+    "non_suicidal_self_injury",
+    "harm_to_others",
+    "victimization_or_coercion",
+    "medical_or_substance",
+    "acute_mental_state",
+)
+RISK_EXPRESSION_TYPE_VALUES = (
+    "none",
+    "idiom_or_slang",
+    "emotional_metaphor",
+    "severe_distress",
+    "severe_hopelessness",
+    "passive_death_wish",
+    "non_suicidal_self_injury_urge",
+    "self_harm_ideation",
+    "active_intent",
+    "plan_or_means",
+    "method_seeking",
+    "discussion_or_quote",
+)
+SUBJECT_VALUES = ("self", "third_party", "fictional", "abstract")
+LITERALNESS_VALUES = ("metaphorical", "ambiguous", "literal")
+RISK_CONFIDENCE_VALUES = ("low", "medium", "high")
 
 
 def _unique(values: list[str] | tuple[str, ...]) -> list[str]:
@@ -248,6 +450,15 @@ def _unique(values: list[str] | tuple[str, ...]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def _signal_family_matches(lowered: str) -> tuple[list[str], dict[str, list[str]]]:
+    matches = {
+        family: matched_keywords(lowered, terms)
+        for family, terms in SIGNAL_FAMILY_TERMS.items()
+    }
+    families = [family for family, family_matches in matches.items() if family_matches]
+    return families, matches
 
 
 def _default_semantic_risk() -> SemanticRiskSignals:
@@ -261,6 +472,12 @@ def _default_semantic_risk() -> SemanticRiskSignals:
         "ambiguity": 0.0,
         "discussion_context": False,
         "third_party_context": False,
+        "risk_domain": "none",
+        "risk_expression_type": "none",
+        "signal_family": [],
+        "subject": "self",
+        "literalness": "literal",
+        "confidence": "low",
     }
 
 
@@ -304,6 +521,8 @@ def _keyword_stage(text: str) -> dict[str, object]:
 def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], list[str]]:
     lowered = (text or "").lower()
     signals = _default_semantic_risk()
+    signal_families, family_matches = _signal_family_matches(lowered)
+    signals["signal_family"] = signal_families
 
     suicide_matches = matched_keywords(lowered, RISK_KEYWORDS["suicide_terms"])
     l2_matches = matched_keywords(lowered, RISK_KEYWORDS["l2_keywords"])
@@ -311,24 +530,44 @@ def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], lis
     implicit_matches = matched_keywords(lowered, IMPLICIT_FAREWELL_TERMS)
     near_term_matches = matched_keywords(lowered, NEAR_TERM_TERMS)
     means_matches = matched_keywords(lowered, MEANS_TERMS)
-    plan_matches = matched_keywords(lowered, PLAN_DETAIL_TERMS)
+    raw_plan_matches = matched_keywords(lowered, PLAN_DETAIL_TERMS)
+    negated_plan = contains_any(lowered, NEGATED_PLAN_TERMS)
+    plan_matches = [] if negated_plan else raw_plan_matches
     intent_matches = matched_keywords(lowered, INTENT_TERMS)
     protective_matches = matched_keywords(lowered, PROTECTIVE_FACTOR_TERMS)
     academic_matches = matched_keywords(lowered, ACADEMIC_CONTEXT_TERMS)
     third_party_matches = matched_keywords(lowered, THIRD_PARTY_CONTEXT_TERMS)
+    fictional_matches = family_matches["fictional_creative_context"]
+    method_matches = family_matches["method_seeking"]
 
     direct_personal_risk = contains_any(lowered, DIRECT_PERSONAL_RISK_TERMS)
-    discussion_context = bool(academic_matches or third_party_matches)
-    non_personal_discussion = discussion_context and not direct_personal_risk
+    discussion_context = bool(academic_matches or third_party_matches or fictional_matches)
+    non_personal_discussion = bool((academic_matches or fictional_matches) and not direct_personal_risk)
     reason_codes: list[str] = []
     reasons: list[str] = []
 
+    if signal_families:
+        reason_codes.extend(signal_families)
+        for family in signal_families:
+            reasons.extend(family_matches[family][:2])
     if academic_matches:
         reason_codes.append("academic_context")
         reasons.extend(academic_matches[:2])
+    if fictional_matches:
+        reason_codes.append("fictional_creative_context")
+        reasons.extend(fictional_matches[:2])
     if third_party_matches:
         reason_codes.append("third_party_context")
         reasons.extend(third_party_matches[:2])
+
+    if fictional_matches:
+        signals["subject"] = "fictional"
+    elif third_party_matches:
+        signals["subject"] = "third_party"
+    elif academic_matches and not direct_personal_risk:
+        signals["subject"] = "abstract"
+    else:
+        signals["subject"] = "self"
 
     if non_personal_discussion:
         signals.update(
@@ -336,9 +575,46 @@ def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], lis
                 "ambiguity": 0.1,
                 "discussion_context": True,
                 "third_party_context": bool(third_party_matches),
+                "risk_domain": "none",
+                "risk_expression_type": "discussion_or_quote",
+                "literalness": "literal",
+                "confidence": "high",
             }
         )
         return signals, _unique(reason_codes), _unique(reasons)
+
+    has_death_language = bool(family_matches["death_language"] or suicide_matches)
+    has_disappear_language = bool(family_matches["disappear_language"])
+    has_self_injury_language = bool(family_matches["self_injury_language"])
+    has_hopelessness_language = bool(family_matches["hopelessness_language"])
+    has_method_seeking = bool(method_matches)
+    has_guardrail_signal = bool(method_matches or means_matches or plan_matches or intent_matches or raw_plan_matches)
+    has_idiom_or_slang = (
+        bool(family_matches["idiom_or_slang"])
+        and not suicide_matches
+        and not means_matches
+        and not plan_matches
+        and not intent_matches
+        and not raw_plan_matches
+    )
+    has_emotional_metaphor = (
+        has_death_language
+        and not suicide_matches
+        and not has_method_seeking
+        and not has_self_injury_language
+        and not means_matches
+        and not plan_matches
+        and not intent_matches
+        and not raw_plan_matches
+        and contains_any(lowered, EMOTIONAL_METAPHOR_CONTEXT_TERMS)
+    )
+
+    if has_death_language or has_disappear_language or has_self_injury_language or l2_matches or implicit_matches or has_method_seeking:
+        signals["ideation"] = True
+    if has_hopelessness_language and (l2_matches or suicide_matches or "不如死了" in lowered):
+        signals["ideation"] = True
+    if (has_idiom_or_slang or has_emotional_metaphor) and not has_guardrail_signal:
+        signals["ideation"] = False
 
     if suicide_matches:
         signals["ideation"] = True
@@ -353,6 +629,9 @@ def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], lis
         signals["plan"] = True
         reason_codes.append("implicit_farewell")
         reasons.extend(implicit_matches[:3])
+    if (has_idiom_or_slang or has_emotional_metaphor) and not has_guardrail_signal:
+        signals["ideation"] = False
+        signals["plan"] = False
     if intent_matches and signals["ideation"]:
         signals["intent"] = True
         reason_codes.append("intent_signal")
@@ -375,12 +654,131 @@ def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], lis
         signals["protective_factor"] = True
         reason_codes.append("protective_support_present")
         reasons.extend(protective_matches[:2])
+    elif negated_plan:
+        signals["protective_factor"] = True
+        reason_codes.append("protective_support_present")
+        reasons.extend(raw_plan_matches[:1] or ["没有计划"])
     if l1_matches and not signals["ideation"]:
         reason_codes.append("elevated_distress")
         reasons.extend(l1_matches[:3])
 
+    if has_method_seeking:
+        signals.update(
+            {
+                "ideation": True,
+                "risk_domain": "self_harm",
+                "risk_expression_type": "method_seeking",
+                "literalness": "literal",
+                "confidence": "high",
+            }
+        )
+    elif signals["ideation"] and (
+        signals["means"]
+        or bool(plan_matches and not implicit_matches)
+        or bool(raw_plan_matches and not negated_plan and not implicit_matches)
+    ):
+        signals.update(
+            {
+                "risk_domain": "self_harm",
+                "risk_expression_type": "plan_or_means",
+                "literalness": "literal",
+                "confidence": "high",
+            }
+        )
+    elif has_idiom_or_slang:
+        signals.update(
+            {
+                "risk_domain": "none",
+                "risk_expression_type": "idiom_or_slang",
+                "literalness": "metaphorical",
+                "confidence": "high",
+            }
+        )
+    elif has_emotional_metaphor:
+        signals.update(
+            {
+                "risk_domain": "general_distress",
+                "risk_expression_type": "emotional_metaphor",
+                "literalness": "metaphorical",
+                "confidence": "medium",
+            }
+        )
+    elif has_self_injury_language and not has_death_language and not suicide_matches:
+        signals.update(
+            {
+                "ideation": True,
+                "risk_domain": "non_suicidal_self_injury",
+                "risk_expression_type": "non_suicidal_self_injury_urge",
+                "literalness": "literal",
+                "confidence": "high",
+            }
+        )
+    elif signals["ideation"] and (
+        contains_any(lowered, ACTIVE_INTENT_PHRASES)
+        or (suicide_matches and intent_matches)
+        or (suicide_matches and signals["timeframe"] == "near_term" and not signals["protective_factor"])
+    ):
+        signals.update(
+            {
+                "intent": True,
+                "risk_domain": "self_harm",
+                "risk_expression_type": "active_intent",
+                "literalness": "literal",
+                "confidence": "high",
+            }
+        )
+    elif implicit_matches:
+        signals.update(
+            {
+                "risk_domain": "self_harm",
+                "risk_expression_type": "self_harm_ideation",
+                "literalness": "ambiguous",
+                "confidence": "medium",
+            }
+        )
+    elif signals["ideation"] and (has_disappear_language or contains_any(lowered, PASSIVE_DEATH_WISH_TERMS)):
+        signals.update(
+            {
+                "risk_domain": "self_harm",
+                "risk_expression_type": "passive_death_wish",
+                "literalness": "literal",
+                "confidence": "high" if signals["protective_factor"] else "medium",
+            }
+        )
+    elif signals["ideation"] and (has_death_language or suicide_matches):
+        signals.update(
+            {
+                "risk_domain": "self_harm",
+                "risk_expression_type": "self_harm_ideation",
+                "literalness": "literal",
+                "confidence": "medium",
+            }
+        )
+    elif has_hopelessness_language or (signals["ideation"] and l2_matches):
+        signals.update(
+            {
+                "risk_domain": "general_distress",
+                "risk_expression_type": "severe_hopelessness",
+                "literalness": "ambiguous",
+                "confidence": "medium",
+            }
+        )
+    elif l1_matches:
+        signals.update(
+            {
+                "risk_domain": "general_distress",
+                "risk_expression_type": "severe_distress",
+                "literalness": "literal",
+                "confidence": "medium",
+            }
+        )
+
     if implicit_matches and not suicide_matches and not l2_matches and not means_matches:
         signals["ambiguity"] = 0.62
+    elif has_emotional_metaphor:
+        signals["ambiguity"] = 0.45
+    elif has_idiom_or_slang:
+        signals["ambiguity"] = 0.1
     elif l2_matches and not suicide_matches and not means_matches:
         signals["ambiguity"] = 0.48
     elif signals["protective_factor"]:
@@ -398,16 +796,35 @@ def semantic_risk_assess(text: str) -> tuple[SemanticRiskSignals, list[str], lis
 
 
 def _level_from_signals(keyword_level: str, signals: SemanticRiskSignals, reason_codes: list[str]) -> str:
+    expression_type = str(signals.get("risk_expression_type") or "none")
+    if expression_type == "discussion_or_quote":
+        return "L0"
+    if keyword_level == "L3" and not signals["discussion_context"]:
+        return "L3"
+    if expression_type == "idiom_or_slang":
+        return "L0"
+    if expression_type in {"emotional_metaphor", "severe_distress"}:
+        return "L1"
+    if expression_type == "severe_hopelessness":
+        return "L2" if signals["ideation"] or keyword_level == "L2" else "L1"
+    if expression_type in {
+        "passive_death_wish",
+        "non_suicidal_self_injury_urge",
+        "self_harm_ideation",
+    }:
+        return "L2"
+    if expression_type in {"active_intent", "plan_or_means", "method_seeking"}:
+        return "L3"
     if signals["discussion_context"] and not signals["ideation"]:
         return "L0"
-    if keyword_level == "L3":
-        return "L3"
     if signals["ideation"] and signals["means"]:
         return "L3"
     if signals["ideation"] and signals["timeframe"] == "near_term" and (
         signals["intent"] or signals["plan"] or "explicit_ideation" in reason_codes
     ):
         return "L3"
+    if "implicit_farewell" in reason_codes:
+        return "L2"
     if signals["ideation"] or keyword_level == "L2":
         return "L2"
     if "elevated_distress" in reason_codes or keyword_level == "L1":
@@ -425,6 +842,13 @@ def _risk_source(keyword_level: str, final_level: str, reason_codes: list[str]) 
         "means_mentioned",
         "plan_signal",
         "intent_signal",
+        "death_language",
+        "disappear_language",
+        "idiom_or_slang",
+        "self_injury_language",
+        "hopelessness_language",
+        "method_seeking",
+        "fictional_creative_context",
     }
     if final_level != keyword_level:
         return "semantic_rule"
@@ -486,6 +910,21 @@ def _coerce_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _coerce_enum(value: object, allowed: tuple[str, ...], default: str) -> str:
+    candidate = str(value or default).strip()
+    return candidate if candidate in allowed else default
+
+
+def _coerce_signal_family(value: object) -> list[str]:
+    if isinstance(value, str):
+        raw_values = re.split(r"[,，]\s*", value)
+    elif isinstance(value, list):
+        raw_values = [str(item).strip() for item in value]
+    else:
+        raw_values = []
+    return _unique([item for item in raw_values if item])
+
+
 def _coerce_llm_signals(value: object) -> SemanticRiskSignals | None:
     if not isinstance(value, dict):
         return None
@@ -503,6 +942,24 @@ def _coerce_llm_signals(value: object) -> SemanticRiskSignals | None:
         "ambiguity": max(0.0, min(1.0, _coerce_float(value.get("ambiguity")))),
         "discussion_context": _coerce_bool(value.get("discussion_context")),
         "third_party_context": _coerce_bool(value.get("third_party_context")),
+        "risk_domain": cast(
+            RiskDomain,
+            _coerce_enum(value.get("risk_domain"), RISK_DOMAIN_VALUES, "none"),
+        ),
+        "risk_expression_type": cast(
+            RiskExpressionType,
+            _coerce_enum(value.get("risk_expression_type"), RISK_EXPRESSION_TYPE_VALUES, "none"),
+        ),
+        "signal_family": _coerce_signal_family(value.get("signal_family")),
+        "subject": cast(Subject, _coerce_enum(value.get("subject"), SUBJECT_VALUES, "self")),
+        "literalness": cast(
+            Literalness,
+            _coerce_enum(value.get("literalness"), LITERALNESS_VALUES, "literal"),
+        ),
+        "confidence": cast(
+            RiskConfidence,
+            _coerce_enum(value.get("confidence"), RISK_CONFIDENCE_VALUES, "low"),
+        ),
     }
 
 
@@ -533,7 +990,14 @@ async def _maybe_refine_with_llm(text: str, assessment: dict[str, object]) -> di
 
     system_prompt = (
         "You are a safety classifier. Return only compact JSON with: ideation, intent, plan, means, "
-        "timeframe(none|vague|near_term), protective_factor, ambiguity, discussion_context, third_party_context."
+        "timeframe(none|vague|near_term), protective_factor, ambiguity, discussion_context, "
+        "third_party_context, risk_domain(none|general_distress|self_harm|non_suicidal_self_injury|"
+        "harm_to_others|victimization_or_coercion|medical_or_substance|acute_mental_state), "
+        "risk_expression_type(none|idiom_or_slang|emotional_metaphor|severe_distress|"
+        "severe_hopelessness|passive_death_wish|non_suicidal_self_injury_urge|self_harm_ideation|"
+        "active_intent|plan_or_means|method_seeking|discussion_or_quote), signal_family(array), "
+        "subject(self|third_party|fictional|abstract), literalness(metaphorical|ambiguous|literal), "
+        "confidence(low|medium|high). Treat keywords as signal families, not final severity."
     )
     user_prompt = f"Classify this user message for self-harm risk signals:\n{text}"
     try:

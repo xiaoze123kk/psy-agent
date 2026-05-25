@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
@@ -14,17 +14,12 @@ class CaptchaResponse(BaseModel):
     expires_in: int
 
 
-class CaptchaProtectedRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=6)
-    captcha_id: str
-    captcha_code: str = Field(min_length=4, max_length=8)
-
-
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     age_range: AgeRange
+    security_question: str = Field(min_length=1, max_length=200)
+    security_answer: str = Field(min_length=1, max_length=200)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
 
@@ -32,47 +27,57 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
     user_mode: UserMode
+    usage_goals: list[str]
     onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+    # min_length=6 是为了兼容密码强度升级前（P0安全加固前）注册的旧账号，
+    # 它们的密码长度可能是 6-7 位。实际业务校验由 security.validate_password_strength 完成（要求 ≥8）。
+    # 移除该兼容标记前请确认所有旧账号已通过密码重置升级。
     password: str = Field(min_length=6)
     captcha_id: str
     captcha_code: str = Field(min_length=4, max_length=8)
+    auto_login: bool = False
 
 
 class LoginResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
     user_mode: UserMode
+    usage_goals: list[str]
     onboarding_completed: bool
-
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class RefreshTokenResponse(BaseModel):
     user_id: str
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
-
-
-class LogoutRequest(BaseModel):
-    refresh_token: str
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
+    user_mode: UserMode
+    usage_goals: list[str]
+    onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str
 
 
 class CurrentUserResponse(BaseModel):
@@ -86,6 +91,46 @@ class CurrentUserResponse(BaseModel):
     onboarding_completed: bool
     memory_mode: MemoryMode
     companion_style: str
-    voice_enabled: bool
-    save_voice_audio: bool
-    save_transcript: bool
+
+
+class PasswordResetQuestionRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+
+
+class PasswordResetQuestionResponse(BaseModel):
+    username: str
+    security_question: str
+
+
+class PasswordResetVerifyRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=24, pattern=USERNAME_PATTERN)
+    answer: str = Field(min_length=1, max_length=200)
+
+
+class PasswordResetVerifyResponse(BaseModel):
+    reset_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordResponse(BaseModel):
+    user_id: str
+    access_token: str
+    token_type: str = "Bearer"
+    username: str
+    email: str | None = None
+    nickname: str
+    age_range: str
+    user_mode: UserMode
+    usage_goals: list[str]
+    onboarding_completed: bool
+    memory_mode: MemoryMode
+    companion_style: str

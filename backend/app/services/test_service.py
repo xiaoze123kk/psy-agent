@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import base64
 import importlib
 import json
 import logging
@@ -114,6 +115,22 @@ def _remap_answer_index(attempt_id: str, shuffled_index: int, question_count: in
     for new_idx, old_idx in enumerate(order):
         if new_idx == shuffled_index:
             return old_idx
+    return None
+
+
+def _load_result_image_base64(test_type: str, test_id: str, result_code: str) -> str | None:
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        image_path = _TESTS_DIR / test_type / test_id / "result_image" / f"{result_code}{ext}"
+        if image_path.is_file():
+            try:
+                raw = image_path.read_bytes()
+                encoded = base64.b64encode(raw).decode("ascii")
+                mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+                mime = mime_map.get(ext, "image/png")
+                return f"data:{mime};base64,{encoded}"
+            except OSError as exc:
+                logger.error("Failed to read result image %s: %s", image_path, exc)
+                return None
     return None
 
 
@@ -262,6 +279,7 @@ def get_attempt_result(attempt_id: str, db: Session) -> CompleteAttemptResponse 
         return None
     result_data = scorer.compute(t, _normalize_answers(attempt.answers))
     profile_data = result_data
+    result_image = _load_result_image_base64(t["test_type"], t["test_id"], result_data["result_code"])
     return CompleteAttemptResponse(
         attempt_id=attempt_id,
         test_code=t["code"],
@@ -281,6 +299,7 @@ def get_attempt_result(attempt_id: str, db: Session) -> CompleteAttemptResponse 
             blind_spots=profile_data.get("blind_spots", []),
             companion_style=profile_data.get("companion_style", ""),
         ),
+        result_image_base64=result_image,
     )
 
 
