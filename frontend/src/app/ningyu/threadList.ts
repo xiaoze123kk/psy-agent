@@ -133,7 +133,7 @@ export function buildHomeEntries(displayName: string, userMode: UserMode, memory
       id: "safety",
       kind: "home",
       title: "安全支持随时可见",
-      time: "SOS",
+      time: "求助",
       preview: "如果感觉撑不住，请先打开右侧安全入口。",
     },
   ];

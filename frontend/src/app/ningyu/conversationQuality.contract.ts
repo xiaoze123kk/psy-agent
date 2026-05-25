@@ -92,10 +92,10 @@ const ragTrace = traceTimingFromRagTrace(graphUpdate.rag_trace_summary);
 const finalTrace = traceTimingFromSummary(finalEvent.trace_summary);
 
 assertEqual(conversationFeedbackOptions.length, 5);
-assertEqual(formatDuration(1234), "1.2s");
+assertEqual(formatDuration(1234), "1.2秒");
 assertEqual(formatDuration(undefined), null);
-assertEqual(formatRagStatus({ ragStatus: "hit", ragHitCount: 3 }), "RAG 命中 3 条");
-assertEqual(graphUpdateDetail(graphUpdate), "example_retriever · 1.2s · RAG 命中 3 条");
+assertEqual(formatRagStatus({ ragStatus: "hit", ragHitCount: 3 }), "知识检索命中 3 条");
+assertEqual(graphUpdateDetail(graphUpdate), "example_retriever · 1.2秒 · 知识检索命中 3 条");
 assertEqual(ragTrace?.ragStatus, "hit");
 assertEqual(ragTrace?.ragHitCount, 3);
 assertEqual(finalTrace?.totalGraphMs, 2048);

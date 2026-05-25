@@ -42,7 +42,7 @@ export function GentleAppTransition({ children, onFinished }: GentleAppTransitio
           <div className="gentle-transition__center">
             <section className="gentle-transition__card" aria-labelledby="gentle-transition-title">
               <div className="gentle-transition__logo">
-                <img src={logo} alt="宁语 Logo" />
+                <img src={logo} alt="宁语标志" />
               </div>
 
               <h2 id="gentle-transition-title">宁语 · 心灵驿站</h2>

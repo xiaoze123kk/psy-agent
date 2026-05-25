@@ -4,6 +4,7 @@ import type {
   AskKnowledgeResponse,
   CaptchaResponse,
   CompleteAttemptResponse,
+  ConversationFeedbackRequest,
   CurrentUserResponse,
   FeedbackCreateRequest,
   FeedbackResponse,
@@ -231,6 +232,10 @@ export class CounselingApi {
 
   submitFeedback(payload: FeedbackCreateRequest): Promise<FeedbackResponse> {
     return this.client.post<FeedbackResponse, FeedbackCreateRequest>("/api/v1/feedback", payload);
+  }
+
+  submitConversationQualityFeedback(payload: ConversationFeedbackRequest): Promise<FeedbackResponse> {
+    return this.client.post<FeedbackResponse, ConversationFeedbackRequest>("/api/v1/feedback", payload);
   }
 
   // --- Sprint 3: Weekly Summary ---

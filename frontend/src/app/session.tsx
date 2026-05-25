@@ -37,7 +37,7 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Session restore failed.";
+  return "会话恢复失败。";
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
