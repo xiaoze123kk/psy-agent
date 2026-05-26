@@ -39,6 +39,13 @@ def coerce_string_list(value: object) -> list[str]:
     return []
 
 
+def effective_rag_timeout_seconds(rag_timeout_seconds: float, chat_timeout_seconds: float) -> float:
+    rag_timeout = max(float(rag_timeout_seconds), 0.001)
+    chat_timeout = max(float(chat_timeout_seconds), 0.001)
+    response_budget_seconds = 30.0
+    return min(rag_timeout, max(chat_timeout - response_budget_seconds, 0.001))
+
+
 def example_hit_to_dict(example: object) -> dict:
     if isinstance(example, dict):
         serialized = dict(example)
@@ -81,7 +88,10 @@ async def example_retriever(state: AgentState) -> AgentState:
         }
 
     mode = response_mode_for_state(state)
-    timeout_seconds = max(float(settings.rag_retrieval_timeout_seconds), 0.001)
+    timeout_seconds = effective_rag_timeout_seconds(
+        settings.rag_retrieval_timeout_seconds,
+        settings.chat_turn_timeout_seconds,
+    )
     try:
         retrieval = await asyncio.wait_for(
             retrieve_counseling_examples_with_trace(

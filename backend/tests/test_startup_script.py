@@ -91,6 +91,9 @@ def test_start_backend_script_uses_uvicorn_on_backend_port() -> None:
     assert "$args += \"--reload\"" in script
     assert "LOCAL_EMBEDDING_USE_WORKER" in script
     assert "RAG_RETRIEVAL_TIMEOUT_SECONDS" in script
+    assert "CHAT_TURN_TIMEOUT_SECONDS" in script
+    assert 'CHAT_TURN_TIMEOUT_SECONDS) { $env:CHAT_TURN_TIMEOUT_SECONDS } else { "120" }' in script
+    assert 'RAG_RETRIEVAL_TIMEOUT_SECONDS) { $env:RAG_RETRIEVAL_TIMEOUT_SECONDS } else { "30" }' in script
     assert "EMBEDDING_TIMEOUT_SECONDS" in script
     assert "uvicorn.local.out.log" in script
     assert "uvicorn.local.err.log" in script
