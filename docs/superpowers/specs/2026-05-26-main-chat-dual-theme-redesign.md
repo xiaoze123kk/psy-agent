@@ -1,186 +1,195 @@
-# Main Chat Dual Theme Redesign Spec
+# 主界面对话区日夜双主题改造规格
 
-## Context
+## 背景
 
-The `main` branch currently has a working Ningyu app shell, but the main chat surface feels visually heavier than desired and too close to the entry/register page's paper-book mood. The user prefers the centered conversation experience seen on `codex/search-reliability`: a calm middle writing space, full-screen scenic background, floating side controls, a grounded bottom input, and a stronger sense that the chat itself is the product.
+`main` 分支当前的宁语主应用已经可以运行，但主聊天界面的视觉重心偏重，并且太接近入口/注册页的纸质书页氛围。用户更喜欢 `codex/search-reliability` 分支中的居中对话体验：全屏自然背景、中间安静的写作/对话区域、左右悬浮操作、底部稳定输入栏，以及“聊天本身就是主产品”的明确感受。
 
-The redesign applies only to the authenticated main chat interface in `frontend/src/app/ningyu/`. Login, registration, onboarding, password reset, auth APIs, and backend behavior are out of scope.
+本次改造只作用于已登录后的主聊天界面，即 `frontend/src/app/ningyu/`。登录、注册、引导页、找回密码、认证 API 和后端行为都不在范围内。
 
-## Goals
+## 目标
 
-- Rework the main chat interface around a centered conversation stage similar to the `codex/search-reliability` screenshot.
-- Preserve the existing day/night theme model instead of making the interface night-only.
-- Keep all current chat behavior: thread list, new chat, history, tools, support entry, message streaming states, graph/update trail, feedback buttons, and send flow.
-- Avoid a full branch overwrite. Use the other branch as a visual reference and integrate selectively into `main`.
-- Maintain responsive behavior across desktop and mobile without clipped text, overlapping controls, or unreachable inputs.
+- 将主聊天界面调整为接近 `codex/search-reliability` 截图的居中对话舞台。
+- 保留现有日间/夜间双主题机制，而不是只做夜间样式。
+- 保留当前所有聊天行为：会话列表、新对话、历史、工具、求助入口、消息流式状态、图运行轨迹、反馈按钮和发送流程。
+- 不直接整份覆盖另一个分支文件；只把它作为视觉和结构参考，选择性合入 `main`。
+- 保证桌面和移动端都没有文本截断、控件重叠、输入框不可达等问题。
 
-## Non-Goals
+## 非目标
 
-- Do not redesign the login/register/onboarding pages.
-- Do not alter API contracts, authentication, chat streaming, memory, graph trace data, or backend routes.
-- Do not remove debug/status affordances that are useful in local development unless they are restyled in place.
-- Do not introduce a new UI framework or major dependency.
+- 不重设计登录、注册、引导、找回密码页面。
+- 不修改 API 合约、认证逻辑、聊天流式协议、记忆系统、图轨迹数据或后端路由。
+- 不移除本地开发有用的调试/状态信息；如需要弱化，只做视觉层级调整。
+- 不引入新的 UI 框架或大型依赖。
 
-## Design Direction
+## 设计方向
 
-The main chat should feel like a quiet writing table inside a soft landscape, not a dashboard and not a landing page. The tone is reflective, companionable, and slightly cinematic.
+主聊天界面应像一个安静的写字台，放在柔和自然场景里。它不是仪表盘，也不是落地页。整体气质应当是沉静、陪伴式、略带电影感。
 
-Day mode:
-- Background remains airy and natural, using the current daytime scenic asset.
-- The central stage uses translucent warm paper/glass styling rather than the thick notebook sheet used by the entry page.
-- Text colors lean deep green/ink, with pale mint and warm off-white surfaces.
+日间模式：
 
-Night mode:
-- Background uses the current night scenic asset.
-- The central stage becomes a dark blue-green translucent panel with subtle ruled lines.
-- Message bubbles and controls should resemble the `codex/search-reliability` screenshot: quiet borders, deep navy surface, soft teal accents, and restrained glow.
+- 背景继续使用当前日间自然场景资源。
+- 中央舞台使用轻盈的半透明纸感/玻璃感，而不是入口页那种厚重书页。
+- 文本以深绿、墨色为主，表面使用浅青绿、暖白、淡纸色。
 
-Both modes share layout, spacing, controls, and interaction patterns. The theme only changes tokens, contrast, and atmosphere.
+夜间模式：
 
-## Layout
+- 背景继续使用当前夜间自然场景资源。
+- 中央舞台使用深蓝绿半透明面板，并保留细微横线/稿纸感。
+- 消息气泡和控件接近 `codex/search-reliability` 截图：安静边框、深海军蓝表面、柔和青绿色强调、克制的光感。
 
-### Overall Shell
+两套模式共享同一套布局、间距、控件和交互。主题只改变颜色、对比度和氛围。
 
-`NingyuAppShell` keeps the current full-viewport scenic shell:
+## 布局
 
-- `ningyu-shell` remains the root visual container.
-- Background image, wash layer, ambient motion, and day/night switching remain.
-- Header remains available but should not dominate the first read of the chat surface. If retained as hover-revealed chrome, it must not cover the chat or input on small screens.
+### 整体 Shell
 
-### Central Chat Stage
+`NingyuAppShell` 保留现有全视口场景容器：
 
-The central chat stage should become the primary visual anchor:
+- `ningyu-shell` 继续作为主视觉根容器。
+- 背景图、遮罩层、环境动效、日夜切换逻辑继续保留。
+- 顶部 header 可以继续存在，但不能抢走聊天界面的第一视觉重心。如果保持 hover 后出现的形式，在小屏上不能遮挡聊天区或输入栏。
 
-- Width: approximately `min(100%, 820px-920px)` on desktop.
-- Height: fills available vertical space between top breathing room and bottom input.
-- Surface: translucent, ruled, lightly bordered, with 8px-16px radius max. Avoid the heavy curled-paper/book-page treatment in the main chat.
-- The title/date can remain, but it should be compact and integrated into the top of the stage rather than behaving like a separate hero.
-- The message area must preserve scroll behavior and auto-scroll semantics.
+### 中央聊天舞台
 
-Target desktop composition:
+中央聊天舞台应成为主视觉锚点：
 
-- Left floating rail: history and new chat.
-- Center: chat stage and messages.
-- Right floating rail: tools and support.
-- Bottom: fixed-width centered input aligned with the stage.
+- 桌面宽度约为 `min(100%, 820px-920px)`。
+- 高度填满顶部留白和底部输入栏之间的可用空间。
+- 表面为半透明、带细线、轻边框，圆角控制在 8px-16px。避免在主聊天界面继续使用厚重卷角纸张/书页效果。
+- 标题和日期可以保留，但应紧凑地融入舞台顶部，不要像独立 hero 区块。
+- 消息区域必须保留现有滚动和自动滚动语义。
 
-### Floating Controls
+桌面目标构图：
 
-Keep the existing left/right floating controls, but tune them to match the centered stage:
+- 左侧悬浮栏：历史、新对话。
+- 中间：聊天舞台与消息。
+- 右侧悬浮栏：工具、求助。
+- 底部：与舞台等宽的居中输入栏。
 
-- Controls use compact icon+label pills.
-- Day mode: pale translucent controls with green ink.
-- Night mode: dark translucent controls with light text and muted teal borders.
-- Controls must stay reachable on desktop and collapse cleanly on mobile.
+### 悬浮控件
 
-### Input
+保留现有左右悬浮控件，但调整为更贴合中央舞台：
 
-The input should feel like a calm writing bar:
+- 控件使用紧凑的图标+文字 pill。
+- 日间模式：浅色半透明底，深绿色文字。
+- 夜间模式：深色半透明底，浅色文字，弱青绿色边框。
+- 桌面端必须容易点击；移动端需要自然收纳，不能覆盖消息或输入栏。
 
-- Centered and width-matched with the chat stage.
-- Bottom anchored within the app shell, not inside a card.
-- Textarea remains one-row by default and grows only within safe bounds.
-- Send action remains an icon button.
-- Disabled/sending states remain visually clear.
+### 输入栏
 
-## Message Presentation
+输入栏应像安静的书写条：
 
-User messages:
-- Align to the right.
-- Use a compact bubble, clear "你" meta label, timestamp, and a subtle accent.
-- Night mode should resemble the screenshot: transparent dark bubble with fine border and small decorative accent.
+- 居中，并与聊天舞台宽度对齐。
+- 固定在应用底部区域，而不是放进卡片内部。
+- 文本框默认一行，可在安全范围内增长。
+- 发送按钮继续使用图标按钮。
+- 禁用和发送中状态必须清楚可见。
 
-Assistant messages:
-- Align to the left.
-- Use a wider readable bubble with calmer body text and enough line height for Chinese.
-- Preserve trace line rendering when present, but make it secondary and quiet.
-- Preserve feedback controls below assistant messages.
+## 消息呈现
 
-System/loading/error states:
-- Keep `ChatStateMessage`.
-- Restyle as compact inline panels within the stage, not large standalone cards.
-- Error tone should be visible but gentle.
+用户消息：
 
-Graph/update trail:
-- Keep `GraphUpdateTrail` behavior.
-- Style it as a collapsible-feeling technical trace panel or compact stage section, visually secondary to conversation text.
-- It may remain expanded in local/dev behavior, but should not overpower the assistant answer.
+- 右对齐。
+- 使用紧凑气泡，保留清楚的“你”标签、时间和轻微强调。
+- 夜间模式接近截图：透明深色气泡、细边框、小装饰强调。
 
-## Component Scope
+助手消息：
 
-Primary files expected to change:
+- 左对齐。
+- 使用更宽、更易读的气泡，中文正文需要足够行高。
+- 保留 trace 行，但视觉上降为次要信息。
+- 保留助手消息下方的反馈控件。
+
+系统、加载和错误状态：
+
+- 保留 `ChatStateMessage`。
+- 样式调整为舞台内部的紧凑提示，而不是大块独立卡片。
+- 错误状态要可见，但语气保持温和。
+
+图运行轨迹：
+
+- 保留 `GraphUpdateTrail` 行为。
+- 样式调整为技术轨迹面板或紧凑舞台区块，视觉层级低于对话正文。
+- 本地/开发场景下可以继续默认展开，但不能压过助手回复。
+
+## 组件范围
+
+预计主要修改文件：
 
 - `frontend/src/app/ningyu/NingyuAppShell.tsx`
 - `frontend/src/app/ningyu/NingyuAppShell.css`
 
-Possible small supporting changes:
+可能的小范围辅助修改：
 
-- `frontend/src/styles/tokens.css` only if theme variables need consolidation.
-- `frontend/src/app/ningyu/immersiveMotion.ts` only if existing ambient timing conflicts with the new layout.
+- `frontend/src/styles/tokens.css`：仅在需要统一主题变量时修改。
+- `frontend/src/app/ningyu/immersiveMotion.ts`：仅在现有环境动效节奏和新布局冲突时修改。
 
-Files not expected to change:
+预计不修改：
 
 - `frontend/src/app/auth/*`
 - `frontend/src/api/*`
-- Backend code and database migrations.
+- 后端代码和数据库迁移。
 
-## Implementation Approach
+## 实现策略
 
-Use selective migration rather than wholesale checkout from `codex/search-reliability`:
+采用选择性迁移，不从 `codex/search-reliability` 整份覆盖：
 
-1. Compare `ChatWorkspace`, `ChatMessage`, `ChatInput`, floating controls, and relevant CSS selectors between `main` and `codex/search-reliability`.
-2. Keep `main`'s current TypeScript data flow and behavioral props.
-3. Adjust markup only where the visual structure requires it, such as removing heavy paper-specific wrappers or reducing header ornamentation.
-4. Rebuild CSS for the chat stage around shared day/night tokens.
-5. Preserve existing class names where practical to reduce churn.
+1. 对比 `main` 与 `codex/search-reliability` 中的 `ChatWorkspace`、`ChatMessage`、`ChatInput`、悬浮控件和相关 CSS 选择器。
+2. 保留 `main` 当前 TypeScript 数据流和行为 props。
+3. 只有在视觉结构确实需要时才调整 markup，例如移除厚重纸页 wrapper、压缩 header 装饰层级。
+4. 围绕共享日夜主题变量重建聊天舞台 CSS。
+5. 尽量保留现有 class name，降低改动面。
 
-## Responsive Behavior
+## 响应式行为
 
-Desktop:
-- Stage centered with side controls visible.
-- Input centered and stage-matched.
-- Chat content should fit without horizontal scrolling.
+桌面端：
 
-Tablet:
-- Side controls can tuck closer to screen edges.
-- Stage width should use viewport padding.
-- Header hover behavior must not hide essential actions.
+- 舞台居中，左右悬浮控件可见。
+- 输入栏居中并与舞台宽度一致。
+- 聊天内容不能产生横向滚动。
 
-Mobile:
-- Side controls should become compact top/bottom action rows or small floating buttons that do not cover messages.
-- Stage fills most width with reduced padding.
-- Input stays visible and tappable.
-- Message bubbles use near-full width with clear left/right distinction.
+平板端：
 
-## Accessibility
+- 侧边控件可以贴近屏幕边缘。
+- 舞台宽度使用视口 padding 自适应。
+- header 的 hover 行为不能遮挡关键操作。
 
-- Preserve semantic landmarks and labels: chat workspace, message input, send button, feedback controls.
-- Keep keyboard send behavior: Enter submits, Shift+Enter inserts newline.
-- Preserve visible focus states for input, send, feedback, floating controls, thread actions, and support/tools.
-- Maintain sufficient contrast in both themes, especially night mode secondary text and trace lines.
-- Avoid relying on color alone for error/loading/selected states.
+移动端：
 
-## Verification Plan
+- 侧边控件应收纳为紧凑的顶部/底部操作区，或不遮挡消息的小悬浮按钮。
+- 舞台接近全宽，减少内边距。
+- 输入栏始终可见且易点击。
+- 消息气泡接近全宽，但仍保留左右区分。
 
-Run:
+## 可访问性
 
-- `npm run check` in `frontend/`.
-- `npm run build` if typecheck passes and the visual changes touch shared CSS heavily.
+- 保留语义标签和可访问名称：聊天工作区、消息输入框、发送按钮、反馈控件。
+- 保留键盘发送行为：Enter 发送，Shift+Enter 换行。
+- 输入框、发送按钮、反馈按钮、悬浮控件、会话操作、工具/求助入口都要有可见焦点状态。
+- 日夜两套主题都要有足够对比度，尤其是夜间的次级文字和 trace 行。
+- 错误、加载、选中状态不能只依赖颜色表达。
 
-Browser verification:
+## 验证计划
 
-- Desktop viewport around `1440x1000`.
-- Mobile viewport around `390x844`.
-- Validate day mode and night mode.
-- Validate states: empty chat, existing messages, streaming/sending disabled state, error state if easily simulated, graph/update trail with multiple nodes, feedback buttons visible on assistant messages.
-- Check that the input does not overlap messages or side controls.
-- Check that text in buttons, bubbles, trace lines, and floating controls does not clip.
+运行：
 
-## Acceptance Criteria
+- 在 `frontend/` 下执行 `npm run check`。
+- 如果 CSS 改动较大且类型检查通过，再执行 `npm run build`。
 
-- The authenticated main chat screen visually matches the centered conversation-stage direction from `codex/search-reliability`.
-- Day and night modes both look intentional and share the same layout.
-- Login/register pages are unchanged.
-- Current chat interactions still work: create/send, message rendering, graph updates, feedback, floating controls, support/tools entry.
-- Frontend typecheck passes.
-- Browser screenshots confirm no blank screen, no major overlap, and no clipped primary text on desktop and mobile.
+浏览器验证：
+
+- 桌面视口约 `1440x1000`。
+- 移动视口约 `390x844`。
+- 验证日间和夜间模式。
+- 验证状态：空会话、已有消息、发送中/禁用态、可模拟时的错误态、多节点图运行轨迹、助手消息反馈按钮。
+- 检查输入栏是否与消息或侧边控件重叠。
+- 检查按钮、气泡、trace 行、悬浮控件中的文字是否截断。
+
+## 验收标准
+
+- 已登录主聊天界面在视觉上符合 `codex/search-reliability` 的居中对话舞台方向。
+- 日间和夜间模式都完整、协调，并共享同一套布局。
+- 登录/注册页面保持不变。
+- 当前聊天交互仍然可用：新建/发送、消息渲染、图运行更新、反馈、悬浮控件、工具/求助入口。
+- 前端类型检查通过。
+- 浏览器截图确认桌面和移动端没有空白页、明显重叠或主要文本截断。
