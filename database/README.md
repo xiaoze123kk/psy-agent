@@ -28,6 +28,7 @@ psql "$DATABASE_URL" -f migrations/0012_pending_memory_jobs.sql
 psql "$DATABASE_URL" -f migrations/0013_companion_styles.sql
 psql "$DATABASE_URL" -f migrations/0014_conversation_session_digest.sql
 psql "$DATABASE_URL" -f migrations/0015_remove_voice_feature.sql
+psql "$DATABASE_URL" -f migrations/0016_auth_runtime_schema_alignment.sql
 ```
 
 Local PostgreSQL example:
@@ -48,6 +49,7 @@ psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migration
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0013_companion_styles.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0014_conversation_session_digest.sql
 psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0015_remove_voice_feature.sql
+psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migrations/0016_auth_runtime_schema_alignment.sql
 ```
 
 ## Notes
@@ -60,3 +62,4 @@ psql "postgresql://postgres:123456@127.0.0.1:5432/psychology_agent" -f migration
 - `0013_companion_styles.sql` moves multi-style companion preferences into account-level storage and seeds existing `user_settings.companion_style` values as the selected style.
 - `0014_conversation_session_digest.sql` adds persisted conversation-level digest fields for continuity.
 - `0015_remove_voice_feature.sql` removes the retired voice feature tables, columns, and message input type.
+- `0016_auth_runtime_schema_alignment.sql` adds auth runtime columns used by registration, refresh tokens, and password recovery prompts.

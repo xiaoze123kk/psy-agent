@@ -1,0 +1,13 @@
+BEGIN;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE refresh_tokens
+    ADD COLUMN IF NOT EXISTS auto_login BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE user_profiles
+    ADD COLUMN IF NOT EXISTS security_question VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS security_answer_hash TEXT;
+
+COMMIT;
