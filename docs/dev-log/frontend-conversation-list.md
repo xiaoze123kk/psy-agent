@@ -272,3 +272,30 @@
 
 1. 后端后续可提供专用 LLM 接口 `GET /api/v1/chat/daily-opening-suggestions`，由服务端直接综合情绪、会话摘要、记忆偏好和安全状态生成三条建议。
 2. 当前前端优先使用已有 LLM 周小结和心情趋势；后端不可用或无数据时使用本地安全兜底。
+
+## 2026-05-26 主聊天对话舞台双主题改造
+
+### 背景
+
+用户反馈 `main` 分支主界面不够理想，更偏好 `codex/search-reliability` 分支截图里的中间对话界面。确认范围后，本次只改已登录后的主聊天界面，不改登录、注册、引导或后端接口。
+
+### 本次改动
+
+- 新增规格文档和实施计划，明确主聊天界面采用居中对话舞台，并保留日间/夜间双主题。
+- 新增 `frontend/tests/chat-shell-css.test.cjs` 和 `npm run test:unit`，用 CSS 合同测试防止主聊天区回退到厚重纸页样式。
+- 更新 `NingyuAppShell.tsx`，把中央容器从 paper wrapper 调整为 chat stage token。
+- 更新 `NingyuAppShell.css`，移除主聊天区的卷角纸页、底部锯齿和 `clip-path`，改为轻量半透明舞台。
+- 为日间和夜间分别定义聊天舞台表面、细线、边框和消息气泡色彩；输入栏、悬浮控件、图运行轨迹和移动端布局同步收敛到同一视觉骨架。
+
+### 验证
+
+- TDD RED：`npm run test:unit` 先失败，确认当前 CSS 缺少 `.ningyu-chat__stage-token` 和舞台主题变量。
+- 修复后：`npm run test:unit` 通过，`2 passed`。
+- `npm run check`：通过，`tsc --noEmit` exit 0。
+- `npm run build`：通过，Vite build exit 0，仅保留 `module.register()` 的上游弃用提示。
+- 浏览器验证：`http://127.0.0.1:5173/` 调试进入主页面后，桌面 `1440x1000` 和移动 `390x844` 均非空白；日间/夜间主题可切换，主聊天舞台分别应用日间/夜间背景和边框；`documentElement.scrollWidth - innerWidth` 为 0。
+- 调试态控制台仍会出现既有 `/api/v1/auth/refresh` 401/500 与 `favicon.ico` 404，不影响本次主界面视觉改造，未纳入本次提交范围。
+
+### 后续事项
+
+- 图运行轨迹目前仍是展开态；后续如需要更接近产品体验，可单独设计折叠/展开策略。

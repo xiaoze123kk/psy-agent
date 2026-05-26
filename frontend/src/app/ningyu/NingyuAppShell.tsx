@@ -2546,7 +2546,7 @@ function ChatWorkspace({
     <section className="ningyu-chat" aria-label="聊天工作区">
       <div className="ningyu-chat__scroll">
         <motion.div
-          className="ningyu-chat__inner ningyu-chat-paper"
+          className="ningyu-chat__inner ningyu-chat-stage ningyu-chat__stage-token"
           initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.48, delay: 0.12, ease: "easeOut" }}
