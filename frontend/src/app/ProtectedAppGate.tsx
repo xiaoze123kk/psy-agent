@@ -54,10 +54,10 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   if (session.status === "checking") {
     return (
       <section className="app-shell__panel" aria-labelledby="session-loading-title">
-        <p className="app-shell__eyebrow">Session</p>
+        <p className="app-shell__eyebrow">会话</p>
         <h1 id="session-loading-title">正在恢复登录状态</h1>
         <Spinner label="正在恢复登录状态" size="sm" />
-        <VisuallyHidden>正在检查本地 token 并恢复当前用户。</VisuallyHidden>
+        <VisuallyHidden>正在检查本地令牌并恢复当前用户。</VisuallyHidden>
       </section>
     );
   }
@@ -78,7 +78,16 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   }
 
   if (!hasPlayedEntryTransition) {
-    return <GentleAppTransition onFinished={handleEntryTransitionFinished}>{children}</GentleAppTransition>;
+    return (
+      <GentleAppTransition
+        onFinished={() => {
+          markEntryTransitionSeenToday();
+          setHasPlayedEntryTransition(true);
+        }}
+      >
+        {children}
+      </GentleAppTransition>
+    );
   }
 
   return <>{children}</>;

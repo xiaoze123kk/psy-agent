@@ -36,11 +36,11 @@ export function formatDuration(ms?: number): string | null {
   }
 
   if (ms < 1000) {
-    return `${Math.round(ms)}ms`;
+    return `${Math.round(ms)}毫秒`;
   }
 
   const seconds = ms / 1000;
-  return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)}s`;
+  return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)}秒`;
 }
 
 export function numberOrUndefined(value: unknown): number | undefined {
@@ -72,35 +72,35 @@ export function reasonOrUndefined(value: unknown): string | undefined {
 export function formatRagStatus(trace: TraceTiming): string {
   if (trace.ragStatus) {
     const statusLabels: Record<string, string> = {
-      hit: "RAG 命中",
-      empty: "RAG 无命中",
-      timeout: "RAG 超时",
-      error: "RAG 错误",
-      skipped: "RAG 跳过",
+      hit: "知识检索命中",
+      empty: "知识检索无命中",
+      timeout: "知识检索超时",
+      error: "知识检索错误",
+      skipped: "知识检索跳过",
     };
-    const label = statusLabels[trace.ragStatus] ?? `RAG ${trace.ragStatus}`;
+    const label = statusLabels[trace.ragStatus] ?? `知识检索 ${trace.ragStatus}`;
     const hitCount = trace.ragHitCount ?? trace.retrievedExampleCount;
     return hitCount !== undefined ? `${label} ${hitCount} 条` : label;
   }
 
   const totalRetrieved = (trace.retrievedMemoryCount ?? 0) + (trace.retrievedExampleCount ?? 0);
   if (totalRetrieved > 0) {
-    return `RAG ${totalRetrieved} 条`;
+    return `知识检索 ${totalRetrieved} 条`;
   }
 
   if (trace.ragUsed === true) {
-    return "RAG 已参考";
+    return "知识检索已参考";
   }
 
   if (trace.ragSkippedReason) {
-    return `RAG 跳过：${trace.ragSkippedReason}`;
+    return `知识检索跳过：${trace.ragSkippedReason}`;
   }
 
   if (trace.ragUsed === false) {
-    return "RAG 未使用";
+    return "知识检索未使用";
   }
 
-  return "RAG 未知";
+  return "知识检索未知";
 }
 
 export function traceTimingFromRagTrace(summary: Record<string, unknown> | undefined): TraceTiming | null {

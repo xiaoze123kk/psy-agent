@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 import bgDay from "../../imports/wcbg.png";
 import bgNight from "../../imports/wcbg_night.png";
@@ -51,12 +52,25 @@ import type {
   ChatStreamHeartbeatEvent,
   ChatStreamTokenEvent,
   ConversationFeedbackValue,
+  AskKnowledgeResponse,
+  KnowledgeArticleResponse,
+  KnowledgeSearchItem,
+  CompleteAttemptResponse,
+  MemoryItem,
   MemoryMode,
   MessageItem,
   MoodLogResponse,
   MoodTrendResponse,
   RiskLevel,
   SendMessageRequest,
+  PersonalDataExport,
+  PrivacyDataScope,
+  PrivacyMutationResponse,
+  PrivacySummaryResponse,
+  StartAttemptResponse,
+  TestDetailResponse,
+  TestHistoryItem,
+  TestListItem,
   ThreadListItem,
   UserMode,
   WeeklySummaryResponse,
@@ -133,6 +147,14 @@ interface HighRiskSafetyState {
   error?: string;
 }
 
+interface TestShareCardPayload {
+  title: string;
+  subtitle: string;
+  summary: string;
+  highlights: string[];
+  disclaimer: string;
+}
+
 type ShellPhase = "loading" | "ready" | "error";
 type SafetyTone = "loading" | "stable" | "watch" | "support" | "error";
 type MoodCheckInStatus = "idle" | "submitting" | "success" | "error";
@@ -140,6 +162,21 @@ type MoodTrendRange = "7d" | "30d";
 type MoodTrendStatus = "idle" | "loading" | "success" | "error";
 type WeeklySummaryStatus = "idle" | "loading" | "success" | "error";
 type QuickActionStatus = "idle" | "loading" | "success" | "error";
+type KnowledgeSearchStatus = "idle" | "loading" | "success" | "error";
+type KnowledgeArticleStatus = "idle" | "loading" | "success" | "error";
+type KnowledgeAskStatus = "idle" | "loading" | "success" | "error";
+type TestListStatus = "idle" | "loading" | "success" | "error";
+type TestDetailStatus = "idle" | "loading" | "success" | "error";
+type TestAttemptStatus = "idle" | "loading" | "success" | "error";
+type TestAnswerStatus = "idle" | "loading" | "success" | "error";
+type TestResultStatus = "idle" | "loading" | "success" | "error";
+type TestHistoryStatus = "idle" | "loading" | "success" | "error";
+type MemoryListStatus = "idle" | "loading" | "success" | "error";
+type MemoryMutationStatus = "idle" | "loading" | "success" | "error";
+type SettingsMutationStatus = "idle" | "loading" | "success" | "error";
+type PrivacyStatus = "idle" | "loading" | "success" | "error";
+type DataActionStatus = "idle" | "loading" | "success" | "error";
+type FeedbackSubmitStatus = "idle" | "loading" | "success" | "error";
 type ThreadListStatus = "idle" | "loading" | "success" | "error";
 type MessageListStatus = "idle" | "loading" | "success" | "error";
 type CreateThreadStatus = "idle" | "loading" | "success" | "error";
@@ -147,6 +184,19 @@ type ChatStreamStatus = "idle" | "streaming" | "success" | "error";
 type ActiveConversation = { kind: "thread"; threadId: string } | { kind: "draft" } | null;
 type SendMessageHandler = (content: string) => boolean | Promise<boolean>;
 type DraftInputSeed = { id: string; text: string };
+type EdgePanel = "history" | "tools" | null;
+
+const focusableSelector =
+  'button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+const edgePanelTriggerIds: Record<Exclude<EdgePanel, null>, string> = {
+  history: "ningyu-history-trigger",
+  tools: "ningyu-tools-trigger",
+};
+
+function focusElementById(id: string) {
+  window.setTimeout(() => document.getElementById(id)?.focus(), 0);
+}
 
 interface MoodTagOption {
   id: string;
@@ -161,6 +211,85 @@ const moodTagOptions: MoodTagOption[] = [
 ];
 
 const moodScoreLabels = ["很低", "偏低", "还可以", "轻一点", "有力量"];
+
+const knowledgeCategoryOptions = [
+  { value: "", label: "全部分类" },
+  { value: "emotion", label: "情绪" },
+  { value: "stress", label: "压力" },
+  { value: "sleep", label: "睡眠" },
+  { value: "relationship", label: "关系" },
+  { value: "self_help", label: "自助练习" },
+  { value: "teen", label: "青少年主题" },
+  { value: "safety", label: "安全支持" },
+];
+
+const knowledgeAudienceOptions = [
+  { value: "", label: "全部人群" },
+  { value: "all", label: "通用内容" },
+  { value: "teen", label: "青少年" },
+  { value: "adult", label: "成人" },
+];
+
+const knowledgeCategoryLabels: Record<string, string> = Object.fromEntries(
+  knowledgeCategoryOptions.filter((option) => option.value).map((option) => [option.value, option.label]),
+);
+const knowledgeAudienceLabels: Record<string, string> = Object.fromEntries(
+  knowledgeAudienceOptions.filter((option) => option.value).map((option) => [option.value, option.label]),
+);
+const knowledgeCoverageLabels: Record<string, string> = {
+  sufficient: "覆盖充分",
+  partial: "覆盖部分",
+  insufficient: "覆盖不足",
+  not_applicable: "不适用",
+};
+const knowledgeScopeLabels: Record<string, string> = {
+  in_scope: "在知识范围内",
+  out_of_scope: "超出知识范围",
+};
+const knowledgeConfidenceLabels: Record<string, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
+const testTypeLabels: Record<string, string> = {
+  state: "状态测试",
+  personality: "个性测试",
+  anime: "动漫偏好测试",
+};
+const privacyCountLabels: Record<string, string> = {
+  memories: "记忆",
+  chat_threads: "聊天会话",
+  chat_messages: "聊天消息",
+  mood_logs: "情绪记录",
+  test_history: "测试历史",
+  feedback: "反馈",
+  risk_events: "安全事件",
+};
+
+const testResultDisclaimer = "本结果只用于自我理解和陪伴沟通，不是医疗诊断、治疗建议或临床评估。";
+const privacyDeleteScopes: Array<{ value: PrivacyDataScope; label: string }> = [
+  { value: "memories", label: "记忆" },
+  { value: "chat", label: "聊天" },
+  { value: "moods", label: "情绪记录" },
+  { value: "feedback", label: "反馈" },
+  { value: "all_non_account", label: "除账号外的全部个人数据" },
+];
+
+const feedbackTargetOptions = [
+  { value: "assistant_message", label: "助手消息" },
+  { value: "knowledge_answer", label: "知识回答" },
+  { value: "test_result", label: "测试结果" },
+] as const;
+
+function buildTestShareCardPayload(result: CompleteAttemptResponse): TestShareCardPayload {
+  return {
+    title: result.result_title,
+    subtitle: `${result.test_code} · ${result.result_code}`,
+    summary: result.summary,
+    highlights: [...result.strengths.slice(0, 2), ...result.suggested_actions.slice(0, 2)],
+    disclaimer: testResultDisclaimer,
+  };
+}
 
 const supportResources: HomeSupportResource[] = [
   { id: "hotline", icon: "phone", label: "24小时热线", title: "010-82951332" },
@@ -248,7 +377,10 @@ export function NingyuAppShell() {
     ageModeProfile,
     userMode,
     memoryMode,
+    privacySettings,
     isNight,
+    setMemoryMode,
+    updatePrivacySettings,
     toggleThemeMode,
   } = useAppState();
   const { clearSession } = useSession();
@@ -281,6 +413,70 @@ export function NingyuAppShell() {
   const [activeQuickActionId, setActiveQuickActionId] = useState<string | null>(null);
   const [quickActionError, setQuickActionError] = useState<string | null>(null);
   const [quickActionResult, setQuickActionResult] = useState<QuickActionResult | null>(null);
+  const [knowledgeQuery, setKnowledgeQuery] = useState("");
+  const [knowledgeCategory, setKnowledgeCategory] = useState("");
+  const [knowledgeAudience, setKnowledgeAudience] = useState("");
+  const [knowledgeSearchStatus, setKnowledgeSearchStatus] = useState<KnowledgeSearchStatus>("idle");
+  const [knowledgeSearchError, setKnowledgeSearchError] = useState<string | null>(null);
+  const [knowledgeResults, setKnowledgeResults] = useState<KnowledgeSearchItem[]>([]);
+  const [knowledgeArticleStatus, setKnowledgeArticleStatus] = useState<KnowledgeArticleStatus>("idle");
+  const [knowledgeArticleError, setKnowledgeArticleError] = useState<string | null>(null);
+  const [knowledgeArticle, setKnowledgeArticle] = useState<KnowledgeArticleResponse | null>(null);
+  const [knowledgeQuestion, setKnowledgeQuestion] = useState("");
+  const [knowledgeAskStatus, setKnowledgeAskStatus] = useState<KnowledgeAskStatus>("idle");
+  const [knowledgeAskError, setKnowledgeAskError] = useState<string | null>(null);
+  const [knowledgeAnswer, setKnowledgeAnswer] = useState<AskKnowledgeResponse | null>(null);
+  const [knowledgeRiskLevel, setKnowledgeRiskLevel] = useState<RiskLevel | null>(null);
+  const [tests, setTests] = useState<TestListItem[]>([]);
+  const [testListStatus, setTestListStatus] = useState<TestListStatus>("idle");
+  const [testListError, setTestListError] = useState<string | null>(null);
+  const [selectedTest, setSelectedTest] = useState<TestDetailResponse | null>(null);
+  const [testDetailStatus, setTestDetailStatus] = useState<TestDetailStatus>("idle");
+  const [testDetailError, setTestDetailError] = useState<string | null>(null);
+  const [testAttempt, setTestAttempt] = useState<StartAttemptResponse | null>(null);
+  const [testAttemptStatus, setTestAttemptStatus] = useState<TestAttemptStatus>("idle");
+  const [testAttemptError, setTestAttemptError] = useState<string | null>(null);
+  const [testAnswers, setTestAnswers] = useState<Record<number, string>>({});
+  const [testAnswerStatus, setTestAnswerStatus] = useState<TestAnswerStatus>("idle");
+  const [testAnswerError, setTestAnswerError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<CompleteAttemptResponse | null>(null);
+  const [testResultStatus, setTestResultStatus] = useState<TestResultStatus>("idle");
+  const [testResultError, setTestResultError] = useState<string | null>(null);
+  const [testHistory, setTestHistory] = useState<TestHistoryItem[]>([]);
+  const [testHistoryStatus, setTestHistoryStatus] = useState<TestHistoryStatus>("idle");
+  const [testHistoryError, setTestHistoryError] = useState<string | null>(null);
+  const [testShareCard, setTestShareCard] = useState<TestShareCardPayload | null>(null);
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [memoryListStatus, setMemoryListStatus] = useState<MemoryListStatus>("idle");
+  const [memoryListError, setMemoryListError] = useState<string | null>(null);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [memoryMutationStatus, setMemoryMutationStatus] = useState<MemoryMutationStatus>("idle");
+  const [memoryMutationError, setMemoryMutationError] = useState<string | null>(null);
+  const [settingsMemoryMode, setSettingsMemoryMode] = useState<MemoryMode>(memoryMode);
+  const [settingsSaveTranscript, setSettingsSaveTranscript] = useState(privacySettings.saveTranscript);
+  const [settingsStatus, setSettingsStatus] = useState<SettingsMutationStatus>("idle");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [privacySummary, setPrivacySummary] = useState<PrivacySummaryResponse | null>(null);
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyStatus>("idle");
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+  const [dataExportStatus, setDataExportStatus] = useState<DataActionStatus>("idle");
+  const [dataExportError, setDataExportError] = useState<string | null>(null);
+  const [personalDataExport, setPersonalDataExport] = useState<PersonalDataExport | null>(null);
+  const [deleteScope, setDeleteScope] = useState<PrivacyDataScope>("memories");
+  const [dataDeleteStatus, setDataDeleteStatus] = useState<DataActionStatus>("idle");
+  const [dataDeleteError, setDataDeleteError] = useState<string | null>(null);
+  const [dataDeleteResult, setDataDeleteResult] = useState<PrivacyMutationResponse | null>(null);
+  const [accountConfirmation, setAccountConfirmation] = useState("");
+  const [accountDeleteStatus, setAccountDeleteStatus] = useState<DataActionStatus>("idle");
+  const [accountDeleteError, setAccountDeleteError] = useState<string | null>(null);
+  const [accountDeleteResult, setAccountDeleteResult] = useState<PrivacyMutationResponse | null>(null);
+  const [feedbackTargetType, setFeedbackTargetType] = useState<(typeof feedbackTargetOptions)[number]["value"]>("knowledge_answer");
+  const [feedbackTargetId, setFeedbackTargetId] = useState("");
+  const [feedbackRating, setFeedbackRating] = useState(4);
+  const [feedbackNote, setFeedbackNote] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState<FeedbackSubmitStatus>("idle");
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadListItem[]>([]);
   const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
   const [activeConversation, setActiveConversation] = useState<ActiveConversation>(null);
@@ -303,6 +499,8 @@ export function NingyuAppShell() {
   const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
   const [draftInputSeed, setDraftInputSeed] = useState<DraftInputSeed | null>(null);
   const [highRiskSafety, setHighRiskSafety] = useState<HighRiskSafetyState | null>(null);
+  const [activeEdgePanel, setActiveEdgePanel] = useState<EdgePanel>(null);
+  const shouldReduceMotion = Boolean(useReducedMotion());
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -316,6 +514,35 @@ export function NingyuAppShell() {
     activeConversationRef.current = activeConversation;
     activeThreadIdRef.current = activeThreadId;
   }, [activeConversation, activeThreadId]);
+
+  useEffect(() => {
+    if (highRiskSafety) {
+      setActiveEdgePanel(null);
+      setIsSafetyEntryOpen(true);
+    }
+  }, [highRiskSafety]);
+
+  const closeEdgePanel = useCallback(() => {
+    const closingPanel = activeEdgePanel;
+    setActiveEdgePanel(null);
+    if (closingPanel) {
+      focusElementById(edgePanelTriggerIds[closingPanel]);
+    }
+  }, [activeEdgePanel]);
+
+  const handleEdgePanelChange = useCallback((panel: EdgePanel) => {
+    if (panel === null) {
+      closeEdgePanel();
+      return;
+    }
+
+    setActiveEdgePanel(panel);
+  }, [closeEdgePanel]);
+
+  const closeSafetyLayer = useCallback(() => {
+    setIsSafetyEntryOpen(false);
+    focusElementById("ningyu-safety-trigger");
+  }, []);
 
   useEffect(() => {
     setRecordedMoodCheckInDay(readRecordedMoodCheckInDay(getMoodCheckInStorage(), moodCheckInOwnerId));
@@ -356,6 +583,64 @@ export function NingyuAppShell() {
     } catch (error) {
       setWeeklySummaryStatus("error");
       setWeeklySummaryError(error instanceof Error ? error.message : "每周情绪小结加载失败，请稍后再试。");
+    }
+  }, []);
+
+  const loadTests = useCallback(async () => {
+    setTestListStatus("loading");
+    setTestListError(null);
+
+    try {
+      const response = await api.listTests();
+      setTests(response.items);
+      setTestListStatus("success");
+    } catch (error) {
+      setTestListStatus("error");
+      setTestListError(error instanceof Error ? error.message : "测试列表暂时没有加载成功。");
+    }
+  }, []);
+
+  const loadTestHistory = useCallback(async () => {
+    setTestHistoryStatus("loading");
+    setTestHistoryError(null);
+
+    try {
+      const response = await api.getTestHistory();
+      setTestHistory(response.items);
+      setTestHistoryStatus("success");
+    } catch (error) {
+      setTestHistoryStatus("error");
+      setTestHistoryError(error instanceof Error ? error.message : "测试历史暂时没有加载成功。");
+    }
+  }, []);
+
+  const loadMemories = useCallback(async () => {
+    setMemoryListStatus("loading");
+    setMemoryListError(null);
+
+    try {
+      const response = await api.listMemories();
+      setMemories(response.items);
+      setMemoryListStatus("success");
+    } catch (error) {
+      setMemoryListStatus("error");
+      setMemoryListError(error instanceof Error ? error.message : "记忆中心暂时没有加载成功。");
+    }
+  }, []);
+
+  const loadPrivacySummary = useCallback(async () => {
+    setPrivacyStatus("loading");
+    setPrivacyError(null);
+
+    try {
+      const response = await api.getPrivacySummary();
+      setPrivacySummary(response);
+      setSettingsMemoryMode(response.settings.memory_mode);
+      setSettingsSaveTranscript(response.settings.save_transcript);
+      setPrivacyStatus("success");
+    } catch (error) {
+      setPrivacyStatus("error");
+      setPrivacyError(error instanceof Error ? error.message : "隐私摘要暂时没有加载成功。");
     }
   }, []);
 
@@ -444,6 +729,27 @@ export function NingyuAppShell() {
   useEffect(() => {
     void loadWeeklySummary();
   }, [loadWeeklySummary]);
+
+  useEffect(() => {
+    void loadTests();
+  }, [loadTests]);
+
+  useEffect(() => {
+    void loadTestHistory();
+  }, [loadTestHistory]);
+
+  useEffect(() => {
+    void loadMemories();
+  }, [loadMemories]);
+
+  useEffect(() => {
+    void loadPrivacySummary();
+  }, [loadPrivacySummary]);
+
+  useEffect(() => {
+    setSettingsMemoryMode(memoryMode);
+    setSettingsSaveTranscript(privacySettings.saveTranscript);
+  }, [memoryMode, privacySettings.saveTranscript]);
 
   useEffect(() => {
     void loadThreads();
@@ -627,6 +933,408 @@ export function NingyuAppShell() {
     [],
   );
 
+  const handleKnowledgeSearch = useCallback(async () => {
+    const query = knowledgeQuery.trim();
+    if (!query) {
+      setKnowledgeSearchStatus("idle");
+      setKnowledgeSearchError(null);
+      setKnowledgeResults([]);
+      return;
+    }
+
+    setKnowledgeSearchStatus("loading");
+    setKnowledgeSearchError(null);
+
+    try {
+      const response = await api.searchKnowledge(query, {
+        category: knowledgeCategory || undefined,
+        audience: knowledgeAudience || undefined,
+      });
+      setKnowledgeResults(response.items);
+      setKnowledgeSearchStatus("success");
+    } catch (error) {
+      setKnowledgeSearchStatus("error");
+      setKnowledgeSearchError(error instanceof Error ? error.message : "知识搜索暂时没有成功，请稍后再试。");
+    }
+  }, [knowledgeAudience, knowledgeCategory, knowledgeQuery]);
+
+  const handleKnowledgeArticleSelect = useCallback(async (articleId: string) => {
+    setKnowledgeArticleStatus("loading");
+    setKnowledgeArticleError(null);
+
+    try {
+      const response = await api.getKnowledgeArticle(articleId);
+      setKnowledgeArticle(response);
+      setKnowledgeArticleStatus("success");
+    } catch (error) {
+      setKnowledgeArticleStatus("error");
+      setKnowledgeArticleError(error instanceof Error ? error.message : "文章详情暂时没有加载成功。");
+    }
+  }, []);
+
+  const ensureThreadForKnowledgeSafety = useCallback(async (): Promise<string | null> => {
+    if (activeThreadIdRef.current) {
+      return activeThreadIdRef.current;
+    }
+
+    try {
+      const thread = await api.startThread({
+        mode: "companion",
+        title: "知识问答安全支持",
+      });
+      const threadItem = toThreadListItemFromStartThread(thread);
+      setDraftThread(null);
+      draftCreationRef.current = null;
+      activeThreadIdRef.current = threadItem.thread_id;
+      activateThread(threadItem, { clearMessages: true, skipMessageLoad: true });
+      return threadItem.thread_id;
+    } catch {
+      setIsSafetyEntryOpen(true);
+      setHighRiskSafety({
+        riskLevel: "L2",
+        threadId: "knowledge",
+        eventStatus: "error",
+        error: "已打开安全支持，但知识问答暂时没有可记录的对话线程。",
+      });
+      return null;
+    }
+  }, [activateThread]);
+
+  const handleKnowledgeAsk = useCallback(async () => {
+    const question = knowledgeQuestion.trim();
+    if (!question) {
+      setKnowledgeAskStatus("idle");
+      setKnowledgeAskError(null);
+      setKnowledgeAnswer(null);
+      setKnowledgeRiskLevel(null);
+      return;
+    }
+
+    setKnowledgeAskStatus("loading");
+    setKnowledgeAskError(null);
+    setKnowledgeRiskLevel(null);
+
+    try {
+      const response = await api.askKnowledge({
+        question,
+        use_my_context: true,
+        thread_id: activeThreadIdRef.current,
+      });
+
+      if (isHighRiskLevel(response.risk_level)) {
+        setKnowledgeAnswer(null);
+        setKnowledgeRiskLevel(response.risk_level);
+        setKnowledgeAskStatus("success");
+        const threadId = response.continue_chat_payload.thread_id ?? (await ensureThreadForKnowledgeSafety());
+        if (threadId) {
+          void handleHighRiskChatResponse({
+            threadId,
+            riskLevel: response.risk_level,
+            detectedSignals: [
+              "knowledge_ask",
+              response.coverage_status,
+              response.scope_status,
+              response.confidence,
+              response.question_suggestion?.matched_term,
+              ...response.answer.seek_help_when,
+            ].filter((item): item is string => typeof item === "string" && item.length > 0),
+          });
+        }
+        return;
+      }
+
+      setKnowledgeAnswer(response);
+      setKnowledgeAskStatus("success");
+      setKnowledgeRiskLevel(response.risk_level);
+    } catch (error) {
+      setKnowledgeAskStatus("error");
+      setKnowledgeAskError(error instanceof Error ? error.message : "知识问答暂时没有成功，请稍后再试。");
+    }
+  }, [ensureThreadForKnowledgeSafety, handleHighRiskChatResponse, knowledgeQuestion]);
+
+  const handleKnowledgeContinueChat = useCallback(() => {
+    const summary = knowledgeAnswer?.answer.summary_30s || knowledgeArticle?.summary_30s || knowledgeQuestion.trim();
+    if (!summary) return;
+
+    activateDraft();
+    setDraftInputSeed({
+      id: crypto.randomUUID(),
+      text: `我想继续聊聊这个主题：${summary}`,
+    });
+    setActiveEdgePanel(null);
+  }, [activateDraft, knowledgeAnswer, knowledgeArticle, knowledgeQuestion]);
+
+  const handleTestSelect = useCallback(async (test: TestListItem) => {
+    if (test.status !== "published") {
+      setTestDetailStatus("error");
+      setTestDetailError("这个测试还没有发布，暂时不能开始。");
+      return;
+    }
+
+    setTestDetailStatus("loading");
+    setTestDetailError(null);
+    setSelectedTest(null);
+    setTestAttempt(null);
+    setTestAnswers({});
+    setTestResult(null);
+    setTestShareCard(null);
+
+    try {
+      const detail = await api.getTest(test.test_id);
+      setSelectedTest(detail);
+      setTestDetailStatus("success");
+    } catch (error) {
+      setTestDetailStatus("error");
+      setTestDetailError(error instanceof Error ? error.message : "测试详情暂时没有加载成功。");
+    }
+  }, []);
+
+  const handleTestStart = useCallback(async () => {
+    if (!selectedTest || testAttemptStatus === "loading") return;
+
+    setTestAttemptStatus("loading");
+    setTestAttemptError(null);
+    setTestAnswers({});
+    setTestResult(null);
+    setTestShareCard(null);
+
+    try {
+      const attempt = await api.startAttempt(selectedTest.test_id);
+      setTestAttempt(attempt);
+      setTestAttemptStatus("success");
+    } catch (error) {
+      setTestAttemptStatus("error");
+      setTestAttemptError(error instanceof Error ? error.message : "测试暂时没有开始成功。");
+    }
+  }, [selectedTest, testAttemptStatus]);
+
+  const handleTestAnswer = useCallback(
+    async (questionIndex: number, optionId: string) => {
+      if (!testAttempt || testAnswerStatus === "loading" || testResultStatus === "loading") return;
+
+      setTestAnswerStatus("loading");
+      setTestAnswerError(null);
+
+      try {
+        await api.submitAnswer(testAttempt.attempt_id, {
+          question_index: questionIndex,
+          option_id: optionId,
+        });
+        setTestAnswers((current) => ({ ...current, [questionIndex]: optionId }));
+        setTestAnswerStatus("success");
+      } catch (error) {
+        setTestAnswerStatus("error");
+        setTestAnswerError(error instanceof Error ? error.message : "这个答案暂时没有保存成功。");
+      }
+    },
+    [testAnswerStatus, testAttempt, testResultStatus],
+  );
+
+  const handleTestComplete = useCallback(async () => {
+    if (!testAttempt || testResultStatus === "loading") return;
+
+    setTestResultStatus("loading");
+    setTestResultError(null);
+
+    try {
+      const result = await api.completeAttempt(testAttempt.attempt_id);
+      setTestResult(result);
+      setTestShareCard(buildTestShareCardPayload(result));
+      setTestResultStatus("success");
+      void loadTestHistory();
+    } catch (error) {
+      setTestResultStatus("error");
+      setTestResultError(error instanceof Error ? error.message : "测试结果暂时没有生成成功。");
+    }
+  }, [loadTestHistory, testAttempt, testResultStatus]);
+
+  const handleTestHistorySelect = useCallback(async (attemptId: string) => {
+    setTestResultStatus("loading");
+    setTestResultError(null);
+
+    try {
+      const result = await api.getAttemptResult(attemptId);
+      setTestResult(result);
+      setTestShareCard(buildTestShareCardPayload(result));
+      setTestResultStatus("success");
+    } catch (error) {
+      setTestResultStatus("error");
+      setTestResultError(error instanceof Error ? error.message : "历史结果暂时没有加载成功。");
+    }
+  }, []);
+
+  const handleTestContinueChat = useCallback(() => {
+    if (!testResult) return;
+
+    activateDraft();
+    setDraftInputSeed({
+      id: crypto.randomUUID(),
+      text: `我想根据这个测试结果继续聊聊：${testResult.result_title}。${testResult.summary}`,
+    });
+    setActiveEdgePanel(null);
+  }, [activateDraft, testResult]);
+
+  const handleMemoryEditStart = useCallback((memory: MemoryItem) => {
+    setEditingMemoryId(memory.memory_id);
+    setMemoryDraft(memory.content);
+    setMemoryMutationStatus("idle");
+    setMemoryMutationError(null);
+  }, []);
+
+  const handleMemorySave = useCallback(async () => {
+    if (!editingMemoryId || !memoryDraft.trim()) return;
+
+    setMemoryMutationStatus("loading");
+    setMemoryMutationError(null);
+
+    try {
+      const response = await api.updateMemory(editingMemoryId, { content: memoryDraft.trim() });
+      setMemories((current) =>
+        current.map((memory) =>
+          memory.memory_id === editingMemoryId
+            ? { ...memory, content: response.content ?? memoryDraft.trim() }
+            : memory,
+        ),
+      );
+      setEditingMemoryId(null);
+      setMemoryDraft("");
+      setMemoryMutationStatus("success");
+    } catch (error) {
+      setMemoryMutationStatus("error");
+      setMemoryMutationError(error instanceof Error ? error.message : "记忆暂时没有保存成功。");
+    }
+  }, [editingMemoryId, memoryDraft]);
+
+  const handleMemoryDelete = useCallback(async (memoryId: string) => {
+    setMemoryMutationStatus("loading");
+    setMemoryMutationError(null);
+
+    try {
+      await api.deleteMemory(memoryId);
+      setMemories((current) => current.filter((memory) => memory.memory_id !== memoryId));
+      if (editingMemoryId === memoryId) {
+        setEditingMemoryId(null);
+        setMemoryDraft("");
+      }
+      setMemoryMutationStatus("success");
+    } catch (error) {
+      setMemoryMutationStatus("error");
+      setMemoryMutationError(error instanceof Error ? error.message : "记忆暂时没有删除成功。");
+    }
+  }, [editingMemoryId]);
+
+  const handleMemoriesClear = useCallback(async () => {
+    setMemoryMutationStatus("loading");
+    setMemoryMutationError(null);
+
+    try {
+      await api.clearMemories();
+      setMemories([]);
+      setEditingMemoryId(null);
+      setMemoryDraft("");
+      setMemoryMutationStatus("success");
+    } catch (error) {
+      setMemoryMutationStatus("error");
+      setMemoryMutationError(error instanceof Error ? error.message : "记忆暂时没有清空成功。");
+    }
+  }, []);
+
+  const handleSettingsSave = useCallback(async () => {
+    setSettingsStatus("loading");
+    setSettingsError(null);
+
+    try {
+      const response = await api.updateSettings({
+        memory_mode: settingsMemoryMode,
+        save_transcript: settingsSaveTranscript,
+      });
+      setMemoryMode(response.memory_mode);
+      updatePrivacySettings({ saveTranscript: response.save_transcript });
+      setSettingsMemoryMode(response.memory_mode);
+      setSettingsSaveTranscript(response.save_transcript);
+      setSettingsStatus("success");
+    } catch (error) {
+      setSettingsStatus("error");
+      setSettingsError(error instanceof Error ? error.message : "设置暂时没有保存成功。");
+    }
+  }, [settingsMemoryMode, settingsSaveTranscript, setMemoryMode, updatePrivacySettings]);
+
+  const handleDataExport = useCallback(async () => {
+    setDataExportStatus("loading");
+    setDataExportError(null);
+
+    try {
+      const response = await api.exportPersonalData();
+      setPersonalDataExport(response);
+      setDataExportStatus("success");
+    } catch (error) {
+      setDataExportStatus("error");
+      setDataExportError(error instanceof Error ? error.message : "个人数据暂时没有导出成功。");
+    }
+  }, []);
+
+  const handleDataDelete = useCallback(async () => {
+    setDataDeleteStatus("loading");
+    setDataDeleteError(null);
+
+    try {
+      const response = await api.deletePersonalData({ scope: deleteScope });
+      setDataDeleteResult(response);
+      setDataDeleteStatus("success");
+      void loadMemories();
+      void loadPrivacySummary();
+    } catch (error) {
+      setDataDeleteStatus("error");
+      setDataDeleteError(error instanceof Error ? error.message : "选定数据暂时没有删除成功。");
+    }
+  }, [deleteScope, loadMemories, loadPrivacySummary]);
+
+  const handleAccountDelete = useCallback(async () => {
+    if (accountConfirmation.trim() !== "注销账号") {
+      setAccountDeleteStatus("error");
+      setAccountDeleteError("请输入“注销账号”才能继续。");
+      return;
+    }
+
+    setAccountDeleteStatus("loading");
+    setAccountDeleteError(null);
+
+    try {
+      const response = await api.deleteAccount({ confirmation: "DELETE" });
+      setAccountDeleteResult(response);
+      setAccountDeleteStatus("success");
+    } catch (error) {
+      setAccountDeleteStatus("error");
+      setAccountDeleteError(error instanceof Error ? error.message : "账号暂时没有注销成功。");
+    }
+  }, [accountConfirmation]);
+
+  const handleFeedbackSubmit = useCallback(async () => {
+    const targetId = feedbackTargetId.trim();
+    if (!targetId) {
+      setFeedbackStatus("error");
+      setFeedbackError("请填写要反馈的内容编号。");
+      return;
+    }
+
+    setFeedbackStatus("loading");
+    setFeedbackError(null);
+
+    try {
+      await api.submitFeedback({
+        target_type: feedbackTargetType,
+        target_id: targetId,
+        rating: feedbackRating,
+        note: feedbackNote.trim() ? feedbackNote.trim() : null,
+      });
+      setFeedbackStatus("success");
+      setFeedbackNote("");
+    } catch (error) {
+      setFeedbackStatus("error");
+      setFeedbackError(error instanceof Error ? error.message : "反馈暂时没有提交成功，但不会影响主要流程。");
+    }
+  }, [feedbackNote, feedbackRating, feedbackTargetId, feedbackTargetType]);
+
   const updateMessage = useCallback((messageId: string, updater: (message: Message) => Message) => {
     setMessages((current) => current.map((message) => (message.id === messageId ? updater(message) : message)));
   }, []);
@@ -804,7 +1512,7 @@ export function NingyuAppShell() {
 
         if (typedEvent === "heartbeat") {
           const heartbeat = data as unknown as ChatStreamHeartbeatEvent;
-          setStreamStatusDetail(`仍在生成 · ${(heartbeat.elapsed_ms / 1000).toFixed(1)}s`);
+          setStreamStatusDetail(`仍在生成 · ${(heartbeat.elapsed_ms / 1000).toFixed(1)}秒`);
           return;
         }
 
@@ -1115,24 +1823,51 @@ export function NingyuAppShell() {
           onToggleSafetyEntry={handleToggleSafetyEntry}
           isSafetyEntryOpen={isSafetyEntryOpen}
         />
-        <div className="ningyu-shell__body">
-          <LeftSidebar
-            isNight={isNight}
-            sections={conversationList.sections}
-            activeConversation={activeConversation}
-            threadListStatus={threadListStatus}
-            threadListError={threadListError}
-            hiddenEmptyThreadCount={conversationList.hiddenEmptyThreadCount}
-            overflowThreadCount={conversationList.overflowThreadCount}
+        <main className="ningyu-shell__body">
+          <FloatingEdgeControls
+            activePanel={activeEdgePanel}
             createThreadStatus={createThreadStatus}
-            createThreadError={createThreadError}
-            userModeLabel={userModeLabels[userMode]}
-            memoryModeLabel={memoryModeLabels[memoryMode]}
-            onSelectEntry={handleSelectConversationEntry}
+            isSafetyEntryOpen={isSafetyEntryOpen}
+            shouldReduceMotion={shouldReduceMotion}
+            onPanelChange={handleEdgePanelChange}
             onStartNewThread={handleStartNewThread}
+            onToggleSafetyEntry={handleToggleSafetyEntry}
           />
+          <AnimatePresence>
+            {activeEdgePanel === "history" ? (
+              <AccessibleLayer
+                className="ningyu-edge-panel ningyu-edge-panel--left"
+                id="ningyu-history-panel"
+                key="history"
+                label="历史面板"
+                shouldReduceMotion={shouldReduceMotion}
+                slideDirection="left"
+                onClose={closeEdgePanel}
+              >
+                <button className="ningyu-edge-panel__close" type="button" onClick={closeEdgePanel} aria-label="关闭历史面板">
+                  x
+                </button>
+                <LeftSidebar
+                  isNight={isNight}
+                  sections={conversationList.sections}
+                  activeConversation={activeConversation}
+                  threadListStatus={threadListStatus}
+                  threadListError={threadListError}
+                  hiddenEmptyThreadCount={conversationList.hiddenEmptyThreadCount}
+                  overflowThreadCount={conversationList.overflowThreadCount}
+                  createThreadStatus={createThreadStatus}
+                  createThreadError={createThreadError}
+                  userModeLabel={userModeLabels[userMode]}
+                  memoryModeLabel={memoryModeLabels[memoryMode]}
+                  onSelectEntry={handleSelectConversationEntry}
+                  onStartNewThread={handleStartNewThread}
+                />
+              </AccessibleLayer>
+            ) : null}
+          </AnimatePresence>
           <ChatWorkspace
             isNight={isNight}
+            shouldReduceMotion={shouldReduceMotion}
             primarySuggestion={homeSuggestions[0]?.label ?? ""}
             primarySupportLabel={supportResources[1].title}
             messages={messages}
@@ -1148,47 +1883,330 @@ export function NingyuAppShell() {
             onSend={handleSend}
             onMessageFeedback={handleMessageFeedback}
           />
-          <RightPanel
-            isNight={isNight}
-            currentUserLabel={displayName}
-            userMode={userMode}
-            statusTags={statusTags}
-            suggestions={visibleHomeSuggestions}
-            supportResources={supportResources}
-            safetyState={safetyState}
-            isSafetyEntryOpen={isSafetyEntryOpen}
-            highRiskSafety={highRiskSafety}
-            moodScore={moodScore}
-            moodTags={moodTags}
-            moodNote={moodNote}
-            moodStatus={moodStatus}
-            moodError={moodError}
-            latestMoodLog={latestMoodLog}
-            hasRecordedMoodToday={hasRecordedMoodToday}
-            moodTrendRange={moodTrendRange}
-            moodTrendStatus={moodTrendStatus}
-            moodTrendError={moodTrendError}
-            moodTrend={moodTrend}
-            weeklySummaryStatus={weeklySummaryStatus}
-            weeklySummaryError={weeklySummaryError}
-            weeklySummary={weeklySummary}
-            quickActionStatus={quickActionStatus}
-            activeQuickActionId={activeQuickActionId}
-            quickActionError={quickActionError}
-            quickActionResult={quickActionResult}
-            onMoodScoreChange={setMoodScore}
-            onMoodTagToggle={handleMoodTagToggle}
-            onMoodNoteChange={setMoodNote}
-            onMoodSubmit={handleMoodSubmit}
-            onMoodTrendRangeChange={setMoodTrendRange}
-            onQuickAction={handleQuickAction}
-            onToggleSafetyEntry={handleToggleSafetyEntry}
-            onRetrySafetyState={handleRetrySafetyState}
-            onLogout={handleLogout}
-          />
-        </div>
+          <AnimatePresence>
+            {activeEdgePanel === "tools" ? (
+              <AccessibleLayer
+                className="ningyu-edge-panel ningyu-edge-panel--right"
+                id="ningyu-tools-panel"
+                key="tools"
+                label="工具面板"
+                shouldReduceMotion={shouldReduceMotion}
+                slideDirection="right"
+                onClose={closeEdgePanel}
+              >
+                <button className="ningyu-edge-panel__close" type="button" onClick={closeEdgePanel} aria-label="关闭工具面板">
+                  x
+                </button>
+                <RightPanel
+                  isNight={isNight}
+                  currentUserLabel={displayName}
+                  userMode={userMode}
+                  statusTags={statusTags}
+                  suggestions={visibleHomeSuggestions}
+                  supportResources={supportResources}
+                  safetyState={safetyState}
+                  isSafetyEntryOpen={isSafetyEntryOpen}
+                  highRiskSafety={highRiskSafety}
+                  moodScore={moodScore}
+                  moodTags={moodTags}
+                  moodNote={moodNote}
+                  moodStatus={moodStatus}
+                  moodError={moodError}
+                  latestMoodLog={latestMoodLog}
+                  hasRecordedMoodToday={hasRecordedMoodToday}
+                  moodTrendRange={moodTrendRange}
+                  moodTrendStatus={moodTrendStatus}
+                  moodTrendError={moodTrendError}
+                  moodTrend={moodTrend}
+                  weeklySummaryStatus={weeklySummaryStatus}
+                  weeklySummaryError={weeklySummaryError}
+                  weeklySummary={weeklySummary}
+                  quickActionStatus={quickActionStatus}
+                  activeQuickActionId={activeQuickActionId}
+                  quickActionError={quickActionError}
+                  quickActionResult={quickActionResult}
+                  knowledgeQuery={knowledgeQuery}
+                  knowledgeCategory={knowledgeCategory}
+                  knowledgeAudience={knowledgeAudience}
+                  knowledgeSearchStatus={knowledgeSearchStatus}
+                  knowledgeSearchError={knowledgeSearchError}
+                  knowledgeResults={knowledgeResults}
+                  knowledgeArticleStatus={knowledgeArticleStatus}
+                  knowledgeArticleError={knowledgeArticleError}
+                  knowledgeArticle={knowledgeArticle}
+                  knowledgeQuestion={knowledgeQuestion}
+                  knowledgeAskStatus={knowledgeAskStatus}
+                  knowledgeAskError={knowledgeAskError}
+                  knowledgeAnswer={knowledgeAnswer}
+                  knowledgeRiskLevel={knowledgeRiskLevel}
+                  tests={tests}
+                  testListStatus={testListStatus}
+                  testListError={testListError}
+                  selectedTest={selectedTest}
+                  testDetailStatus={testDetailStatus}
+                  testDetailError={testDetailError}
+                  testAttempt={testAttempt}
+                  testAttemptStatus={testAttemptStatus}
+                  testAttemptError={testAttemptError}
+                  testAnswers={testAnswers}
+                  testAnswerStatus={testAnswerStatus}
+                  testAnswerError={testAnswerError}
+                  testResult={testResult}
+                  testResultStatus={testResultStatus}
+                  testResultError={testResultError}
+                  testHistory={testHistory}
+                  testHistoryStatus={testHistoryStatus}
+                  testHistoryError={testHistoryError}
+                  testShareCard={testShareCard}
+                  memories={memories}
+                  memoryListStatus={memoryListStatus}
+                  memoryListError={memoryListError}
+                  editingMemoryId={editingMemoryId}
+                  memoryDraft={memoryDraft}
+                  memoryMutationStatus={memoryMutationStatus}
+                  memoryMutationError={memoryMutationError}
+                  settingsMemoryMode={settingsMemoryMode}
+                  settingsSaveTranscript={settingsSaveTranscript}
+                  settingsStatus={settingsStatus}
+                  settingsError={settingsError}
+                  privacySummary={privacySummary}
+                  privacyStatus={privacyStatus}
+                  privacyError={privacyError}
+                  dataExportStatus={dataExportStatus}
+                  dataExportError={dataExportError}
+                  personalDataExport={personalDataExport}
+                  deleteScope={deleteScope}
+                  dataDeleteStatus={dataDeleteStatus}
+                  dataDeleteError={dataDeleteError}
+                  dataDeleteResult={dataDeleteResult}
+                  accountConfirmation={accountConfirmation}
+                  accountDeleteStatus={accountDeleteStatus}
+                  accountDeleteError={accountDeleteError}
+                  accountDeleteResult={accountDeleteResult}
+                  feedbackTargetType={feedbackTargetType}
+                  feedbackTargetId={feedbackTargetId}
+                  feedbackRating={feedbackRating}
+                  feedbackNote={feedbackNote}
+                  feedbackStatus={feedbackStatus}
+                  feedbackError={feedbackError}
+                  onMoodScoreChange={setMoodScore}
+                  onMoodTagToggle={handleMoodTagToggle}
+                  onMoodNoteChange={setMoodNote}
+                  onMoodSubmit={handleMoodSubmit}
+                  onMoodTrendRangeChange={setMoodTrendRange}
+                  onQuickAction={handleQuickAction}
+                  onKnowledgeQueryChange={setKnowledgeQuery}
+                  onKnowledgeCategoryChange={setKnowledgeCategory}
+                  onKnowledgeAudienceChange={setKnowledgeAudience}
+                  onKnowledgeSearch={handleKnowledgeSearch}
+                  onKnowledgeArticleSelect={handleKnowledgeArticleSelect}
+                  onKnowledgeQuestionChange={setKnowledgeQuestion}
+                  onKnowledgeAsk={handleKnowledgeAsk}
+                  onKnowledgeContinueChat={handleKnowledgeContinueChat}
+                  onTestSelect={handleTestSelect}
+                  onTestStart={handleTestStart}
+                  onTestAnswer={handleTestAnswer}
+                  onTestComplete={handleTestComplete}
+                  onTestHistorySelect={handleTestHistorySelect}
+                  onTestContinueChat={handleTestContinueChat}
+                  onMemoryEditStart={handleMemoryEditStart}
+                  onMemoryDraftChange={setMemoryDraft}
+                  onMemorySave={handleMemorySave}
+                  onMemoryDelete={handleMemoryDelete}
+                  onMemoriesClear={handleMemoriesClear}
+                  onSettingsMemoryModeChange={setSettingsMemoryMode}
+                  onSettingsSaveTranscriptChange={setSettingsSaveTranscript}
+                  onSettingsSave={handleSettingsSave}
+                  onDataExport={handleDataExport}
+                  onDeleteScopeChange={setDeleteScope}
+                  onDataDelete={handleDataDelete}
+                  onAccountConfirmationChange={setAccountConfirmation}
+                  onAccountDelete={handleAccountDelete}
+                  onFeedbackTargetTypeChange={setFeedbackTargetType}
+                  onFeedbackTargetIdChange={setFeedbackTargetId}
+                  onFeedbackRatingChange={setFeedbackRating}
+                  onFeedbackNoteChange={setFeedbackNote}
+                  onFeedbackSubmit={handleFeedbackSubmit}
+                  onToggleSafetyEntry={handleToggleSafetyEntry}
+                  onRetrySafetyState={handleRetrySafetyState}
+                  onLogout={handleLogout}
+                />
+              </AccessibleLayer>
+            ) : null}
+          </AnimatePresence>
+          <AnimatePresence>
+            {isSafetyEntryOpen ? (
+              <SafetySupportLayer
+                key="safety-layer"
+                userMode={userMode}
+                safetyState={safetyState}
+                highRiskSafety={highRiskSafety}
+                supportResources={supportResources}
+                shouldReduceMotion={shouldReduceMotion}
+                onClose={closeSafetyLayer}
+                onRetrySafetyState={handleRetrySafetyState}
+              />
+            ) : null}
+          </AnimatePresence>
+        </main>
       </div>
     </div>
+  );
+}
+
+function AccessibleLayer({
+  children,
+  className,
+  id,
+  label,
+  shouldReduceMotion,
+  slideDirection,
+  onClose,
+}: {
+  children: ReactNode;
+  className: string;
+  id: string;
+  label: string;
+  shouldReduceMotion: boolean;
+  slideDirection: "left" | "right";
+  onClose: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const offset = slideDirection === "left" ? -28 : 28;
+
+  useEffect(() => {
+    const target = layerRef.current?.querySelector<HTMLElement>(focusableSelector) ?? layerRef.current;
+    target?.focus();
+  }, []);
+
+  return (
+    <motion.div
+      ref={layerRef}
+      className={className}
+      id={id}
+      role="dialog"
+      aria-modal="false"
+      aria-label={label}
+      tabIndex={-1}
+      initial={shouldReduceMotion ? false : { opacity: 0, x: offset }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={shouldReduceMotion ? undefined : { opacity: 0, x: offset / 2 }}
+      transition={{ duration: 0.24, ease: "easeOut" }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function SafetySupportLayer({
+  userMode,
+  safetyState,
+  highRiskSafety,
+  supportResources,
+  shouldReduceMotion,
+  onClose,
+  onRetrySafetyState,
+}: {
+  userMode: UserMode;
+  safetyState: { tone: SafetyTone; label: string; detail: string };
+  highRiskSafety: HighRiskSafetyState | null;
+  supportResources: HomeSupportResource[];
+  shouldReduceMotion: boolean;
+  onClose: () => void;
+  onRetrySafetyState: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const isHighRisk = Boolean(highRiskSafety);
+
+  useEffect(() => {
+    const target = layerRef.current?.querySelector<HTMLElement>(focusableSelector) ?? layerRef.current;
+    target?.focus();
+  }, []);
+
+  return (
+    <motion.div
+      className="ningyu-safety-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ningyu-safety-layer-title"
+      initial={shouldReduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <button className="ningyu-safety-layer__backdrop" type="button" tabIndex={-1} aria-label="关闭安全支持" onClick={onClose} />
+      <motion.div
+        ref={layerRef}
+        className={`ningyu-safety-layer__sheet ${isHighRisk ? "is-high-risk" : ""}`}
+        tabIndex={-1}
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ duration: 0.24, ease: "easeOut" }}
+      >
+        <div className="ningyu-safety-layer__header">
+          <span>
+            <Icon name="shield" />
+          </span>
+          <div>
+            <small>{isHighRisk ? "高优先级安全支持" : "安全支持"}</small>
+            <h2 id="ningyu-safety-layer-title">{isHighRisk ? "现在先把安全放在第一位" : "安全支持已准备好"}</h2>
+            <p>{safetyState.detail}</p>
+          </div>
+          <button className="ningyu-safety-layer__close" type="button" onClick={onClose} aria-label="关闭安全支持">
+            ×
+          </button>
+        </div>
+
+        <div className="ningyu-safety-layer__status" aria-live="polite">
+          <strong>{safetyState.label}</strong>
+          <span>
+            {highRiskSafety
+              ? highRiskSafety.eventStatus === "recorded"
+                ? `安全事件已记录${highRiskSafety.eventId ? ` · ${highRiskSafety.eventId}` : ""}`
+                : highRiskSafety.eventStatus === "recording"
+                  ? "正在记录安全事件..."
+                  : highRiskSafety.error || "安全事件记录失败，但支持入口仍然可用。"
+              : "当前没有高风险事件。"}
+          </span>
+        </div>
+
+        <SafetyGuidanceCard userMode={userMode} highRiskSafety={highRiskSafety} />
+
+        <div className="ningyu-safety-layer__resources" aria-label="安全资源">
+          {supportResources.map((resource) => (
+            <button className="ningyu-support-card" key={resource.id} type="button">
+              <Icon name={resource.icon} />
+              <span>
+                <small>{resource.label}</small>
+                {resource.title}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="ningyu-safety-layer__actions">
+          <button type="button" onClick={onRetrySafetyState}>
+            重新检查安全状态
+          </button>
+          <button type="button" onClick={onClose}>
+            回到聊天
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1213,7 +2231,7 @@ function GentleLoginTransition({ children, isNight }: { children: React.ReactNod
           <div className="ningyu-login__mist" />
           <section className="ningyu-login__box">
             <div className="ningyu-login__logo">
-              <img src={logo} alt="宁语 Logo" />
+              <img src={logo} alt="宁语标志" />
             </div>
             <h2 id="ningyu-login-title">深呼吸，感受微风</h2>
             <input type="text" placeholder="你的名字..." aria-label="你的名字" />
@@ -1247,7 +2265,7 @@ function Header({
   return (
     <header className="ningyu-header">
       <div className="ningyu-brand">
-        <img src={logo} alt="宁语 Logo" />
+        <img src={logo} alt="宁语标志" />
         <div>
           <h1>宁语 · 心灵陪伴</h1>
           <p>
@@ -1273,6 +2291,87 @@ function Header({
         />
       </div>
     </header>
+  );
+}
+
+function FloatingEdgeControls({
+  activePanel,
+  createThreadStatus,
+  isSafetyEntryOpen,
+  shouldReduceMotion,
+  onPanelChange,
+  onStartNewThread,
+  onToggleSafetyEntry,
+}: {
+  activePanel: EdgePanel;
+  createThreadStatus: CreateThreadStatus;
+  isSafetyEntryOpen: boolean;
+  shouldReduceMotion: boolean;
+  onPanelChange: (panel: EdgePanel) => void;
+  onStartNewThread: () => void;
+  onToggleSafetyEntry: () => void;
+}) {
+  const openPanel = (panel: Exclude<EdgePanel, null>) => {
+    onPanelChange(activePanel === panel ? null : panel);
+  };
+
+  return (
+    <>
+      <motion.div
+        className="ningyu-floating-controls ningyu-floating-controls--left"
+        initial={shouldReduceMotion ? false : { opacity: 0, x: -16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.38, delay: 0.2, ease: "easeOut" }}
+      >
+        <button
+          id="ningyu-history-trigger"
+          className={activePanel === "history" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
+          type="button"
+          onClick={() => openPanel("history")}
+          aria-expanded={activePanel === "history"}
+          aria-controls="ningyu-history-panel"
+          aria-label="打开历史面板"
+        >
+          <Icon name="clock" />
+          <span>历史</span>
+        </button>
+        <button className="ningyu-edge-button" type="button" onClick={onStartNewThread} disabled={createThreadStatus === "loading"} aria-label="开始新对话">
+          <Icon name="plus" />
+          <span>新对话</span>
+        </button>
+      </motion.div>
+
+      <motion.div
+        className="ningyu-floating-controls ningyu-floating-controls--right"
+        initial={shouldReduceMotion ? false : { opacity: 0, x: 16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.38, delay: 0.28, ease: "easeOut" }}
+      >
+        <button
+          id="ningyu-tools-trigger"
+          className={activePanel === "tools" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
+          type="button"
+          onClick={() => openPanel("tools")}
+          aria-expanded={activePanel === "tools"}
+          aria-controls="ningyu-tools-panel"
+          aria-label="打开工具面板"
+        >
+          <Icon name="spark" />
+          <span>工具</span>
+        </button>
+        <button
+          id="ningyu-safety-trigger"
+          className={isSafetyEntryOpen ? "ningyu-edge-button ningyu-edge-button--safety is-active" : "ningyu-edge-button ningyu-edge-button--safety"}
+          type="button"
+          onClick={onToggleSafetyEntry}
+          aria-expanded={isSafetyEntryOpen}
+          aria-label="打开安全支持"
+        >
+          <Icon name="shield" />
+          <span>求助</span>
+        </button>
+      </motion.div>
+    </>
   );
 }
 
@@ -1400,6 +2499,7 @@ function LeftSidebar({
 
 function ChatWorkspace({
   isNight,
+  shouldReduceMotion,
   primarySuggestion,
   primarySupportLabel,
   messages,
@@ -1416,6 +2516,7 @@ function ChatWorkspace({
   onMessageFeedback,
 }: {
   isNight: boolean;
+  shouldReduceMotion: boolean;
   primarySuggestion: string;
   primarySupportLabel: string;
   messages: Message[];
@@ -1431,42 +2532,65 @@ function ChatWorkspace({
   onSend: SendMessageHandler;
   onMessageFeedback: (message: Message, feedback: ConversationFeedbackValue) => void | Promise<void>;
 }) {
+  const chatPaperDate = useMemo(
+    () =>
+      new Intl.DateTimeFormat("zh-CN", {
+        month: "long",
+        day: "numeric",
+        weekday: "long",
+      }).format(new Date()),
+    [],
+  );
+
   return (
     <section className="ningyu-chat" aria-label="聊天工作区">
       <div className="ningyu-chat__scroll">
-        <div className="ningyu-chat__inner">
-          {messageListStatus === "loading" ? (
-            <ChatStateMessage title="正在载入对话" detail="风正在把这段聊天记录带回来..." />
-          ) : messageListStatus === "error" ? (
-            <ChatStateMessage title="消息暂时没加载出来" detail={messageListError ?? "请稍后再试。"} tone="error" />
-          ) : messages.length === 0 ? (
-            <WelcomeState
-              isNight={isNight}
-              primarySuggestion={primarySuggestion}
-              primarySupportLabel={primarySupportLabel}
-              activeThreadId={activeThreadId}
-            />
-          ) : (
-            <div className="ningyu-chat__messages">
-              {messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  message={message}
-                  isNight={isNight}
-                  onFeedback={onMessageFeedback}
-                />
-              ))}
-              {graphUpdates.length || chatStreamStatus !== "idle" ? (
-                <GraphUpdateTrail
-                  status={chatStreamStatus}
-                  error={chatStreamError}
-                  detail={streamStatusDetail}
-                  updates={graphUpdates}
-                />
-              ) : null}
-            </div>
-          )}
-        </div>
+        <motion.div
+          className="ningyu-chat__inner ningyu-chat-paper"
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.48, delay: 0.12, ease: "easeOut" }}
+        >
+          <div className="ningyu-chat-corner" aria-hidden="true" />
+          <header className="ningyu-chat-header">
+            <img className="ningyu-chat-seal" src={logo} alt="" aria-hidden="true" />
+            <h1 className="ningyu-chat-title">宁语手记</h1>
+            <p className="ningyu-chat-date">{chatPaperDate}</p>
+          </header>
+          <div className="ningyu-chat-paper__body">
+            {messageListStatus === "loading" ? (
+              <ChatStateMessage title="正在载入对话" detail="风正在把这段聊天记录带回来..." />
+            ) : messageListStatus === "error" ? (
+              <ChatStateMessage title="消息暂时没加载出来" detail={messageListError ?? "请稍后再试。"} tone="error" />
+            ) : messages.length === 0 ? (
+              <WelcomeState
+                isNight={isNight}
+                primarySuggestion={primarySuggestion}
+                primarySupportLabel={primarySupportLabel}
+                activeThreadId={activeThreadId}
+              />
+            ) : (
+              <div className="ningyu-chat__messages">
+                {messages.map((message) => (
+                  <ChatMessage
+                    key={message.id}
+                    message={message}
+                    isNight={isNight}
+                    onFeedback={onMessageFeedback}
+                  />
+                ))}
+                {graphUpdates.length || chatStreamStatus !== "idle" ? (
+                  <GraphUpdateTrail
+                    status={chatStreamStatus}
+                    error={chatStreamError}
+                    detail={streamStatusDetail}
+                    updates={graphUpdates}
+                  />
+                ) : null}
+              </div>
+            )}
+          </div>
+        </motion.div>
       </div>
       <div className="ningyu-chat__input">
         <ChatInput
@@ -1662,7 +2786,7 @@ function TraceLine({ trace }: { trace: TraceTiming }) {
     totalDuration ? `总耗时 ${totalDuration}` : null,
     graphDuration ? `图 ${graphDuration}` : null,
     trace.node && nodeDuration ? `节点 ${trace.node} ${nodeDuration}` : trace.node ? `节点 ${trace.node}` : null,
-    hasRagInfo ? formatRagStatus(trace) : ragDuration ? `RAG ${ragDuration}` : null,
+    hasRagInfo ? formatRagStatus(trace) : ragDuration ? `知识检索 ${ragDuration}` : null,
     trace.ragSkippedReason ? `原因 ${trace.ragSkippedReason}` : null,
     trace.slowestNode && slowestDuration ? `最慢 ${trace.slowestNode} ${slowestDuration}` : null,
   ].filter((part): part is string => Boolean(part));
@@ -1740,12 +2864,108 @@ function RightPanel({
   activeQuickActionId,
   quickActionError,
   quickActionResult,
+  knowledgeQuery,
+  knowledgeCategory,
+  knowledgeAudience,
+  knowledgeSearchStatus,
+  knowledgeSearchError,
+  knowledgeResults,
+  knowledgeArticleStatus,
+  knowledgeArticleError,
+  knowledgeArticle,
+  knowledgeQuestion,
+  knowledgeAskStatus,
+  knowledgeAskError,
+  knowledgeAnswer,
+  knowledgeRiskLevel,
+  tests,
+  testListStatus,
+  testListError,
+  selectedTest,
+  testDetailStatus,
+  testDetailError,
+  testAttempt,
+  testAttemptStatus,
+  testAttemptError,
+  testAnswers,
+  testAnswerStatus,
+  testAnswerError,
+  testResult,
+  testResultStatus,
+  testResultError,
+  testHistory,
+  testHistoryStatus,
+  testHistoryError,
+  testShareCard,
+  memories,
+  memoryListStatus,
+  memoryListError,
+  editingMemoryId,
+  memoryDraft,
+  memoryMutationStatus,
+  memoryMutationError,
+  settingsMemoryMode,
+  settingsSaveTranscript,
+  settingsStatus,
+  settingsError,
+  privacySummary,
+  privacyStatus,
+  privacyError,
+  dataExportStatus,
+  dataExportError,
+  personalDataExport,
+  deleteScope,
+  dataDeleteStatus,
+  dataDeleteError,
+  dataDeleteResult,
+  accountConfirmation,
+  accountDeleteStatus,
+  accountDeleteError,
+  accountDeleteResult,
+  feedbackTargetType,
+  feedbackTargetId,
+  feedbackRating,
+  feedbackNote,
+  feedbackStatus,
+  feedbackError,
   onMoodScoreChange,
   onMoodTagToggle,
   onMoodNoteChange,
   onMoodSubmit,
   onMoodTrendRangeChange,
   onQuickAction,
+  onKnowledgeQueryChange,
+  onKnowledgeCategoryChange,
+  onKnowledgeAudienceChange,
+  onKnowledgeSearch,
+  onKnowledgeArticleSelect,
+  onKnowledgeQuestionChange,
+  onKnowledgeAsk,
+  onKnowledgeContinueChat,
+  onTestSelect,
+  onTestStart,
+  onTestAnswer,
+  onTestComplete,
+  onTestHistorySelect,
+  onTestContinueChat,
+  onMemoryEditStart,
+  onMemoryDraftChange,
+  onMemorySave,
+  onMemoryDelete,
+  onMemoriesClear,
+  onSettingsMemoryModeChange,
+  onSettingsSaveTranscriptChange,
+  onSettingsSave,
+  onDataExport,
+  onDeleteScopeChange,
+  onDataDelete,
+  onAccountConfirmationChange,
+  onAccountDelete,
+  onFeedbackTargetTypeChange,
+  onFeedbackTargetIdChange,
+  onFeedbackRatingChange,
+  onFeedbackNoteChange,
+  onFeedbackSubmit,
   onToggleSafetyEntry,
   onRetrySafetyState,
   onLogout,
@@ -1777,17 +2997,373 @@ function RightPanel({
   activeQuickActionId: string | null;
   quickActionError: string | null;
   quickActionResult: QuickActionResult | null;
+  knowledgeQuery: string;
+  knowledgeCategory: string;
+  knowledgeAudience: string;
+  knowledgeSearchStatus: KnowledgeSearchStatus;
+  knowledgeSearchError: string | null;
+  knowledgeResults: KnowledgeSearchItem[];
+  knowledgeArticleStatus: KnowledgeArticleStatus;
+  knowledgeArticleError: string | null;
+  knowledgeArticle: KnowledgeArticleResponse | null;
+  knowledgeQuestion: string;
+  knowledgeAskStatus: KnowledgeAskStatus;
+  knowledgeAskError: string | null;
+  knowledgeAnswer: AskKnowledgeResponse | null;
+  knowledgeRiskLevel: RiskLevel | null;
+  tests: TestListItem[];
+  testListStatus: TestListStatus;
+  testListError: string | null;
+  selectedTest: TestDetailResponse | null;
+  testDetailStatus: TestDetailStatus;
+  testDetailError: string | null;
+  testAttempt: StartAttemptResponse | null;
+  testAttemptStatus: TestAttemptStatus;
+  testAttemptError: string | null;
+  testAnswers: Record<number, string>;
+  testAnswerStatus: TestAnswerStatus;
+  testAnswerError: string | null;
+  testResult: CompleteAttemptResponse | null;
+  testResultStatus: TestResultStatus;
+  testResultError: string | null;
+  testHistory: TestHistoryItem[];
+  testHistoryStatus: TestHistoryStatus;
+  testHistoryError: string | null;
+  testShareCard: TestShareCardPayload | null;
+  memories: MemoryItem[];
+  memoryListStatus: MemoryListStatus;
+  memoryListError: string | null;
+  editingMemoryId: string | null;
+  memoryDraft: string;
+  memoryMutationStatus: MemoryMutationStatus;
+  memoryMutationError: string | null;
+  settingsMemoryMode: MemoryMode;
+  settingsSaveTranscript: boolean;
+  settingsStatus: SettingsMutationStatus;
+  settingsError: string | null;
+  privacySummary: PrivacySummaryResponse | null;
+  privacyStatus: PrivacyStatus;
+  privacyError: string | null;
+  dataExportStatus: DataActionStatus;
+  dataExportError: string | null;
+  personalDataExport: PersonalDataExport | null;
+  deleteScope: PrivacyDataScope;
+  dataDeleteStatus: DataActionStatus;
+  dataDeleteError: string | null;
+  dataDeleteResult: PrivacyMutationResponse | null;
+  accountConfirmation: string;
+  accountDeleteStatus: DataActionStatus;
+  accountDeleteError: string | null;
+  accountDeleteResult: PrivacyMutationResponse | null;
+  feedbackTargetType: (typeof feedbackTargetOptions)[number]["value"];
+  feedbackTargetId: string;
+  feedbackRating: number;
+  feedbackNote: string;
+  feedbackStatus: FeedbackSubmitStatus;
+  feedbackError: string | null;
   onMoodScoreChange: (score: number) => void;
   onMoodTagToggle: (tagId: string) => void;
   onMoodNoteChange: (note: string) => void;
   onMoodSubmit: () => void;
   onMoodTrendRangeChange: (range: MoodTrendRange) => void;
   onQuickAction: (action: QuickAction) => void;
+  onKnowledgeQueryChange: (query: string) => void;
+  onKnowledgeCategoryChange: (category: string) => void;
+  onKnowledgeAudienceChange: (audience: string) => void;
+  onKnowledgeSearch: () => void;
+  onKnowledgeArticleSelect: (articleId: string) => void;
+  onKnowledgeQuestionChange: (question: string) => void;
+  onKnowledgeAsk: () => void;
+  onKnowledgeContinueChat: () => void;
+  onTestSelect: (test: TestListItem) => void;
+  onTestStart: () => void;
+  onTestAnswer: (questionIndex: number, optionId: string) => void;
+  onTestComplete: () => void;
+  onTestHistorySelect: (attemptId: string) => void;
+  onTestContinueChat: () => void;
+  onMemoryEditStart: (memory: MemoryItem) => void;
+  onMemoryDraftChange: (content: string) => void;
+  onMemorySave: () => void;
+  onMemoryDelete: (memoryId: string) => void;
+  onMemoriesClear: () => void;
+  onSettingsMemoryModeChange: (mode: MemoryMode) => void;
+  onSettingsSaveTranscriptChange: (saveTranscript: boolean) => void;
+  onSettingsSave: () => void;
+  onDataExport: () => void;
+  onDeleteScopeChange: (scope: PrivacyDataScope) => void;
+  onDataDelete: () => void;
+  onAccountConfirmationChange: (confirmation: string) => void;
+  onAccountDelete: () => void;
+  onFeedbackTargetTypeChange: (type: (typeof feedbackTargetOptions)[number]["value"]) => void;
+  onFeedbackTargetIdChange: (targetId: string) => void;
+  onFeedbackRatingChange: (rating: number) => void;
+  onFeedbackNoteChange: (note: string) => void;
+  onFeedbackSubmit: () => void;
   onToggleSafetyEntry: () => void;
   onRetrySafetyState: () => void;
   onLogout: () => void;
 }) {
+  const [activeToolSurface, setActiveToolSurface] = useState<"launcher" | "journey" | "actions" | "knowledge" | "tests" | "settings" | "safety">("launcher");
   const shouldShowGuidance = isSafetyEntryOpen || Boolean(highRiskSafety);
+
+  useEffect(() => {
+    if (shouldShowGuidance) {
+      setActiveToolSurface("safety");
+    }
+  }, [shouldShowGuidance]);
+
+  if (activeToolSurface === "launcher") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="工具入口">
+        <section className="ningyu-panel-section ningyu-tool-launcher">
+          <span className="ningyu-panel-section__caption">安静工具</span>
+          <h2>
+            <Icon name="spark" />
+            选择一个轻一点的下一步
+          </h2>
+          <div className="ningyu-tool-launcher__grid">
+            <button type="button" onClick={() => setActiveToolSurface("journey")}>
+              <Icon name="heart" />
+              <span>
+                <strong>今天的心情</strong>
+                <small>记录心情、趋势和每周小结。</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("journey")}>
+              <Icon name="leaf" />
+              <span>
+                <strong>我的轨迹</strong>
+                <small>安静查看最近几天的状态。</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("actions")}>
+              <Icon name="light" />
+              <span>
+                <strong>建议行动</strong>
+                <small>和聊天相连的小提示。</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("knowledge")}>
+              <Icon name="leaf" />
+              <span>
+                <strong>知识库</strong>
+                <small>搜索文章，或提出结构化问题。</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("tests")}>
+              <Icon name="spark" />
+              <span>
+                <strong>测试</strong>
+                <small>开始已发布测试并查看结果。</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveToolSurface("settings")}>
+              <Icon name="settings" />
+              <span>
+                <strong>设置</strong>
+                <small>隐私、记忆和产品边界。</small>
+              </span>
+            </button>
+          </div>
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "journey") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="我的轨迹">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <section className="ningyu-panel-section ningyu-panel-section--mood">
+          <span className="ningyu-panel-section__caption">我的轨迹</span>
+          <h2>
+            <Icon name="heart" />
+            心情打卡
+          </h2>
+          <MoodCheckIn
+            moodScore={moodScore}
+            moodTags={moodTags}
+            moodNote={moodNote}
+            moodStatus={moodStatus}
+            moodError={moodError}
+            latestMoodLog={latestMoodLog}
+            hasRecordedMoodToday={hasRecordedMoodToday}
+            onMoodScoreChange={onMoodScoreChange}
+            onMoodTagToggle={onMoodTagToggle}
+            onMoodNoteChange={onMoodNoteChange}
+            onMoodSubmit={onMoodSubmit}
+          />
+          <MoodTrendCard
+            range={moodTrendRange}
+            status={moodTrendStatus}
+            error={moodTrendError}
+            trend={moodTrend}
+            onRangeChange={onMoodTrendRangeChange}
+          />
+          <WeeklySummaryCard status={weeklySummaryStatus} error={weeklySummaryError} summary={weeklySummary} />
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "actions") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="建议行动">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <section className="ningyu-panel-section ningyu-panel-section--suggestions">
+          <span className="ningyu-panel-section__caption">建议行动</span>
+          <h2>
+            <Icon name="light" />
+            附近可以做的小事
+          </h2>
+          <div className="ningyu-suggestions">
+            {suggestions.length ? suggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                className={activeQuickActionId === suggestion.id ? "is-loading" : ""}
+                type="button"
+                onClick={() => onQuickAction(suggestion)}
+                disabled={quickActionStatus === "loading"}
+              >
+                {activeQuickActionId === suggestion.id ? "准备中..." : suggestion.label}
+              </button>
+            )) : <p className="ningyu-tool-empty">现在没有等待处理的建议行动。</p>}
+          </div>
+          <QuickActionFeedback status={quickActionStatus} error={quickActionError} result={quickActionResult} />
+        </section>
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "knowledge") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="知识库">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <KnowledgeSurface
+          query={knowledgeQuery}
+          category={knowledgeCategory}
+          audience={knowledgeAudience}
+          searchStatus={knowledgeSearchStatus}
+          searchError={knowledgeSearchError}
+          results={knowledgeResults}
+          articleStatus={knowledgeArticleStatus}
+          articleError={knowledgeArticleError}
+          article={knowledgeArticle}
+          question={knowledgeQuestion}
+          askStatus={knowledgeAskStatus}
+          askError={knowledgeAskError}
+          answer={knowledgeAnswer}
+          riskLevel={knowledgeRiskLevel}
+          highRiskSafety={highRiskSafety}
+          userMode={userMode}
+          onQueryChange={onKnowledgeQueryChange}
+          onCategoryChange={onKnowledgeCategoryChange}
+          onAudienceChange={onKnowledgeAudienceChange}
+          onSearch={onKnowledgeSearch}
+          onArticleSelect={onKnowledgeArticleSelect}
+          onQuestionChange={onKnowledgeQuestionChange}
+          onAsk={onKnowledgeAsk}
+          onContinueChat={onKnowledgeContinueChat}
+        />
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "tests") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="测试">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <TestSurface
+          tests={tests}
+          listStatus={testListStatus}
+          listError={testListError}
+          selectedTest={selectedTest}
+          detailStatus={testDetailStatus}
+          detailError={testDetailError}
+          attempt={testAttempt}
+          attemptStatus={testAttemptStatus}
+          attemptError={testAttemptError}
+          answers={testAnswers}
+          answerStatus={testAnswerStatus}
+          answerError={testAnswerError}
+          result={testResult}
+          resultStatus={testResultStatus}
+          resultError={testResultError}
+          history={testHistory}
+          historyStatus={testHistoryStatus}
+          historyError={testHistoryError}
+          shareCard={testShareCard}
+          onSelectTest={onTestSelect}
+          onStartAttempt={onTestStart}
+          onAnswer={onTestAnswer}
+          onComplete={onTestComplete}
+          onSelectHistory={onTestHistorySelect}
+          onContinueChat={onTestContinueChat}
+        />
+      </aside>
+    );
+  }
+
+  if (activeToolSurface === "settings") {
+    return (
+      <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="设置、隐私和反馈">
+        <ToolBackButton onClick={() => setActiveToolSurface("launcher")} />
+        <SettingsPrivacySurface
+          currentUserLabel={currentUserLabel}
+          statusTags={statusTags}
+          memories={memories}
+          memoryListStatus={memoryListStatus}
+          memoryListError={memoryListError}
+          editingMemoryId={editingMemoryId}
+          memoryDraft={memoryDraft}
+          memoryMutationStatus={memoryMutationStatus}
+          memoryMutationError={memoryMutationError}
+          settingsMemoryMode={settingsMemoryMode}
+          settingsSaveTranscript={settingsSaveTranscript}
+          settingsStatus={settingsStatus}
+          settingsError={settingsError}
+          privacySummary={privacySummary}
+          privacyStatus={privacyStatus}
+          privacyError={privacyError}
+          dataExportStatus={dataExportStatus}
+          dataExportError={dataExportError}
+          personalDataExport={personalDataExport}
+          deleteScope={deleteScope}
+          dataDeleteStatus={dataDeleteStatus}
+          dataDeleteError={dataDeleteError}
+          dataDeleteResult={dataDeleteResult}
+          accountConfirmation={accountConfirmation}
+          accountDeleteStatus={accountDeleteStatus}
+          accountDeleteError={accountDeleteError}
+          accountDeleteResult={accountDeleteResult}
+          feedbackTargetType={feedbackTargetType}
+          feedbackTargetId={feedbackTargetId}
+          feedbackRating={feedbackRating}
+          feedbackNote={feedbackNote}
+          feedbackStatus={feedbackStatus}
+          feedbackError={feedbackError}
+          onMemoryEditStart={onMemoryEditStart}
+          onMemoryDraftChange={onMemoryDraftChange}
+          onMemorySave={onMemorySave}
+          onMemoryDelete={onMemoryDelete}
+          onMemoriesClear={onMemoriesClear}
+          onSettingsMemoryModeChange={onSettingsMemoryModeChange}
+          onSettingsSaveTranscriptChange={onSettingsSaveTranscriptChange}
+          onSettingsSave={onSettingsSave}
+          onDataExport={onDataExport}
+          onDeleteScopeChange={onDeleteScopeChange}
+          onDataDelete={onDataDelete}
+          onAccountConfirmationChange={onAccountConfirmationChange}
+          onAccountDelete={onAccountDelete}
+          onFeedbackTargetTypeChange={onFeedbackTargetTypeChange}
+          onFeedbackTargetIdChange={onFeedbackTargetIdChange}
+          onFeedbackRatingChange={onFeedbackRatingChange}
+          onFeedbackNoteChange={onFeedbackNoteChange}
+          onFeedbackSubmit={onFeedbackSubmit}
+        />
+      </aside>
+    );
+  }
 
   return (
     <aside className="ningyu-sidebar ningyu-sidebar--right" aria-label="状态、安全与建议">
@@ -1839,7 +3415,7 @@ function RightPanel({
       </section>
 
       <section className="ningyu-panel-section ningyu-panel-section--mood">
-        <span className="ningyu-panel-section__caption">一分钟 check-in</span>
+        <span className="ningyu-panel-section__caption">一分钟打卡</span>
         <h2>
           <Icon name="heart" />
           此刻心情
@@ -1914,6 +3490,772 @@ function RightPanel({
   );
 }
 
+function ToolBackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="ningyu-tool-back" type="button" onClick={onClick}>
+      <Icon name="wind" />
+      返回工具
+    </button>
+  );
+}
+
+function KnowledgeSurface({
+  query,
+  category,
+  audience,
+  searchStatus,
+  searchError,
+  results,
+  articleStatus,
+  articleError,
+  article,
+  question,
+  askStatus,
+  askError,
+  answer,
+  riskLevel,
+  highRiskSafety,
+  userMode,
+  onQueryChange,
+  onCategoryChange,
+  onAudienceChange,
+  onSearch,
+  onArticleSelect,
+  onQuestionChange,
+  onAsk,
+  onContinueChat,
+}: {
+  query: string;
+  category: string;
+  audience: string;
+  searchStatus: KnowledgeSearchStatus;
+  searchError: string | null;
+  results: KnowledgeSearchItem[];
+  articleStatus: KnowledgeArticleStatus;
+  articleError: string | null;
+  article: KnowledgeArticleResponse | null;
+  question: string;
+  askStatus: KnowledgeAskStatus;
+  askError: string | null;
+  answer: AskKnowledgeResponse | null;
+  riskLevel: RiskLevel | null;
+  highRiskSafety: HighRiskSafetyState | null;
+  userMode: UserMode;
+  onQueryChange: (query: string) => void;
+  onCategoryChange: (category: string) => void;
+  onAudienceChange: (audience: string) => void;
+  onSearch: () => void;
+  onArticleSelect: (articleId: string) => void;
+  onQuestionChange: (question: string) => void;
+  onAsk: () => void;
+  onContinueChat: () => void;
+}) {
+  const isHighRiskKnowledge = isHighRiskLevel(riskLevel);
+  const coverageTone = answer?.coverage_status === "partial" || answer?.coverage_status === "insufficient" ? "is-partial" : "";
+
+  return (
+    <section className="ningyu-panel-section ningyu-knowledge-surface">
+      <span className="ningyu-panel-section__caption">知识库</span>
+      <h2>
+        <Icon name="leaf" />
+        自助支持知识库
+      </h2>
+
+      <form
+        className="ningyu-knowledge-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSearch();
+        }}
+      >
+        <label>
+          <span>搜索主题</span>
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="例如：焦虑、睡眠、和朋友吵架"
+          />
+        </label>
+        <div className="ningyu-knowledge-filters">
+          <label>
+            <span>分类</span>
+            <select value={category} onChange={(event) => onCategoryChange(event.target.value)}>
+              {knowledgeCategoryOptions.map((option) => (
+                <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>适用人群</span>
+            <select value={audience} onChange={(event) => onAudienceChange(event.target.value)}>
+              {knowledgeAudienceOptions.map((option) => (
+                <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <button type="submit" disabled={searchStatus === "loading"}>
+          {searchStatus === "loading" ? "搜索中..." : "搜索"}
+        </button>
+      </form>
+
+      {searchStatus === "error" ? <p className="ningyu-tool-empty is-error">{searchError}</p> : null}
+      {searchStatus === "success" && results.length === 0 ? (
+        <p className="ningyu-tool-empty">还没有找到匹配文章，可以换一个更日常的关键词，或直接向知识问答提问。</p>
+      ) : null}
+      {searchStatus === "idle" && results.length === 0 ? (
+        <p className="ningyu-tool-empty">输入一个主题，宁语会只展示带分类和适用人群的知识卡片。</p>
+      ) : null}
+
+      {results.length ? (
+        <div className="ningyu-knowledge-results" aria-label="知识搜索结果">
+          {results.map((item) => (
+            <button key={item.article_id} type="button" onClick={() => onArticleSelect(item.article_id)}>
+              <span className="ningyu-knowledge-card__meta">
+                {knowledgeCategoryLabels[item.category] ?? "其他分类"} · {knowledgeAudienceLabels[item.audience] ?? "其他人群"}
+              </span>
+              <strong>{item.title}</strong>
+              <small>{item.summary_30s}</small>
+              {item.tags.length ? (
+                <em>
+                  {item.tags.slice(0, 3).map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </em>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="ningyu-knowledge-article">
+        {articleStatus === "loading" ? <p className="ningyu-tool-empty">正在打开文章...</p> : null}
+        {articleStatus === "error" ? <p className="ningyu-tool-empty is-error">{articleError}</p> : null}
+        {article ? (
+          <article>
+            <span className="ningyu-knowledge-card__meta">
+              {knowledgeCategoryLabels[article.category] ?? "其他分类"} · {knowledgeAudienceLabels[article.audience] ?? "其他人群"}
+            </span>
+            <h3>{article.title}</h3>
+            <p>{article.summary_30s}</p>
+            <p>{article.explanation_3min}</p>
+            {article.actions.length ? (
+              <div>
+                <strong>可以试试</strong>
+                <ul>
+                  {article.actions.slice(0, 4).map((action) => (
+                    <li key={action}>{action}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {article.seek_help_when.length ? (
+              <div className="ningyu-knowledge-warning">
+                <strong>需要现实支持时</strong>
+                <ul>
+                  {article.seek_help_when.slice(0, 3).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </article>
+        ) : null}
+      </div>
+
+      <form
+        className="ningyu-knowledge-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAsk();
+        }}
+      >
+        <label>
+          <span>提一个问题</span>
+          <textarea
+            value={question}
+            onChange={(event) => onQuestionChange(event.target.value)}
+            rows={3}
+            placeholder="把想知道的事写下来，可以很短。"
+          />
+        </label>
+        <button type="submit" disabled={askStatus === "loading"}>
+          {askStatus === "loading" ? "回答中..." : "提问知识库"}
+        </button>
+      </form>
+
+      {askStatus === "error" ? <p className="ningyu-tool-empty is-error">{askError}</p> : null}
+      {isHighRiskKnowledge ? (
+        <div className="ningyu-knowledge-risk">
+          <strong>这个问题先转到安全支持</strong>
+          <span>普通知识回答已暂停，宁语会优先展示安全提醒和现实支持入口。</span>
+          <SafetyGuidanceCard userMode={userMode} highRiskSafety={highRiskSafety} />
+        </div>
+      ) : null}
+
+      {answer && !isHighRiskKnowledge ? (
+        <div className={`ningyu-knowledge-answer ${coverageTone}`}>
+          <div className="ningyu-knowledge-answer__status">
+            <span>{knowledgeCoverageLabels[answer.coverage_status] ?? "覆盖状态未知"}</span>
+            <span>{knowledgeScopeLabels[answer.scope_status] ?? "范围状态未知"}</span>
+            <span>可信度：{knowledgeConfidenceLabels[answer.confidence] ?? "未知"}</span>
+          </div>
+          {coverageTone ? (
+            <p className="ningyu-knowledge-gap">
+              这次回答覆盖不完整，可以把问题换成更具体的一句，或继续聊聊真实情境。
+            </p>
+          ) : null}
+          {answer.question_suggestion ? (
+            <p className="ningyu-knowledge-gap">
+              也许你在问：{answer.question_suggestion.guessed_question}
+            </p>
+          ) : null}
+          <h3>{answer.answer.summary_30s}</h3>
+          <p>{answer.answer.explanation_3min}</p>
+          {answer.answer.actions.length ? (
+            <div>
+              <strong>小行动</strong>
+              <ul>
+                {answer.answer.actions.map((action) => (
+                  <li key={action}>{action}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {answer.answer.seek_help_when.length ? (
+            <div className="ningyu-knowledge-warning">
+              <strong>请考虑寻求现实支持</strong>
+              <ul>
+                {answer.answer.seek_help_when.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {answer.source_refs.length ? (
+            <div className="ningyu-knowledge-sources">
+              <strong>来源</strong>
+              {answer.source_refs.slice(0, 4).map((source) => (
+                <span key={`${source.article_id}-${source.chunk_id ?? source.source_name}`}>
+                  {source.article_title} · {source.source_name}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {answer.related_articles.length ? (
+            <div className="ningyu-knowledge-related">
+              <strong>相关内容</strong>
+              {answer.related_articles.slice(0, 3).map((item) => (
+                <button key={item.article_id} type="button" onClick={() => onArticleSelect(item.article_id)}>
+                  {item.title}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <button className="ningyu-knowledge-continue" type="button" onClick={onContinueChat}>
+            继续聊聊
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function TestSurface({
+  tests,
+  listStatus,
+  listError,
+  selectedTest,
+  detailStatus,
+  detailError,
+  attempt,
+  attemptStatus,
+  attemptError,
+  answers,
+  answerStatus,
+  answerError,
+  result,
+  resultStatus,
+  resultError,
+  history,
+  historyStatus,
+  historyError,
+  shareCard,
+  onSelectTest,
+  onStartAttempt,
+  onAnswer,
+  onComplete,
+  onSelectHistory,
+  onContinueChat,
+}: {
+  tests: TestListItem[];
+  listStatus: TestListStatus;
+  listError: string | null;
+  selectedTest: TestDetailResponse | null;
+  detailStatus: TestDetailStatus;
+  detailError: string | null;
+  attempt: StartAttemptResponse | null;
+  attemptStatus: TestAttemptStatus;
+  attemptError: string | null;
+  answers: Record<number, string>;
+  answerStatus: TestAnswerStatus;
+  answerError: string | null;
+  result: CompleteAttemptResponse | null;
+  resultStatus: TestResultStatus;
+  resultError: string | null;
+  history: TestHistoryItem[];
+  historyStatus: TestHistoryStatus;
+  historyError: string | null;
+  shareCard: TestShareCardPayload | null;
+  onSelectTest: (test: TestListItem) => void;
+  onStartAttempt: () => void;
+  onAnswer: (questionIndex: number, optionId: string) => void;
+  onComplete: () => void;
+  onSelectHistory: (attemptId: string) => void;
+  onContinueChat: () => void;
+}) {
+  const questions = attempt?.questions ?? selectedTest?.questions ?? [];
+  const answeredCount = Object.keys(answers).length;
+  const canComplete = Boolean(attempt) && questions.length > 0 && answeredCount >= questions.length;
+
+  return (
+    <section className="ningyu-panel-section ningyu-tests-surface">
+      <div className="ningyu-tests-surface__header">
+        <strong>已发布测试</strong>
+        <small>{listStatus === "loading" ? "加载中" : `${tests.length} 个可用`}</small>
+      </div>
+      {listStatus === "error" ? <p className="ningyu-tool-empty is-error">{listError}</p> : null}
+      {listStatus !== "loading" && listStatus !== "error" && tests.length === 0 ? <p className="ningyu-tool-empty">暂时还没有可用测试。</p> : null}
+      <div className="ningyu-tests-list">
+        {tests.map((test) => {
+          const isPublished = test.status === "published";
+
+          return (
+            <button
+              key={test.test_id}
+              type="button"
+              disabled={!isPublished || detailStatus === "loading"}
+              aria-disabled={!isPublished}
+              onClick={() => onSelectTest(test)}
+            >
+              <span>
+                <strong>{test.title}</strong>
+                <small>
+                  {testTypeLabels[test.test_type] ?? "测试"} · {test.estimated_minutes} 分钟 · {isPublished ? "已发布" : "未发布"}
+                </small>
+              </span>
+              <em>{isPublished ? "可开始" : "未开放"}</em>
+            </button>
+          );
+        })}
+      </div>
+
+      {detailStatus === "error" ? <p className="ningyu-tool-empty is-error">{detailError}</p> : null}
+      {selectedTest ? (
+        <div className="ningyu-test-detail">
+          <div className="ningyu-test-detail__header">
+            <strong>{selectedTest.title}</strong>
+            <small>{selectedTest.questions.length} 道题</small>
+          </div>
+          <button type="button" onClick={onStartAttempt} disabled={attemptStatus === "loading"}>
+            {attemptStatus === "loading" ? "正在开始..." : attempt ? "重新开始" : "开始测试"}
+          </button>
+          {attemptStatus === "error" ? <p className="ningyu-tool-empty is-error">{attemptError}</p> : null}
+        </div>
+      ) : null}
+
+      {attempt ? (
+        <div className="ningyu-test-attempt">
+          <div className="ningyu-test-detail__header">
+            <strong>答题进行中</strong>
+            <small>
+              已答 {answeredCount}/{questions.length}
+            </small>
+          </div>
+          {questions.map((question) => (
+            <fieldset key={question.index} className="ningyu-test-question">
+              <legend>{question.text}</legend>
+              {question.options.map((option) => (
+                <button
+                  key={option.id}
+                  className={answers[question.index] === option.id ? "is-active" : ""}
+                  type="button"
+                  onClick={() => onAnswer(question.index, option.id)}
+                  disabled={answerStatus === "loading" || resultStatus === "loading"}
+                >
+                  {option.text}
+                </button>
+              ))}
+            </fieldset>
+          ))}
+          {answerStatus === "error" ? <p className="ningyu-tool-empty is-error">{answerError}</p> : null}
+          <button className="ningyu-test-complete" type="button" onClick={onComplete} disabled={!canComplete || resultStatus === "loading"}>
+            {resultStatus === "loading" ? "生成中..." : "完成测试"}
+          </button>
+          {!canComplete ? <p className="ningyu-tool-empty">答完全部题目后就可以生成结果。</p> : null}
+        </div>
+      ) : null}
+
+      {resultStatus === "error" ? <p className="ningyu-tool-empty is-error">{resultError}</p> : null}
+      {result ? (
+        <div className="ningyu-test-result">
+          <span className="ningyu-knowledge-card__meta">
+            {result.test_code} · {result.result_code}
+          </span>
+          <h3>{result.result_title}</h3>
+          <p>{result.summary}</p>
+          <div>
+            <strong>优势</strong>
+            <ul>
+              {result.strengths.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <strong>可能忽略的地方</strong>
+            <ul>
+              {result.blind_spots.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <strong>建议行动</strong>
+            <ul>
+              {result.suggested_actions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <p className="ningyu-test-disclaimer">{testResultDisclaimer}</p>
+          {shareCard ? (
+            <div className="ningyu-test-share">
+              <strong>分享卡片数据</strong>
+              <small>{shareCard.title}</small>
+              <span>{shareCard.subtitle}</span>
+              <span>{shareCard.summary}</span>
+              <em>{shareCard.disclaimer}</em>
+            </div>
+          ) : null}
+          <button className="ningyu-test-complete" type="button" onClick={onContinueChat}>
+            继续聊天
+          </button>
+        </div>
+      ) : null}
+
+      <div className="ningyu-test-history">
+        <div className="ningyu-tests-surface__header">
+          <strong>历史记录</strong>
+          <small>{historyStatus === "loading" ? "加载中" : `${history.length} 条记录`}</small>
+        </div>
+        {historyStatus === "error" ? <p className="ningyu-tool-empty is-error">{historyError}</p> : null}
+        {historyStatus !== "loading" && historyStatus !== "error" && history.length === 0 ? (
+          <p className="ningyu-tool-empty">还没有测试历史。</p>
+        ) : null}
+        {history.map((item) => (
+          <button key={item.attempt_id} type="button" onClick={() => onSelectHistory(item.attempt_id)}>
+            <span>
+              <strong>{item.test_title}</strong>
+              <small>
+                {item.result_label} · {item.completed_at}
+              </small>
+            </span>
+            <em>{item.result_code}</em>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SettingsPrivacySurface({
+  currentUserLabel,
+  statusTags,
+  memories,
+  memoryListStatus,
+  memoryListError,
+  editingMemoryId,
+  memoryDraft,
+  memoryMutationStatus,
+  memoryMutationError,
+  settingsMemoryMode,
+  settingsSaveTranscript,
+  settingsStatus,
+  settingsError,
+  privacySummary,
+  privacyStatus,
+  privacyError,
+  dataExportStatus,
+  dataExportError,
+  personalDataExport,
+  deleteScope,
+  dataDeleteStatus,
+  dataDeleteError,
+  dataDeleteResult,
+  accountConfirmation,
+  accountDeleteStatus,
+  accountDeleteError,
+  accountDeleteResult,
+  feedbackTargetType,
+  feedbackTargetId,
+  feedbackRating,
+  feedbackNote,
+  feedbackStatus,
+  feedbackError,
+  onMemoryEditStart,
+  onMemoryDraftChange,
+  onMemorySave,
+  onMemoryDelete,
+  onMemoriesClear,
+  onSettingsMemoryModeChange,
+  onSettingsSaveTranscriptChange,
+  onSettingsSave,
+  onDataExport,
+  onDeleteScopeChange,
+  onDataDelete,
+  onAccountConfirmationChange,
+  onAccountDelete,
+  onFeedbackTargetTypeChange,
+  onFeedbackTargetIdChange,
+  onFeedbackRatingChange,
+  onFeedbackNoteChange,
+  onFeedbackSubmit,
+}: {
+  currentUserLabel: string;
+  statusTags: string[];
+  memories: MemoryItem[];
+  memoryListStatus: MemoryListStatus;
+  memoryListError: string | null;
+  editingMemoryId: string | null;
+  memoryDraft: string;
+  memoryMutationStatus: MemoryMutationStatus;
+  memoryMutationError: string | null;
+  settingsMemoryMode: MemoryMode;
+  settingsSaveTranscript: boolean;
+  settingsStatus: SettingsMutationStatus;
+  settingsError: string | null;
+  privacySummary: PrivacySummaryResponse | null;
+  privacyStatus: PrivacyStatus;
+  privacyError: string | null;
+  dataExportStatus: DataActionStatus;
+  dataExportError: string | null;
+  personalDataExport: PersonalDataExport | null;
+  deleteScope: PrivacyDataScope;
+  dataDeleteStatus: DataActionStatus;
+  dataDeleteError: string | null;
+  dataDeleteResult: PrivacyMutationResponse | null;
+  accountConfirmation: string;
+  accountDeleteStatus: DataActionStatus;
+  accountDeleteError: string | null;
+  accountDeleteResult: PrivacyMutationResponse | null;
+  feedbackTargetType: (typeof feedbackTargetOptions)[number]["value"];
+  feedbackTargetId: string;
+  feedbackRating: number;
+  feedbackNote: string;
+  feedbackStatus: FeedbackSubmitStatus;
+  feedbackError: string | null;
+  onMemoryEditStart: (memory: MemoryItem) => void;
+  onMemoryDraftChange: (content: string) => void;
+  onMemorySave: () => void;
+  onMemoryDelete: (memoryId: string) => void;
+  onMemoriesClear: () => void;
+  onSettingsMemoryModeChange: (mode: MemoryMode) => void;
+  onSettingsSaveTranscriptChange: (saveTranscript: boolean) => void;
+  onSettingsSave: () => void;
+  onDataExport: () => void;
+  onDeleteScopeChange: (scope: PrivacyDataScope) => void;
+  onDataDelete: () => void;
+  onAccountConfirmationChange: (confirmation: string) => void;
+  onAccountDelete: () => void;
+  onFeedbackTargetTypeChange: (type: (typeof feedbackTargetOptions)[number]["value"]) => void;
+  onFeedbackTargetIdChange: (targetId: string) => void;
+  onFeedbackRatingChange: (rating: number) => void;
+  onFeedbackNoteChange: (note: string) => void;
+  onFeedbackSubmit: () => void;
+}) {
+  const exportPreview = personalDataExport ? JSON.stringify(personalDataExport, null, 2).slice(0, 900) : "";
+
+  return (
+    <section className="ningyu-panel-section ningyu-settings-surface">
+      <span className="ningyu-panel-section__caption">设置 / 隐私</span>
+      <h2>
+        <Icon name="settings" />
+        {currentUserLabel}
+      </h2>
+      <div className="ningyu-tags">
+        {statusTags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        ))}
+      </div>
+
+      <div className="ningyu-settings-block">
+        <div className="ningyu-tests-surface__header">
+          <strong>记忆中心</strong>
+          <small>{memoryListStatus === "loading" ? "加载中" : `${memories.length} 条记忆`}</small>
+        </div>
+        {memoryListStatus === "error" ? <p className="ningyu-tool-empty is-error">{memoryListError}</p> : null}
+        {memoryMutationStatus === "error" ? <p className="ningyu-tool-empty is-error">{memoryMutationError}</p> : null}
+        {memoryListStatus !== "loading" && memories.length === 0 ? <p className="ningyu-tool-empty">还没有可展示的长期记忆。</p> : null}
+        {memories.map((memory) => (
+          <div className="ningyu-memory-item" key={memory.memory_id}>
+            <span>{memory.memory_type}</span>
+            {editingMemoryId === memory.memory_id ? (
+              <textarea value={memoryDraft} onChange={(event) => onMemoryDraftChange(event.target.value)} rows={3} />
+            ) : (
+              <p>{memory.content}</p>
+            )}
+            <div>
+              {editingMemoryId === memory.memory_id ? (
+                <button type="button" onClick={onMemorySave} disabled={memoryMutationStatus === "loading"}>
+                  保存
+                </button>
+              ) : (
+                <button type="button" onClick={() => onMemoryEditStart(memory)}>
+                  编辑
+                </button>
+              )}
+              <button type="button" onClick={() => onMemoryDelete(memory.memory_id)} disabled={memoryMutationStatus === "loading"}>
+                删除
+              </button>
+            </div>
+          </div>
+        ))}
+        <button type="button" onClick={onMemoriesClear} disabled={memoryMutationStatus === "loading" || memories.length === 0}>
+          清空全部记忆
+        </button>
+      </div>
+
+      <div className="ningyu-settings-block">
+        <strong>记忆与隐私设置</strong>
+        <label>
+          <span>记忆模式</span>
+          <select value={settingsMemoryMode} onChange={(event) => onSettingsMemoryModeChange(event.target.value as MemoryMode)}>
+            <option value="off">记忆关闭</option>
+            <option value="summary_only">摘要记忆</option>
+            <option value="long_term">长时记忆</option>
+          </select>
+        </label>
+        <label className="ningyu-settings-toggle">
+          <input
+            type="checkbox"
+            checked={settingsSaveTranscript}
+            onChange={(event) => onSettingsSaveTranscriptChange(event.target.checked)}
+          />
+          <span>保存文字聊天记录</span>
+        </label>
+        <button type="button" onClick={onSettingsSave} disabled={settingsStatus === "loading"}>
+          {settingsStatus === "loading" ? "保存中..." : "保存设置"}
+        </button>
+        {settingsStatus === "success" ? <p className="ningyu-tool-empty">设置已更新。</p> : null}
+        {settingsStatus === "error" ? <p className="ningyu-tool-empty is-error">{settingsError}</p> : null}
+      </div>
+
+      <div className="ningyu-settings-block">
+        <div className="ningyu-tests-surface__header">
+          <strong>隐私摘要</strong>
+          <small>{privacyStatus === "loading" ? "加载中" : privacySummary?.latest_activity_at ?? "暂无最近活动"}</small>
+        </div>
+        {privacyStatus === "error" ? <p className="ningyu-tool-empty is-error">{privacyError}</p> : null}
+        {privacySummary ? (
+          <div className="ningyu-privacy-counts">
+            {Object.entries(privacySummary.data_counts).map(([key, value]) => (
+              <span key={key}>
+                <strong>{value}</strong>
+                {privacyCountLabels[key] ?? "其他数据"}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <button type="button" onClick={onDataExport} disabled={dataExportStatus === "loading"}>
+          {dataExportStatus === "loading" ? "导出中..." : "导出个人数据"}
+        </button>
+        {dataExportStatus === "error" ? <p className="ningyu-tool-empty is-error">{dataExportError}</p> : null}
+        {exportPreview ? <pre className="ningyu-data-export">{exportPreview}</pre> : null}
+      </div>
+
+      <div className="ningyu-settings-block">
+        <strong>删除数据</strong>
+        <label>
+          <span>范围</span>
+          <select value={deleteScope} onChange={(event) => onDeleteScopeChange(event.target.value as PrivacyDataScope)}>
+            {privacyDeleteScopes.map((scope) => (
+              <option key={scope.value} value={scope.value}>
+                {scope.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={onDataDelete} disabled={dataDeleteStatus === "loading"}>
+          {dataDeleteStatus === "loading" ? "删除中..." : "删除选定数据"}
+        </button>
+        {dataDeleteStatus === "error" ? <p className="ningyu-tool-empty is-error">{dataDeleteError}</p> : null}
+        {dataDeleteResult ? (
+          <p className="ningyu-tool-empty">
+            已处理：{privacyDeleteScopes.find((scope) => scope.value === dataDeleteResult.scope)?.label ?? "选定范围"}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="ningyu-settings-block">
+        <strong>注销账号</strong>
+        <input
+          value={accountConfirmation}
+          onChange={(event) => onAccountConfirmationChange(event.target.value)}
+          placeholder="输入“注销账号”确认"
+        />
+        <button type="button" onClick={onAccountDelete} disabled={accountDeleteStatus === "loading"}>
+          {accountDeleteStatus === "loading" ? "注销中..." : "注销账号"}
+        </button>
+        {accountDeleteStatus === "error" ? <p className="ningyu-tool-empty is-error">{accountDeleteError}</p> : null}
+        {accountDeleteResult ? <p className="ningyu-tool-empty">账号注销请求已完成：{accountDeleteResult.status}</p> : null}
+      </div>
+
+      <div className="ningyu-settings-block">
+        <strong>反馈</strong>
+        <label>
+          <span>反馈对象类型</span>
+          <select value={feedbackTargetType} onChange={(event) => onFeedbackTargetTypeChange(event.target.value as typeof feedbackTargetType)}>
+            {feedbackTargetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <input value={feedbackTargetId} onChange={(event) => onFeedbackTargetIdChange(event.target.value)} placeholder="内容编号" />
+        <label>
+          <span>评分：{feedbackRating}</span>
+          <input
+            type="range"
+            min="1"
+            max="5"
+            value={feedbackRating}
+            onChange={(event) => onFeedbackRatingChange(Number(event.target.value))}
+          />
+        </label>
+        <textarea value={feedbackNote} onChange={(event) => onFeedbackNoteChange(event.target.value)} rows={2} placeholder="可选说明" />
+        <button type="button" onClick={onFeedbackSubmit} disabled={feedbackStatus === "loading"}>
+          {feedbackStatus === "loading" ? "提交中..." : "提交反馈"}
+        </button>
+        {feedbackStatus === "success" ? <p className="ningyu-tool-empty">反馈已提交，谢谢你帮宁语变好。</p> : null}
+        {feedbackStatus === "error" ? <p className="ningyu-tool-empty is-error">{feedbackError}</p> : null}
+      </div>
+
+      <div className="ningyu-settings-block ningyu-about-block">
+        <strong>关于 / 开源</strong>
+        <p>宁语是面向陪伴与自助理解的网页端项目，不提供医疗诊断，也不能替代心理治疗或紧急救助。</p>
+        <p>当前前端为新版网页端，保留开源协作边界和清晰的数据控制入口。</p>
+        <p>如果你或身边的人处于立即危险中，请优先联系当地紧急服务或可信任的现实支持者。</p>
+      </div>
+    </section>
+  );
+}
+
 function SafetyGuidanceCard({
   userMode,
   highRiskSafety,
@@ -1922,7 +4264,7 @@ function SafetyGuidanceCard({
   highRiskSafety: HighRiskSafetyState | null;
 }) {
   const isHighRisk = Boolean(highRiskSafety);
-  const riskLabel = highRiskSafety?.riskLevel === "L3" ? "L3 高风险" : highRiskSafety?.riskLevel === "L2" ? "L2 需要支持" : "安全支持";
+  const riskLabel = highRiskSafety?.riskLevel === "L3" ? "三级高风险" : highRiskSafety?.riskLevel === "L2" ? "二级需要支持" : "安全支持";
   const statusLabel =
     highRiskSafety?.eventStatus === "recorded"
       ? "安全事件已记录"
@@ -1999,7 +4341,7 @@ function QuickActionFeedback({
       <strong>{result.title}</strong>
       <span>{result.detail}</span>
       <small>
-        Thread {result.threadId}
+        对话 {result.threadId}
       </small>
     </div>
   );

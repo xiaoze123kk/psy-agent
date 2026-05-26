@@ -14,18 +14,24 @@ import type { AgeRange, CurrentUserResponse, MemoryMode, UserMode } from "../typ
 
 export type ThemeMode = "day" | "night";
 
+export interface PrivacySettingsState {
+  saveTranscript: boolean;
+}
+
 export interface AppStateContextValue {
   currentUser: CurrentUserResponse | null;
   ageRange: AgeRange;
   ageModeProfile: AgeModeProfile;
   userMode: UserMode;
   memoryMode: MemoryMode;
+  privacySettings: PrivacySettingsState;
   themeMode: ThemeMode;
   isNight: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   toggleThemeMode: () => void;
   setUserMode: (mode: UserMode) => void;
   setMemoryMode: (mode: MemoryMode) => void;
+  updatePrivacySettings: (patch: Partial<PrivacySettingsState>) => void;
 }
 
 const AppStateContext = createContext<AppStateContextValue | undefined>(undefined);
@@ -45,12 +51,21 @@ function readInitialThemeMode(): ThemeMode {
   return isThemeMode(stored) ? stored : "day";
 }
 
+function buildPrivacySettings(currentUser: CurrentUserResponse | null): PrivacySettingsState {
+  return {
+    saveTranscript: currentUser?.save_transcript ?? true,
+  };
+}
+
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useSession();
   const [themeMode, setThemeModeState] = useState<ThemeMode>(readInitialThemeMode);
   const [ageRange, setAgeRangeState] = useState<AgeRange>(currentUser?.age_range ?? "16_17");
   const [userMode, setUserModeState] = useState<UserMode>(currentUser?.user_mode ?? "teen");
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>(currentUser?.memory_mode ?? "off");
+  const [privacySettings, setPrivacySettingsState] = useState<PrivacySettingsState>(() =>
+    buildPrivacySettings(currentUser),
+  );
 
   useEffect(() => {
     if (!currentUser) {
@@ -60,6 +75,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setUserModeState(currentUser.user_mode);
     setAgeRangeState(currentUser.age_range);
     setMemoryModeState(currentUser.memory_mode);
+    setPrivacySettingsState(buildPrivacySettings(currentUser));
   }, [currentUser]);
 
   useEffect(() => {
@@ -87,6 +103,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setMemoryModeState(mode);
   }, []);
 
+  const updatePrivacySettings = useCallback((patch: Partial<PrivacySettingsState>) => {
+    setPrivacySettingsState((current) => ({
+      ...current,
+      ...patch,
+    }));
+  }, []);
+
   const value = useMemo<AppStateContextValue>(
     () => ({
       currentUser,
@@ -94,12 +117,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       ageModeProfile: buildAgeModeProfile(ageRange, userMode),
       userMode,
       memoryMode,
+      privacySettings,
       themeMode,
       isNight: themeMode === "night",
       setThemeMode,
       toggleThemeMode,
       setUserMode,
       setMemoryMode,
+      updatePrivacySettings,
     }),
     [
       ageRange,
@@ -110,6 +135,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setUserMode,
       themeMode,
       toggleThemeMode,
+      updatePrivacySettings,
       userMode,
     ],
   );

@@ -1,4 +1,4 @@
-﻿import { ArrowRight, Battery, Ear, Heart, Moon, ShieldAlert, Sparkles, User, Wind } from "lucide-react";
+﻿import { ArrowRight, Battery, Heart, Moon, ShieldAlert, Sparkles, User, Wind } from "lucide-react";
 import { useState } from "react";
 
 import logGuide from "../../imports/log_guide.png";
@@ -17,6 +17,7 @@ export interface OnboardingDraft {
   tone: OnboardingTone;
   activeness: number;
   memoryMode: MemoryMode;
+  saveTranscript: boolean;
   moodScore: number;
   anxietyScore: number;
   energyScore: number;
@@ -37,7 +38,7 @@ const tones = [
   { id: "gentle", label: "温柔一点", icon: Wind },
   { id: "direct", label: "直接一点", icon: Sparkles },
   { id: "encourage", label: "多鼓励我", icon: Heart },
-  { id: "listen", label: "先安静听", icon: Ear },
+  { id: "listen", label: "先安静听", icon: Heart },
 ] satisfies Array<{ id: OnboardingTone; label: string; icon: typeof Wind }>;
 
 const defaultDraft: OnboardingDraft = {
@@ -48,6 +49,7 @@ const defaultDraft: OnboardingDraft = {
   tone: "gentle",
   activeness: 3,
   memoryMode: "summary_only",
+  saveTranscript: true,
   moodScore: 3,
   anxietyScore: 3,
   energyScore: 3,
@@ -58,7 +60,7 @@ const defaultDraft: OnboardingDraft = {
 export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录", completeLabel = "完成设置" }: OnboardingGuideProps) {
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState<OnboardingDraft>(defaultDraft);
-  const safetyNoteCopy = getOnboardingSafetyNoteCopy();
+  const safetyNote = getOnboardingSafetyNoteCopy();
 
   const toggleGoal = (goal: string) => {
     setDraft((current) => ({
@@ -101,11 +103,11 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                 </div>
                 <div className="debug-guide__note-card">
                   <ul>
-                    {safetyNoteCopy.bullets.map((line) => (
-                      <li key={line}>{line}</li>
+                    {safetyNote.bullets.map((item) => (
+                      <li key={item}>{item}</li>
                     ))}
                   </ul>
-                  <p className="debug-guide__boundary-note">{safetyNoteCopy.boundaryNote}</p>
+                  <p className="debug-guide__boundary-note">{safetyNote.boundaryNote}</p>
                 </div>
               </div>
             ) : null}
@@ -192,6 +194,12 @@ export function OnboardingGuide({ onBack, onComplete, backLabel = "回到登录"
                   <button className={draft.memoryMode === "long_term" ? "is-active" : ""} type="button" onClick={() => updateDraft("memoryMode", "long_term")}>
                     长期记忆
                   </button>
+                  <label>
+                    <span>保存文字记录</span>
+                    <button aria-pressed={draft.saveTranscript} className={draft.saveTranscript ? "is-active" : ""} type="button" onClick={() => updateDraft("saveTranscript", !draft.saveTranscript)}>
+                      {draft.saveTranscript ? "开" : "关"}
+                    </button>
+                  </label>
                 </div>
               </div>
             ) : null}

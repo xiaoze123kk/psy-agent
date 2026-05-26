@@ -92,6 +92,39 @@
   --glass-surface: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.62);
   --glass-blur: blur(24px);
+  --ningyu-immersive-paper: rgba(255, 255, 255, 0.72);
+  --ningyu-immersive-paper-border: rgba(255, 255, 255, 0.58);
+  --ningyu-immersive-paper-shadow: 0 18px 48px rgba(22, 36, 30, 0.16);
+  --ningyu-floating-surface: rgba(255, 255, 255, 0.84);
+  --ningyu-floating-border: rgba(255, 255, 255, 0.66);
+  --ningyu-overlay-scrim: rgba(15, 23, 18, 0.36);
+  --ningyu-overlay-blur: blur(28px);
+  --ningyu-day-ambient: rgba(215, 247, 234, 0.62);
+  --ningyu-night-ambient: rgba(25, 36, 57, 0.72);
+
+  /* Ningyu immersive shell tokens, adapted from 主页面动画参考. */
+  --ningyu-immersive-paper: #fffef8;
+  --ningyu-immersive-paper-night: rgba(15, 23, 42, 0.92);
+  --ningyu-immersive-paper-line: rgba(139, 119, 101, 0.12);
+  --ningyu-immersive-paper-border: rgba(139, 119, 101, 0.14);
+  --ningyu-immersive-paper-shadow: 0 24px 70px rgba(80, 60, 40, 0.18);
+  --ningyu-immersive-paper-radius: 4px 16px 10px 4px;
+  --ningyu-immersive-ink: #4a3f35;
+  --ningyu-immersive-ink-muted: #8b7355;
+  --ningyu-immersive-leaf: #7b9e6b;
+  --ningyu-immersive-float-surface: rgba(255, 255, 255, 0.82);
+  --ningyu-immersive-float-surface-night: rgba(15, 23, 42, 0.82);
+  --ningyu-immersive-layer-surface: rgba(255, 255, 255, 0.94);
+  --ningyu-immersive-layer-surface-night: rgba(15, 23, 42, 0.95);
+  --ningyu-immersive-layer-blur: blur(18px);
+  --ningyu-immersive-control-size: 48px;
+  --ningyu-immersive-content-max: 940px;
+  --ningyu-immersive-motion-fast: 180ms;
+  --ningyu-immersive-motion-medium: 320ms;
+  --ningyu-immersive-motion-slow: 640ms;
+  --ningyu-immersive-motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ningyu-immersive-motion-spring-damping: 25;
+  --ningyu-immersive-motion-spring-stiffness: 300;
 
   /* State layers and motion. */
   --state-hover-opacity: 0.08;
@@ -100,6 +133,8 @@
   --motion-duration-short: 150ms;
   --motion-duration-medium: 220ms;
   --motion-duration-long: 300ms;
+  --ningyu-motion-breath: 3200ms;
+  --ningyu-motion-float: 520ms;
   --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
   --motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
 
@@ -110,4 +145,7 @@
   --z-sheet: 30;
   --z-dialog: 40;
   --z-toast: 50;
+  --ningyu-z-floating: 24;
+  --ningyu-z-drawer: 32;
+  --ningyu-z-safety: 42;
 }

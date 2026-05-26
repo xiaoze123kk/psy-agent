@@ -5,7 +5,6 @@ import type {
   CaptchaResponse,
   CompleteAttemptResponse,
   ConversationFeedbackRequest,
-  ConversationQualitySummary,
   CurrentUserResponse,
   FeedbackCreateRequest,
   FeedbackResponse,
@@ -266,16 +265,7 @@ export class CounselingApi {
   }
 
   submitConversationQualityFeedback(payload: ConversationFeedbackRequest): Promise<FeedbackResponse> {
-    return this.submitFeedback(payload);
-  }
-
-  getConversationQualitySummary(threadId?: string): Promise<ConversationQualitySummary> {
-    const params = new URLSearchParams();
-    if (threadId) params.set("thread_id", threadId);
-    const query = params.toString();
-    return this.client.get<ConversationQualitySummary>(
-      `/api/v1/feedback/conversation-quality/summary${query ? `?${query}` : ""}`,
-    );
+    return this.client.post<FeedbackResponse, ConversationFeedbackRequest>("/api/v1/feedback", payload);
   }
 
   // --- Sprint 3: Weekly Summary ---

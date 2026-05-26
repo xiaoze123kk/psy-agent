@@ -38,6 +38,7 @@ export interface RegisterResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface LoginRequest {
@@ -61,6 +62,7 @@ export interface LoginResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface RefreshTokenResponse {
@@ -76,6 +78,7 @@ export interface RefreshTokenResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface CurrentUserResponse {
@@ -89,6 +92,7 @@ export interface CurrentUserResponse {
   onboarding_completed: boolean;
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface PasswordResetQuestionRequest {
@@ -115,23 +119,12 @@ export interface PasswordResetRequest {
 }
 
 export interface ChangePasswordRequest {
-  old_password: string;
+  current_password: string;
   new_password: string;
 }
 
 export interface ChangePasswordResponse {
-  user_id: string;
-  access_token: string;
-  token_type: string;
-  username: string;
-  email: string | null;
-  nickname: string;
-  age_range: AgeRange;
-  user_mode: UserMode;
-  usage_goals: string[];
-  onboarding_completed: boolean;
-  memory_mode: MemoryMode;
-  companion_style: string;
+  ok: boolean;
 }
 
 export interface StartThreadRequest {
@@ -351,6 +344,7 @@ export interface PrivacySummaryResponse {
   user_mode: UserMode;
   settings: {
     memory_mode: MemoryMode;
+    save_transcript: boolean;
   };
   data_counts: PrivacyDataCounts;
   latest_activity_at: string | null;
@@ -375,11 +369,13 @@ export type PersonalDataExport = Record<string, unknown>;
 export interface UserSettingsUpdateRequest {
   memory_mode?: MemoryMode;
   companion_style?: string;
+  save_transcript?: boolean;
 }
 
 export interface UserSettingsResponse {
   memory_mode: MemoryMode;
   companion_style: string;
+  save_transcript: boolean;
 }
 
 export interface MoodLogRequest {
