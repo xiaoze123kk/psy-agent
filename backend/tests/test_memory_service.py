@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -444,6 +444,47 @@ class MemoryServiceTests(unittest.TestCase):
         )
 
         self.assertEqual([item["memory_id"] for item in results], [summary.id])
+
+    def test_build_memory_index_accepts_timezone_aware_updated_at(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        memory = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers short replies",
+            importance=3,
+        )
+        memory.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
+        self.db.flush()
+
+        results = build_memory_index(
+            self.db,
+            user.id,
+            memory_mode="long_term",
+        )
+
+        self.assertEqual([item["memory_id"] for item in results], [memory.id])
+        self.assertTrue(results[0]["freshness_warning"])
+
+    def test_retrieve_memories_accepts_timezone_aware_updated_at(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        memory = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers short replies during evening chats",
+            importance=3,
+        )
+        memory.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
+        self.db.flush()
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="short replies tonight",
+            memory_mode="long_term",
+            limit=5,
+        )
+
+        self.assertIn(memory.id, [item["memory_id"] for item in results])
 
     def test_summary_only_retrieve_memories_respects_memory_types_before_limit(self) -> None:
         user = self.create_user(memory_mode="summary_only")

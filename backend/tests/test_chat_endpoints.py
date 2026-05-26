@@ -65,7 +65,7 @@ class ChatEndpointTests(unittest.TestCase):
         return thread
 
     def auth_headers(self, user: User) -> dict[str, str]:
-        return {"Authorization": f"Bearer {create_access_token(user.id)}"}
+        return {"Authorization": f"Bearer {create_access_token(user.id, token_version=user.token_version)}"}
 
     def fake_failed_turn(self, db: Session, **kwargs):
         user_message = Message(
