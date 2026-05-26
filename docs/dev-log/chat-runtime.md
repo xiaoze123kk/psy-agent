@@ -216,3 +216,20 @@
 ### 后续事项
 
 - 后续如果要支持更多事实类场景，可把“事实依据 -> 陪伴式表达”的模板抽为小型策略层，而不是继续在单个 fallback 里堆规则。
+## 2026-05-26 TTFT 与 RAG rerank 延迟诊断
+
+### 背景/问题
+
+- 用户反馈首次 TTFT 很长，怀疑存在冷启动问题。
+- 最近真实 trace 显示，首 token 前主要耗时在 `example_retriever`：约 `26.2s`，其中 embedding 约 `8.7s`、rerank 约 `17.0s`。
+- 进程 warm 后的诊断请求显示 SSE 首个进度事件约 `40ms-50ms` 到达，但首个文本 token 约 `20.3s` 才出现；此时 embedding 已降到约 `200ms`，rerank 仍约 `15s-16s`。
+
+### 关键结论
+
+- 存在真实后端进程未被 `start-local.ps1` readiness check 预热的问题，因为 readiness check 运行在独立 Python 进程中。
+- 当前更主要的常态瓶颈是 CPU 本地 reranker 对多条候选进行同步前置重排，阻塞进入 `companion_response` 节点。
+- 已形成正式设计文档：`docs/superpowers/specs/2026-05-26-ttft-rag-rerank-latency-design.md`。
+
+### 后续事项
+
+- 按 spec 实现进程内 embedding/reranker warmup、rerank 候选数裁剪、rerank 硬超时和 fallback trace。
