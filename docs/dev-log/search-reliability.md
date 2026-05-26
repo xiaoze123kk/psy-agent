@@ -1,5 +1,30 @@
 # Search Reliability Dev Log
 
+## 2026-05-25 仓库分支清理与启动文档补充
+
+### 背景 / 问题
+
+- 远端仓库已迁移到 `xiaoze123kk/psy-agent`，本地 origin 仍指向旧仓库地址，push/fetch 时会走重定向并间歇出现 TLS 握手错误。
+- 本地残留多个 detached Codex worktree 和 5 月 18 日前的旧分支，容易影响分支清理和状态判断。
+- `backend/README.md` 仍把单独 `uvicorn --reload` 作为 API 启动方式，容易绕过 `scripts/start-local.ps1` 的 Milvus/RAG readiness 保障。
+
+### 关键改动
+
+- 将 `origin` 更新为 `https://github.com/xiaoze123kk/psy-agent.git`，并执行 `git fetch --prune origin`。
+- 移除干净的 detached Codex worktree；删除 5 月 18 日及以前的旧本地分支，并删除对应已确认的旧远端分支。
+- 删除本地冗余分支 `search-improvement` 和 `codex/third-party-risk-response`。
+- `backend/README.md` 增加推荐完整启动方式：从项目根目录运行 `scripts/start-local.ps1`，并说明该入口会启动 Milvus、无 reload 后端、RAG readiness 和前端。
+
+### 验证结果
+
+- `git worktree list` 只剩当前主 worktree。
+- 本地分支只剩 `codex/search-reliability` 和 `main`。
+- `git fetch --prune origin` 成功完成。
+
+### 后续事项
+
+- 远端重新出现了 `origin/codex/frontend-quality-parity` 等分支；本次按用户要求只清理到 5 月 18 日前/当天的旧分支和明确冗余本地分支，未继续删除新出现的远端分支。
+
 ## 2026-05-25 本地启动脚本补齐 Milvus 与 RAG readiness
 
 ### 背景 / 问题

@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, event, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import auth
 from app.core.security import hash_password
-from app.db.models import Base, RefreshToken, User, UserProfile, UserSettings
+from app.db.models import Base, PasswordResetToken, RefreshToken, User, UserProfile, UserSettings
 from app.db.session import get_db_session
 
 
@@ -25,6 +25,11 @@ class AuthRegisterTests(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+
+        @event.listens_for(self.engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+            dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, class_=Session)
         self.db = self.SessionLocal()
@@ -36,7 +41,7 @@ class AuthRegisterTests(unittest.TestCase):
             yield self.db
 
         self.app.dependency_overrides[get_db_session] = override_db_session
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
         self.db.close()
@@ -68,50 +73,34 @@ class AuthRegisterTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
 
-    def test_login_returns_session_response_after_successful_credentials(self) -> None:
-        user_id = str(uuid4())
-        self.db.add_all(
-            [
-                User(
-                    id=user_id,
-                    username="loginuser",
-                    email="loginuser@local.invalid",
-                    password_hash=hash_password("Aa123456!"),
-                ),
-                UserProfile(
-                    user_id=user_id,
-                    nickname="登录用户",
-                    age_range="18_plus",
-                    user_mode="adult",
-                    usage_goals=[],
-                    onboarding_completed=True,
-                ),
-                UserSettings(
-                    user_id=user_id,
-                    memory_mode="summary_only",
-                    companion_style="",
-                    crisis_resource_region="CN",
-                ),
-            ]
-        )
-        self.db.commit()
-
+    def test_login_returns_session_payload_and_refresh_cookie(self) -> None:
         with patch.object(auth, "_verify_captcha", return_value=None):
+            self.client.post(
+                "/api/v1/auth/register",
+                json={
+                    "username": "login_user",
+                    "password": "Password123",
+                    "age_range": "18_plus",
+                    "security_question": "first pet",
+                    "security_answer": "not-secret-test",
+                    "captcha_id": "captcha-id",
+                    "captcha_code": "ABCDE",
+                },
+            )
             response = self.client.post(
                 "/api/v1/auth/login",
                 json={
-                    "username": "loginuser",
-                    "password": "Aa123456!",
+                    "username": "login_user",
+                    "password": "Password123",
                     "captcha_id": "captcha-id",
-                    "captcha_code": "ABCD",
+                    "captcha_code": "ABCDE",
                     "auto_login": False,
                 },
             )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertIsInstance(payload, dict)
-        self.assertEqual(payload["username"], "loginuser")
+        self.assertEqual(payload["username"], "login_user")
         self.assertEqual(payload["token_type"], "Bearer")
         self.assertTrue(payload["access_token"])
         self.assertIn("rt=", response.headers.get("set-cookie", ""))
@@ -154,3 +143,42 @@ class AuthRegisterTests(unittest.TestCase):
 
         self.assertEqual(validated_record.id, token_record.id)
         self.assertEqual(validated_user.username, "refreshuser")
+
+    def test_password_reset_accepts_timezone_aware_expiry(self) -> None:
+        with patch.object(auth, "_verify_captcha", return_value=None):
+            register_response = self.client.post(
+                "/api/v1/auth/register",
+                json={
+                    "username": "reset_user",
+                    "password": "Password123",
+                    "age_range": "18_plus",
+                    "security_question": "first pet",
+                    "security_answer": "not-secret-test",
+                    "captcha_id": "captcha-id",
+                    "captcha_code": "ABCDE",
+                },
+            )
+
+        self.assertEqual(register_response.status_code, 201)
+        verify_response = self.client.post(
+            "/api/v1/auth/password-reset-verify",
+            json={
+                "username": "reset_user",
+                "answer": "not-secret-test",
+            },
+        )
+        self.assertEqual(verify_response.status_code, 200)
+
+        reset_record = self.db.scalar(select(PasswordResetToken).where(PasswordResetToken.status == "active"))
+        reset_record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        response = self.client.post(
+            "/api/v1/auth/password-reset",
+            json={
+                "reset_token": verify_response.json()["reset_token"],
+                "new_password": "Newpass123",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})

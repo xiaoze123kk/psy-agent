@@ -4,6 +4,17 @@ FastAPI + LangGraph backend scaffold for the counseling agent.
 
 ## Quick Start
 
+Recommended full local stack startup from the repository root:
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+This starts the agent Milvus compose stack, starts the backend without `--reload`,
+runs `backend/scripts/check_rag_ready.py` to verify Milvus, embedding, and
+counseling RAG retrieval, then starts the Vite frontend. Use this path for normal
+local development so the browser does not open against a backend with RAG skipped.
+
 1. Create and activate a virtual environment.
 1. Install dependencies.
 
@@ -89,11 +100,15 @@ To smoke test the configured embedding provider:
 python scripts/check_embedding.py
 ```
 
-1. Run the API.
+1. Run only the API.
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Prefer `../scripts/start-backend.ps1` when working from Windows PowerShell; it
+sets the local embedding worker and RAG timeout environment used by the full
+startup script. Add `-Reload` only when you explicitly need backend hot reload.
 
 ## API Base
 

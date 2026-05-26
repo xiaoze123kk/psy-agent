@@ -208,7 +208,7 @@ def _validate_refresh_token(db: Session, refresh_token: str) -> tuple[RefreshTok
     if token_record is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not found.")
 
-    now = utcnow()
+    now = _as_utc_aware(utcnow())
     if token_record.status != "active" or token_record.revoked_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is no longer active.")
     if _is_expired(token_record.expires_at, now):
@@ -426,7 +426,6 @@ async def login(
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=payload.auto_login)
     db.commit()
     db.refresh(user)
-
     response_body = _session_user_response(user, access_token)
     response = Response(
         content=LoginResponse(**response_body).model_dump_json(),

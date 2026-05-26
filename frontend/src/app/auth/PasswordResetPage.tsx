@@ -1,5 +1,6 @@
 ﻿import { useState, type FormEvent } from "react";
 import { api } from "../../api";
+import { extractApiErrorDetail } from "../../api/errors";
 import type { PasswordResetQuestionResponse } from "../../types/api";
 import loginBack from "../../imports/login_back.png";
 import wcbg from "../../imports/wcbg.png";
@@ -32,16 +33,7 @@ function validatePassword(password: string): string | null {
 }
 
 function extractErrorDetail(err: unknown, fallback: string): string {
-  if (!(err instanceof Error)) return fallback;
-  const match = err.message.match(/API \d+: (.+)/);
-  if (!match) return fallback;
-  try {
-    const body = JSON.parse(match[1]);
-    if (typeof body?.detail === "string") return body.detail;
-  } catch {
-    // not JSON
-  }
-  return fallback;
+  return extractApiErrorDetail(err) ?? fallback;
 }
 
 export function PasswordResetPage({ onBack, onComplete }: PasswordResetPageProps) {

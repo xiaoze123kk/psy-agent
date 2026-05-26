@@ -445,24 +445,31 @@ class MemoryServiceTests(unittest.TestCase):
 
         self.assertEqual([item["memory_id"] for item in results], [summary.id])
 
-    def test_build_memory_index_accepts_timezone_aware_updated_at(self) -> None:
-        user = self.create_user(memory_mode="long_term")
-        memory = self.add_memory(
-            user,
-            memory_type="preference",
-            content="prefers short replies",
+    def test_build_memory_index_handles_timezone_aware_updated_at(self) -> None:
+        user = self.create_user(memory_mode="summary_only")
+        memory = UserMemory(
+            id="aware-memory-id",
+            user_id=user.id,
+            memory_type="session_summary",
+            title="aware memory",
+            summary="session summary",
+            content="session summary",
+            tags=[],
             importance=3,
-        )
-        memory.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
-        self.db.flush()
-
-        results = build_memory_index(
-            self.db,
-            user.id,
-            memory_mode="long_term",
+            visibility="user_visible",
+            status="active",
+            review_state="normal",
+            updated_at=datetime.now(timezone.utc) - timedelta(days=2),
         )
 
-        self.assertEqual([item["memory_id"] for item in results], [memory.id])
+        with patch("app.services.memory_service._base_memory_query", return_value=[memory]):
+            results = build_memory_index(
+                self.db,
+                user.id,
+                memory_mode="summary_only",
+            )
+
+        self.assertEqual(results[0]["memory_id"], "aware-memory-id")
         self.assertTrue(results[0]["freshness_warning"])
 
     def test_retrieve_memories_accepts_timezone_aware_updated_at(self) -> None:

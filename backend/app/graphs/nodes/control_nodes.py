@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.graphs.nodes.common import AgentState, has_any_text, matched_text
+from app.graphs.nodes.risk_nodes import classify_risk_text
 from app.services.conversation_move_policy import build_conversation_move_policy
 from app.services.risk_policy import build_risk_response_policy, tool_gate_mode_for_state
 
@@ -242,6 +243,26 @@ def _recent_user_context(state: AgentState) -> str:
     return " ".join(user_texts[-3:])
 
 
+def _recent_user_context_has_high_self_harm(state: AgentState) -> bool:
+    messages = state.get("recent_messages", []) or []
+    if not isinstance(messages, list):
+        return False
+    for message in messages[-6:]:
+        if not isinstance(message, dict) or str(message.get("role") or "") != "user":
+            continue
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        assessment = classify_risk_text(content)
+        semantic_risk = assessment.get("semantic_risk")
+        expression_type = ""
+        if isinstance(semantic_risk, dict):
+            expression_type = str(semantic_risk.get("risk_expression_type") or "")
+        if assessment.get("risk_level") in {"L2", "L3"} and expression_type not in LOW_RISK_EXPRESSIONS:
+            return True
+    return False
+
+
 def _extend_unique(values: list[str], additions: list[str]) -> list[str]:
     for item in additions:
         if item not in values:
@@ -387,15 +408,22 @@ async def control_plane(state: AgentState) -> AgentState:
         and any(bool(semantic_risk.get(key)) for key in ("ideation", "intent", "plan", "means"))
     )
     semantic_self_harm = semantic_l3_self_harm or semantic_l2_self_harm or legacy_semantic_self_harm
-    raw_l3_self_harm = not discussion_only and _has_raw_l3_self_harm_signal(detection_text)
-    recent_self_harm_context = not discussion_only and has_any_text(recent_user_context, SELF_HARM_TERMS)
+    raw_l3_self_harm = not discussion_only and _has_raw_l3_self_harm_signal(text)
+    recent_self_harm_context = not discussion_only and _recent_user_context_has_high_self_harm(state)
     inherited_high_self_harm = risk_level in {"L2", "L3"} and not (
         has_semantic_expression and risk_expression_type in LOW_RISK_EXPRESSIONS
     )
     self_harm = semantic_self_harm or raw_l3_self_harm or recent_self_harm_context or inherited_high_self_harm
     immediate_self_harm = (
         not discussion_only
-        and (raw_l3_self_harm or _has_self_harm_near_term_or_means_signal(detection_text, semantic_risk))
+        and (
+            raw_l3_self_harm
+            or _has_self_harm_near_term_or_means_signal(text, semantic_risk)
+            or (
+                recent_self_harm_context
+                and _has_self_harm_near_term_or_means_signal(detection_text, semantic_risk)
+            )
+        )
     )
     location_self_harm = (
         not discussion_only

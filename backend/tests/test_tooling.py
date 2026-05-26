@@ -13,6 +13,8 @@ from app.services.tooling import (
     build_dialogue_tool_plan,
     _fallback_answer_from_prefetched_web,
     _prefetch_search_query,
+    _should_prefetch_web_search,
+    _web_search_text_for_turn,
     run_dialogue_reply_with_tools,
     summarize_tool_events,
 )
@@ -450,9 +452,163 @@ class WebSearchToolTests(unittest.TestCase):
         self.assertIn("2026年5月13日至15日", answer)
         self.assertNotIn("2026 年", answer)
         self.assertNotIn("https://", answer)
+        self.assertNotIn("我查到的搜索结果显示", answer)
+        self.assertNotIn("公开资料里能核对到", answer)
+        self.assertNotIn("可参考来源", answer)
+        self.assertNotIn("搜索摘要", answer)
+
+    def test_personal_injury_rain_turn_does_not_prefetch_web_search(self) -> None:
+        state = make_state()
+        plan = build_dialogue_tool_plan(state)
+
+        should_prefetch = _should_prefetch_web_search(
+            state,
+            "武汉昨天下暴雨了，骑车摔了一跤，好疼啊",
+            plan,
+        )
+
+        self.assertFalse(should_prefetch)
+
+    def test_huawei_semiconductor_law_prefetches_web_search(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "华为新半导体定律，你说一下呗"
+        plan = build_dialogue_tool_plan(state)
+
+        self.assertTrue(_should_prefetch_web_search(state, "user", plan))
+        self.assertEqual(
+            _prefetch_search_query(_web_search_text_for_turn(state, "user")),
+            "华为发表韬τ定律",
+        )
+
+    def test_huawei_semiconductor_law_correction_reuses_previous_topic_for_search(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"role": "user", "content": "华为新半导体定律，你说一下呗"},
+                {"role": "assistant", "content": "我没找到这个说法。"},
+            ]
+        )
+        state["normalized_text"] = "涛定律好像，说错了"
+        plan = build_dialogue_tool_plan(state)
+
+        search_text = _web_search_text_for_turn(state, "user")
+
+        self.assertTrue(_should_prefetch_web_search(state, "user", plan))
+        self.assertIn("华为新半导体定律", search_text)
+        self.assertIn("涛定律", search_text)
+        self.assertEqual(_prefetch_search_query(search_text), "华为发表韬τ定律")
 
 
 class WebSearchPrefetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_personal_injury_turn_hides_web_search_from_model(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "武汉昨天下暴雨了，骑车摔了一跤，好疼啊"
+        plan = build_dialogue_tool_plan(state)
+        fake_tool_result = ToolChatResult(
+            content="下暴雨还摔了一跤，听起来真的很疼。先看看有没有破皮、出血或肿起来，好吗？",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+        ) as search_web, patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=fake_tool_result),
+        ) as chat_with_tools:
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        search_web.assert_not_called()
+        sent_messages = chat_with_tools.call_args.args[0]
+        self.assertNotIn("web_search", sent_messages[0]["content"])
+        sent_tools = chat_with_tools.call_args.kwargs["tools"]
+        sent_tool_names = [tool["function"]["name"] for tool in sent_tools]
+        self.assertNotIn("web_search", sent_tool_names)
+        self.assertIn("暴雨", result["assistant_text"])
+        self.assertIn("疼", result["assistant_text"])
+        self.assertNotIn("搜索结果", result["assistant_text"])
+
+    async def test_huawei_semiconductor_law_uses_prefetched_search_context(self) -> None:
+        state = make_state()
+        state["normalized_text"] = "华为新半导体定律，你说一下呗"
+        plan = build_dialogue_tool_plan(state)
+        stale_tool_result = ToolChatResult(
+            content="网上搜了一下，也没有找到华为发布过这个定律的官方消息。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="华为发表韬(τ)定律，实现晶体管密度与系统性能突破",
+            url="https://www.huawei.com/cn/news/2026/5/ieee-iscas-tau-scaling",
+            snippet="2026年5月25日，华为何庭波发表半导体新路径探索与实践，发表指导半导体产业发展的新原则——韬(τ)定律。",
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ) as search_web, patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=stale_tool_result),
+        ):
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        search_web.assert_called_once_with("华为发表韬τ定律", max_results=5)
+        self.assertIn("韬", result["assistant_text"])
+        self.assertNotIn("没有找到", result["assistant_text"])
+        self.assertNotIn("公开资料里能核对到", result["assistant_text"])
+        self.assertNotIn("可参考来源", result["assistant_text"])
+        self.assertNotIn("huawei.com", result["assistant_text"])
+        self.assertNotIn("1 天前", result["assistant_text"])
+
+    async def test_huawei_semiconductor_law_correction_prefetches_with_previous_topic(self) -> None:
+        state = make_state(
+            recent_messages=[
+                {"role": "user", "content": "华为新半导体定律，你说一下呗"},
+                {"role": "assistant", "content": "我没找到这个说法。"},
+            ]
+        )
+        state["normalized_text"] = "涛定律好像，说错了"
+        plan = build_dialogue_tool_plan(state)
+        fake_tool_result = ToolChatResult(
+            content="你说的应该是韬（τ）定律。",
+            tool_events=[],
+            finish_reason="stop",
+            messages=[],
+        )
+        search_result = SearchResult(
+            title="华为正式发表半导体领域新定律",
+            url="https://finance.people.com.cn/n1/2026/0526/c1004-40727170.html",
+            snippet="5月25日，半导体领域新定律“韬（τ）定律”在2026国际电路与系统研讨会上发表。",
+        )
+
+        with patch(
+            "app.services.search_service.search_web",
+            return_value=([search_result], None),
+        ) as search_web, patch(
+            "app.services.tooling.deepseek_client.chat_with_tools",
+            new=AsyncMock(return_value=fake_tool_result),
+        ):
+            result = await run_dialogue_reply_with_tools(
+                state,
+                system_prompt="system",
+                user_prompt="user",
+                tool_plan=plan,
+            )
+
+        search_web.assert_called_once_with("华为发表韬τ定律", max_results=5)
+        self.assertIn("韬", result["assistant_text"])
+
     async def test_current_fact_question_prefetches_web_search_before_model_reply(self) -> None:
         state = make_state()
         state["normalized_text"] = "张雪峰去世时间是什么？"

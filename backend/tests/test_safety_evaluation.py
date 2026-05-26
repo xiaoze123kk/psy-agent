@@ -411,6 +411,23 @@ class TwoStageRiskClassifierTests(unittest.TestCase):
         self.assertEqual(semantic["risk_domain"], "general_distress")
         self.assertIn("death_language", semantic["signal_family"])
 
+    def test_emotional_metaphor_context_is_not_inherited_as_l2(self) -> None:
+        state = _make_state(
+            "没事，就是一种情绪而已。",
+            user_mode="adult",
+        )
+        state["recent_messages"] = [
+            {"role": "user", "content": "唉，就是想死想死的一种感觉"},
+            {"role": "assistant", "content": "我听见你说的是一种压过来的感觉。"},
+        ]
+
+        state.update(_run(risk_classifier(state)))
+        state.update(_run(control_plane(state)))
+
+        self.assertNotEqual(state["risk_level"], "L2")
+        self.assertNotEqual(state["route_priority"], "P0_immediate_safety")
+        self.assertFalse(state["requires_safety_check"])
+
     def test_busy_to_death_idiom_does_not_trigger_safety_check(self) -> None:
         r = _classify("我只是忙到想死，明天还要交稿")
 
