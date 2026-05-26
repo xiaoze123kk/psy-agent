@@ -372,6 +372,7 @@ async def register(
         crisis_resource_region="CN",
     )
     db.add_all([user, profile, user_settings])
+    db.flush()
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
     db.commit()
     db.refresh(user)
@@ -415,6 +416,14 @@ async def login(
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=payload.auto_login)
     db.commit()
     db.refresh(user)
+
+    response_body = _session_user_response(user, access_token)
+    response = Response(
+        content=LoginResponse(**response_body).model_dump_json(),
+        media_type="application/json",
+    )
+    _set_refresh_cookie(response, refresh_token, auto_login=payload.auto_login)
+    return response
 
 @router.post("/dev-session", response_model=LoginResponse)
 async def dev_session(
