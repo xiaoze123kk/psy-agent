@@ -321,3 +321,23 @@
 - `npm run check`：通过，`tsc --noEmit` exit 0。
 - `npm run build`：通过，Vite build exit 0，仅保留 `module.register()` 的上游弃用提示。
 - 浏览器验证：桌面 `1600x1200` 下日间主题标题距离顶栏底部约 68px，`hasPaperOrCorner=false`，无横向溢出；夜间主题同样无横向溢出并应用更透明的夜间舞台背景；移动端 `390x844` 下标题距离顶栏底部约 66px，无横向溢出。
+
+## 2026-05-26 主聊天顶栏常驻与舞台贴合
+
+### 背景
+
+用户希望上方顶栏常驻显示；下方玻璃质感聊天舞台应紧挨顶栏，而不是保留大段顶部空隙。
+
+### 本次改动
+
+- 扩展 `frontend/tests/chat-shell-css.test.cjs`，约束 `ningyu-header` 默认常驻、可交互，并避免再通过 hover 才显示。
+- 将桌面 `.ningyu-chat__scroll` 顶部 padding 从 96px 收紧到 76px，让玻璃舞台贴近顶栏。
+- 将移动端聊天顶部 padding 从 24px 收紧到 8px，使小屏也保持顶栏与舞台紧邻。
+
+### 验证
+
+- TDD RED：新增合同测试后，`npm run test:unit` 因顶栏仍是 `opacity: 0` / `pointer-events: none` 失败。
+- 修复后：`npm run test:unit` 通过，`4 passed`。
+- `npm run check`：通过，`tsc --noEmit` exit 0。
+- `npm run build`：通过，Vite build exit 0，仅保留 `module.register()` 的上游弃用提示。
+- 浏览器验证：桌面 `1496x1223` 下顶栏 `opacity=1`、`pointer-events=auto`，聊天舞台距顶栏约 4px；夜间主题同样约 4px；移动端 `390x844` 下舞台距顶栏约 7px；均无横向溢出。

@@ -71,17 +71,11 @@
   border-bottom: 1px solid rgba(153, 246, 228, 0.24);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0.24));
   box-shadow: 0 10px 34px -26px rgba(15, 118, 110, 0.3);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 300ms ease, background 1000ms ease-in-out, border-color 1000ms ease-in-out;
-  backdrop-filter: blur(10px) saturate(1.04);
-  -webkit-backdrop-filter: blur(10px) saturate(1.04);
-}
-
-.ningyu-shell:hover .ningyu-header,
-.ningyu-header:hover {
   opacity: 1;
   pointer-events: auto;
+  transition: background 1000ms ease-in-out, border-color 1000ms ease-in-out;
+  backdrop-filter: blur(10px) saturate(1.04);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
 }
 
 .ningyu-shell.is-night .ningyu-header {
@@ -1599,7 +1593,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 96px clamp(20px, 4vw, 54px) 18px;
+  padding: 76px clamp(20px, 4vw, 54px) 18px;
 }
 
 .ningyu-chat__inner {
@@ -3783,7 +3777,7 @@
   }
 
   .ningyu-chat__scroll {
-    padding-top: 24px;
+    padding-top: 8px;
     padding-bottom: 12px;
   }
 
