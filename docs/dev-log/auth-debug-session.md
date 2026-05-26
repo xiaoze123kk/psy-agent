@@ -60,3 +60,79 @@
 ### 后续事项
 
 - 后续如继续演进认证链路，需保持 dev-session、登录、refresh 三者在 token 传递方式上的一致性（body vs cookie）。
+
+## 2026-05-26 main 分支注册 refresh token 外键修复
+
+### 背景/问题
+
+- 在 `main` 分支本地启动前后端后，前端注册页提交新用户显示“注册失败，请检查输入。”。
+- 后端日志显示 `POST /api/v1/auth/register` 返回 `500 Internal Server Error`。
+- 具体异常为 `refresh_tokens_user_id_fkey` 外键失败：注册接口在同一事务里创建 `users`、`user_profiles`、`user_settings` 后立即签发 refresh token，SQLAlchemy flush 时可能先插入 `refresh_tokens`，此时 PostgreSQL 还看不到对应 `users` 记录。
+
+### 关键改动
+
+- 在 `backend/app/api/v1/endpoints/auth.py` 的 `register()` 中，`db.add_all([user, profile, user_settings])` 后先执行 `db.flush()`，确保用户记录已持久化，再签发 refresh token。
+- 新增 `backend/tests/test_auth_register.py`，通过断言签发 token 前 `User` 已进入 persistent 状态，防止注册路径再次回到 pending 状态签发 token。
+
+### 验证结果
+
+- 红灯验证：新增测试先失败，`inspect(user).persistent` 为 `False`。
+- 修复后：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py -q` 通过，`1 passed, 5 warnings`。
+
+### 后续事项
+
+- 仍可后续单独处理 `datetime.utcnow()` 弃用 warning；本次不扩大改动范围。
+
+## 2026-05-26 登录成功响应缺失修复
+
+### 背景/问题
+
+- 用户反馈本地登录页使用已注册账号登录失败，前端只显示“登录失败，请检查输入。”。
+- 复查认证链路发现，后端 `/api/v1/auth/login` 在用户名、密码和验证码校验成功后，会签发 access/refresh token 并提交事务，但函数末尾没有返回 `LoginResponse`。
+- 该路径会让前端收到空响应体，`SessionProvider` 无法读取 `access_token`，于是进入登录失败分支。
+
+### 关键改动
+
+- 在 `backend/app/api/v1/endpoints/auth.py` 的 `login()` 成功路径补回 `LoginResponse` JSON 响应。
+- 成功登录时继续通过 `Set-Cookie` 下发 refresh token，与 register、dev-session 和 refresh 流程保持一致。
+- 扩展 `backend/tests/test_auth_register.py`，新增登录成功回归测试，断言响应体包含 `access_token`、`token_type`、用户名，并包含 `rt=` cookie。
+
+### 验证结果
+
+- 红灯验证：新增登录测试先失败，`response.json()` 为 `None`。
+- 修复后：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py -q` 通过，`2 passed, 13 warnings`。
+- 认证相关回归：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py tests/test_auth_dev_session.py -q` 通过，`4 passed, 21 warnings`。
+- 本地真实后端 smoke：`/api/v1/auth/captcha` + `/api/v1/auth/login` 返回 200，响应包含 `access_token`，并设置 `rt=` refresh cookie。
+- 浏览器验证：在 `http://127.0.0.1:5173/` 通过登录表单提交后进入新用户引导页，确认前端能读取登录响应并切换 session 状态。
+
+### 后续事项
+
+- 前端当前仍把后端具体错误折叠成通用失败提示；后续可单独改善错误提示，让验证码错误、密码错误和服务端异常更容易区分。
+
+## 2026-05-26 七天免登录刷新 500 修复
+
+### 背景/问题
+
+- 用户勾选“7天自动登录”后刷新页面仍回到登录页。
+- 浏览器网络记录显示 `POST /api/v1/auth/refresh` 返回 `500 Internal Server Error`，并非前端忘记勾选状态。
+- 后端栈显示 `_validate_refresh_token()` 中 `token_record.expires_at <= now` 抛出 `TypeError: can't compare offset-naive and offset-aware datetimes`。
+- 根因为 PostgreSQL `TIMESTAMPTZ` 返回的 refresh token 过期时间可能带时区，而项目当前 `utcnow()` 返回无时区 datetime。
+
+### 关键改动
+
+- 在 `backend/app/api/v1/endpoints/auth.py` 中新增认证局部的 UTC aware 时间比较 helper。
+- `refresh` token 过期判断改为统一转成 UTC aware 后比较，避免带/不带时区混用导致 500。
+- 保持双 token 流程不变：refresh token 继续走 HttpOnly cookie，刷新接口继续返回新的 access token 并轮换 refresh token。
+- 密码重置 token 的 Python 侧过期判断也复用同一 helper，避免相同类型问题。
+- 扩展 `backend/tests/test_auth_register.py`，新增带时区 `expires_at` 的 refresh token 校验回归测试。
+
+### 验证结果
+
+- TDD RED：新增测试先失败，复现 `can't compare offset-naive and offset-aware datetimes`。
+- 修复后：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py -q` 通过，`3 passed, 22 warnings`。
+- 认证相关回归：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py tests/test_auth_dev_session.py -q` 通过，`5 passed, 30 warnings`。
+- 本地浏览器验证：使用同一浏览器上下文完成 `auto_login=true` 登录后刷新 `http://127.0.0.1:5173/`，`POST /api/v1/auth/refresh` 返回 200；页面恢复到已登录账号的 onboarding 流程，而不是回到登录页。
+
+### 后续事项
+
+- 可后续单独把 `app.db.models.utcnow()` 迁移为 timezone-aware UTC，并评估数据库迁移影响；本次只修复认证刷新路径。

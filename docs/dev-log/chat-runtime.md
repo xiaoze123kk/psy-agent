@@ -76,28 +76,30 @@
   - 开启后台预热后首轮中文 RAG：`embedding 426ms`、`Milvus 1.05s`、`RAG 总 1.50s`，命中 3 条。
 - 当前桌面验证后端以 `LOCAL_EMBEDDING_USE_WORKER=1`、`LOCAL_EMBEDDING_WARM_ON_STARTUP=1` 启动；`.env.local` 未直接改动。
 
-### 2026-05-26 stream_failed 记忆时间修复
+## 2026-05-26 聊天流 stream_failed 修复
 
 ### 背景/问题
 
-前端调试用户在聊天页发送消息后，SSE 请求返回 `accepted` 后立刻进入 `event: error`，前端显示 `stream_failed`。后端日志定位到 `_prepare_turn_context()` 调用 `build_memory_index()` 时失败，根因是 `memory_service` 用不带时区的 `utcnow()` 与 PostgreSQL 返回的带时区 `updated_at` 相减，触发 `TypeError: can't subtract offset-naive and offset-aware datetimes`。
+- 主界面发送消息后助手消息显示 `stream_failed`，前端处理卡片显示“处理遇到问题”。
+- 后端日志显示 `process_message_turn_stream` 在 `_prepare_turn_context()` 构建记忆索引时异常退出。
+- 根因是 PostgreSQL `TIMESTAMPTZ` 返回的 `UserMemory.updated_at` 可能是 timezone-aware datetime，而项目当前 `utcnow()` 返回 timezone-naive datetime；`memory_service` 中做时间差计算时触发 `TypeError: can't subtract offset-naive and offset-aware datetimes`。
 
 ### 关键改动
 
-- 在 `memory_service` 中新增 `_utcnow_aware()`，把记忆新鲜度、记忆排序、向量记忆排序、自动整合冷却时间等 Python 层时间差计算统一转成 UTC aware datetime。
-- 新增回归测试覆盖 `UserMemory.updated_at` 为 timezone-aware datetime 时 `build_memory_index()` 不再崩溃，并仍能生成 freshness warning。
-- 同步修正 `test_chat_endpoints.py` 的测试 token 构造，补齐 `token_version`，匹配当前认证逻辑。
+- 在 `backend/app/services/memory_service.py` 中新增记忆服务局部的 UTC aware 时间差 helper。
+- `build_memory_index()`、`retrieve_memories_for_turn()` 的记忆新鲜度计算改为统一转 UTC aware 后相减。
+- 同步修复自动记忆整合 gate 中 `completed_at` 的同类时间差判断。
+- 更新 `backend/tests/test_chat_endpoints.py` 的测试鉴权 helper，按现有 token_version 校验生成 access token。
 
 ### 验证结果
 
-- `backend/.venv/Scripts/python.exe -m pytest tests/test_memory_service.py::MemoryServiceTests::test_build_memory_index_handles_timezone_aware_updated_at tests/test_chat_endpoints.py tests/test_auth_register.py tests/test_database_migrations.py -q`：`7 passed, 31 warnings`，warnings 为既有 `datetime.utcnow()` 弃用提示。
-- `git diff --check`：通过，仅有 Windows 行尾提示。
-- `GET http://127.0.0.1:8000/health`：返回 `{"status":"ok"}`。
-- 前端真实发送“再确认一下，现在对话能正常回复吗？”后，最新 `/api/v1/chat/threads/.../stream` 返回 `final` 事件，`delivery_status = generated`，无新的 `stream_failed`。
+- TDD RED：新增 timezone-aware `updated_at` 测试先失败，复现 `can't subtract offset-naive and offset-aware datetimes`。
+- 修复后：`backend/.venv/Scripts/python.exe -m pytest tests/test_memory_service.py tests/test_chat_endpoints.py -q` 通过，`30 passed`。
+- 本地真实 SSE smoke：临时用户 + timezone-aware 记忆走 `POST /api/v1/chat/threads/{thread_id}/stream` 返回 `event: final`，未出现 `event: error` 或 `stream_failed`；验证后已清理临时用户数据。
 
 ### 后续事项
 
-- RAG rerank 在本次前端实测中耗时约 `25s`，虽未导致失败，但仍值得后续单独优化或增加降级策略。
+- 后续可统一把 `app.db.models.utcnow()` 迁移为 timezone-aware UTC，并集中评估数据库和测试夹具影响。
 
 ### 2026-05-26 发送入口与 RAG 超时预算修复
 
@@ -214,3 +216,20 @@
 ### 后续事项
 
 - 后续如果要支持更多事实类场景，可把“事实依据 -> 陪伴式表达”的模板抽为小型策略层，而不是继续在单个 fallback 里堆规则。
+## 2026-05-26 TTFT 与 RAG rerank 延迟诊断
+
+### 背景/问题
+
+- 用户反馈首次 TTFT 很长，怀疑存在冷启动问题。
+- 最近真实 trace 显示，首 token 前主要耗时在 `example_retriever`：约 `26.2s`，其中 embedding 约 `8.7s`、rerank 约 `17.0s`。
+- 进程 warm 后的诊断请求显示 SSE 首个进度事件约 `40ms-50ms` 到达，但首个文本 token 约 `20.3s` 才出现；此时 embedding 已降到约 `200ms`，rerank 仍约 `15s-16s`。
+
+### 关键结论
+
+- 存在真实后端进程未被 `start-local.ps1` readiness check 预热的问题，因为 readiness check 运行在独立 Python 进程中。
+- 当前更主要的常态瓶颈是 CPU 本地 reranker 对多条候选进行同步前置重排，阻塞进入 `companion_response` 节点。
+- 已形成正式设计文档：`docs/superpowers/specs/2026-05-26-ttft-rag-rerank-latency-design.md`。
+
+### 后续事项
+
+- 按 spec 实现进程内 embedding/reranker warmup、rerank 候选数裁剪、rerank 硬超时和 fallback trace。

@@ -472,6 +472,27 @@ class MemoryServiceTests(unittest.TestCase):
         self.assertEqual(results[0]["memory_id"], "aware-memory-id")
         self.assertTrue(results[0]["freshness_warning"])
 
+    def test_retrieve_memories_accepts_timezone_aware_updated_at(self) -> None:
+        user = self.create_user(memory_mode="long_term")
+        memory = self.add_memory(
+            user,
+            memory_type="preference",
+            content="prefers short replies during evening chats",
+            importance=3,
+        )
+        memory.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
+        self.db.flush()
+
+        results = retrieve_memories_for_turn(
+            self.db,
+            user_id=user.id,
+            query="short replies tonight",
+            memory_mode="long_term",
+            limit=5,
+        )
+
+        self.assertIn(memory.id, [item["memory_id"] for item in results])
+
     def test_summary_only_retrieve_memories_respects_memory_types_before_limit(self) -> None:
         user = self.create_user(memory_mode="summary_only")
         for index in range(200):

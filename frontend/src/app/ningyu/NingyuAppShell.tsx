@@ -2547,18 +2547,17 @@ function ChatWorkspace({
     <section className="ningyu-chat" aria-label="聊天工作区">
       <div className="ningyu-chat__scroll">
         <motion.div
-          className="ningyu-chat__inner ningyu-chat-paper"
+          className="ningyu-chat__inner ningyu-chat-stage ningyu-chat__stage-token"
           initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.48, delay: 0.12, ease: "easeOut" }}
         >
-          <div className="ningyu-chat-corner" aria-hidden="true" />
           <header className="ningyu-chat-header">
             <img className="ningyu-chat-seal" src={logo} alt="" aria-hidden="true" />
             <h1 className="ningyu-chat-title">宁语手记</h1>
             <p className="ningyu-chat-date">{chatPaperDate}</p>
           </header>
-          <div className="ningyu-chat-paper__body">
+          <div className="ningyu-chat-stage__body">
             {messageListStatus === "loading" ? (
               <ChatStateMessage title="正在载入对话" detail="风正在把这段聊天记录带回来..." />
             ) : messageListStatus === "error" ? (
