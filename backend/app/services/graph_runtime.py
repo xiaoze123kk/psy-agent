@@ -151,17 +151,6 @@ def _split_stream_update(update: object) -> tuple[str | None, object]:
     return None, update
 
 
-def _assistant_token_payload(payload: object) -> dict[str, object] | None:
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("type") != "assistant_token":
-        return None
-    text = payload.get("text")
-    if not isinstance(text, str) or not text:
-        return None
-    return {"text": text}
-
-
 def _optional_text(value: object) -> str:
     if value in (None, "", [], {}):
         return ""
@@ -459,9 +448,8 @@ class GraphRuntime:
         async for update in self.graph.astream(input_state, config=config, stream_mode=["updates", "custom"]):
             stream_mode, payload = _split_stream_update(update)
             if stream_mode == "custom":
-                token_payload = _assistant_token_payload(payload)
-                if token_payload is not None:
-                    yield "token", token_payload
+                # Custom assistant tokens are draft text emitted before response_validator.
+                # Keep them internal so the client never flashes an unvalidated reply.
                 continue
             if stream_mode is not None and stream_mode != "updates":
                 continue

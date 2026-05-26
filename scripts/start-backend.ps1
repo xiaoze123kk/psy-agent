@@ -104,12 +104,14 @@ if ($Reload) {
 
 $env:LOCAL_EMBEDDING_USE_WORKER = if ($env:LOCAL_EMBEDDING_USE_WORKER) { $env:LOCAL_EMBEDDING_USE_WORKER } else { "1" }
 $env:EMBEDDING_TIMEOUT_SECONDS = if ($env:EMBEDDING_TIMEOUT_SECONDS) { $env:EMBEDDING_TIMEOUT_SECONDS } else { "120" }
-$env:RAG_RETRIEVAL_TIMEOUT_SECONDS = if ($env:RAG_RETRIEVAL_TIMEOUT_SECONDS) { $env:RAG_RETRIEVAL_TIMEOUT_SECONDS } else { "120" }
+$env:RAG_RETRIEVAL_TIMEOUT_SECONDS = if ($env:RAG_RETRIEVAL_TIMEOUT_SECONDS) { $env:RAG_RETRIEVAL_TIMEOUT_SECONDS } else { "30" }
+$env:CHAT_TURN_TIMEOUT_SECONDS = if ($env:CHAT_TURN_TIMEOUT_SECONDS) { $env:CHAT_TURN_TIMEOUT_SECONDS } else { "120" }
 
 if ($DryRun) {
     Write-Host "[dry-run] LOCAL_EMBEDDING_USE_WORKER=$env:LOCAL_EMBEDDING_USE_WORKER"
     Write-Host "[dry-run] EMBEDDING_TIMEOUT_SECONDS=$env:EMBEDDING_TIMEOUT_SECONDS"
     Write-Host "[dry-run] RAG_RETRIEVAL_TIMEOUT_SECONDS=$env:RAG_RETRIEVAL_TIMEOUT_SECONDS"
+    Write-Host "[dry-run] CHAT_TURN_TIMEOUT_SECONDS=$env:CHAT_TURN_TIMEOUT_SECONDS"
     $reloadText = if ($Reload) { " --reload" } else { "" }
     Write-Host "[dry-run] Start-Process $python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort$reloadText"
     Write-Step "Backend entrypoint is ready."

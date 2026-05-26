@@ -170,7 +170,7 @@ class ChatIdempotencyTests(unittest.TestCase):
         return thread
 
     def auth_headers(self, user: User) -> dict[str, str]:
-        return {"Authorization": f"Bearer {create_access_token(user.id)}"}
+        return {"Authorization": f"Bearer {create_access_token(user.id, token_version=user.token_version)}"}
 
     def message_count(self, thread: ConversationThread) -> int:
         return int(self.db.scalar(select(func.count()).select_from(Message).where(Message.thread_id == thread.id)) or 0)

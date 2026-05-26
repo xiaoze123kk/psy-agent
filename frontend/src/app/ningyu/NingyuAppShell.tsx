@@ -25,6 +25,7 @@ import {
   type ConversationListSection,
   type DraftThread,
 } from "./threadList";
+import { shouldCreateThreadForSend, type SendConversationState } from "./sendFlow";
 import {
   getMoodCheckInOwnerId,
   getMoodCheckInStorage,
@@ -181,7 +182,7 @@ type ThreadListStatus = "idle" | "loading" | "success" | "error";
 type MessageListStatus = "idle" | "loading" | "success" | "error";
 type CreateThreadStatus = "idle" | "loading" | "success" | "error";
 type ChatStreamStatus = "idle" | "streaming" | "success" | "error";
-type ActiveConversation = { kind: "thread"; threadId: string } | { kind: "draft" } | null;
+type ActiveConversation = SendConversationState;
 type SendMessageHandler = (content: string) => boolean | Promise<boolean>;
 type DraftInputSeed = { id: string; text: string };
 type EdgePanel = "history" | "tools" | null;
@@ -1369,7 +1370,7 @@ export function NingyuAppShell() {
       return activeThreadId;
     }
 
-    if (!isDraftActive) {
+    if (!shouldCreateThreadForSend(activeConversationRef.current)) {
       return null;
     }
 
@@ -1385,7 +1386,7 @@ export function NingyuAppShell() {
       });
       if (
         draftCreationRef.current !== draftCreationId ||
-        activeConversationRef.current?.kind !== "draft" ||
+        activeConversationRef.current?.kind === "thread" ||
         activeThreadIdRef.current !== null
       ) {
         return null;
@@ -1399,7 +1400,7 @@ export function NingyuAppShell() {
       setCreateThreadStatus("success");
       return threadItem.thread_id;
     } catch (error) {
-      if (draftCreationRef.current !== draftCreationId || activeConversationRef.current?.kind !== "draft") {
+      if (draftCreationRef.current !== draftCreationId || activeConversationRef.current?.kind === "thread") {
         return null;
       }
 
@@ -1408,7 +1409,7 @@ export function NingyuAppShell() {
       setCreateThreadError(error instanceof Error ? error.message : "新对话暂时没创建成功，可以稍后重试。");
       return null;
     }
-  }, [activeThreadId, activateThread, draftThread?.title, isDraftActive]);
+  }, [activeThreadId, activateThread, draftThread?.title]);
 
   const handleSend = async (content: string): Promise<boolean> => {
     if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return false;

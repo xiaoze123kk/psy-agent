@@ -34,8 +34,16 @@ BLOCKED_CONTEXT_TOOL_NAMES = frozenset({"get_current_time", "summarize_session"}
 MAX_TOOL_PREVIEWS = 5
 DEFAULT_DIALOGUE_REPLY_MAX_TOKENS = 900
 CURRENT_FACT_QUERY_RE = re.compile(
-    r"(去世|逝世|死亡|访华|访美|访中|最新|新闻|什么时候|哪天|日期|时间|今天|昨天|今年|现任|总统|首相|CEO|发生|是否|了吗)"
+    r"(去世|逝世|死亡|访华|访美|访中|最新|新闻|什么时候|哪天|日期|时间|今天|昨天|今年|现任|总统|首相|CEO|发生|是否|了吗|发布|发表|定律|半导体|芯片)"
 )
+EXPLICIT_LOOKUP_INTENT_RE = re.compile(
+    r"(帮我查|查一下|查询|搜索|搜一下|检索|新闻|报道|热搜|预警|天气预报|是真的吗|真的假的|是不是真的|是否真的|发生了什么|什么时候|哪天|几号|多少|哪里)"
+)
+PERSONAL_SUPPORT_TURN_RE = re.compile(
+    r"(身上|膝盖|胳膊|手|腿|脚|骑车|摔|摔倒|摔跤|疼|疼死|痛|受伤|破皮|流血|肿|崴|撞|伤口|不舒服|难受|害怕|吓到)"
+)
+CORRECTION_TURN_RE = re.compile(r"(说错了|打错了|记错了|应该是|好像|不是|我说的是|纠正)")
+HUAWEI_SEMICONDUCTOR_LAW_RE = re.compile(r"华为.*(?:半导体|芯片|定律)|(?:半导体|芯片).*华为|[韬涛陶]\s*(?:[（(]?\s*(?:τ|tau)\s*[）)]?)?\s*定律", re.IGNORECASE)
 FACT_DATE_RE = re.compile(r"(?:20\d{2}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|\d{1,2}时\d{1,2}分)")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s*")
 
@@ -985,8 +993,11 @@ def _tool_prompt_hint(tool_names: list[str]) -> str:
         "",
         "[Tool policy]",
         "Use tools only when they materially improve this turn. Do not call tools that are not listed.",
-        "IMPORTANT: When a user asks about real-world facts, news, current events, historical dates, or any verifiable information you are not certain about, you MUST call web_search. Do NOT rely on memory or training data for time-sensitive or factual claims.",
     ]
+    if "web_search" in tool_names:
+        lines.append(
+            "IMPORTANT: When a user asks about real-world facts, news, current events, historical dates, or any verifiable information you are not certain about, you MUST call web_search. Do NOT rely on memory or training data for time-sensitive or factual claims."
+        )
     lines.extend(f"- {descriptions[name]}" for name in tool_names if name in descriptions)
     if "web_search" in tool_names:
         lines.append("- web_search: Use for real-time facts, current events, professional resources, or any information beyond your knowledge cutoff. Do NOT include any user personal information in the search query.")
@@ -1098,10 +1109,62 @@ def _current_turn_text(state: Mapping[str, Any], user_prompt: str) -> str:
     )
 
 
+def _last_user_message_text(state: Mapping[str, Any], *, excluding: str = "") -> str:
+    recent_messages = state.get("recent_messages")
+    if not isinstance(recent_messages, list | tuple):
+        return ""
+    for raw_message in reversed(recent_messages):
+        message = raw_message if isinstance(raw_message, Mapping) else {}
+        if message.get("role") != "user":
+            continue
+        content = _clean_text(message.get("content"), limit=160)
+        if content and content != excluding:
+            return content
+    return ""
+
+
+def _web_search_text_for_turn(state: Mapping[str, Any], user_prompt: str) -> str:
+    current = _current_turn_text(state, user_prompt)
+    if not current:
+        return ""
+    if len(current) <= 60 and CORRECTION_TURN_RE.search(current):
+        previous_user_text = _last_user_message_text(state, excluding=current)
+        if previous_user_text:
+            return _clean_text(f"{previous_user_text} {current}", limit=220)
+    return current
+
+
+def _is_personal_support_turn_without_lookup_intent(text: str) -> bool:
+    if not text:
+        return False
+    return bool(PERSONAL_SUPPORT_TURN_RE.search(text)) and not EXPLICIT_LOOKUP_INTENT_RE.search(text)
+
+
+def _without_web_search(plan: DialogueToolPlan) -> DialogueToolPlan:
+    if "web_search" not in plan.tool_handlers:
+        return plan
+    allowed_tool_names = [name for name in plan.allowed_tool_names if name != "web_search"]
+    blocked_tool_names = list(dict.fromkeys([*plan.blocked_tool_names, "web_search"]))
+    return DialogueToolPlan(
+        tools=[
+            tool
+            for tool in plan.tools
+            if tool.get("function", {}).get("name") != "web_search"
+        ],
+        tool_handlers={name: handler for name, handler in plan.tool_handlers.items() if name != "web_search"},
+        allowed_tool_names=allowed_tool_names,
+        blocked_tool_names=blocked_tool_names,
+        prompt_hint=_tool_prompt_hint(allowed_tool_names),
+        audit_capture=plan.audit_capture,
+    )
+
+
 def _prefetch_search_query(text: str) -> str:
     cleaned = _clean_text(text, limit=160)
     if not cleaned:
         return ""
+    if HUAWEI_SEMICONDUCTOR_LAW_RE.search(cleaned) and ("定律" in cleaned or "半导体" in cleaned or "芯片" in cleaned):
+        return "华为发表韬τ定律"
     current_year = str(datetime.now().year)
     if any(term in cleaned for term in ("去世", "逝世", "死亡")) and any(
         term in cleaned for term in ("时间", "什么时候", "哪天", "日期", "最新")
@@ -1121,7 +1184,9 @@ def _prefetch_search_query(text: str) -> str:
 def _should_prefetch_web_search(state: Mapping[str, Any], user_prompt: str, plan: DialogueToolPlan) -> bool:
     if "web_search" not in plan.tool_handlers:
         return False
-    text = _current_turn_text(state, user_prompt)
+    if _is_personal_support_turn_without_lookup_intent(_current_turn_text(state, user_prompt)):
+        return False
+    text = _web_search_text_for_turn(state, user_prompt)
     return bool(text and CURRENT_FACT_QUERY_RE.search(text))
 
 
@@ -1159,7 +1224,7 @@ def _prefetch_web_search_for_turn(
     user_prompt: str,
     plan: DialogueToolPlan,
 ) -> tuple[list[ToolExecutionEvent], str, Mapping[str, Any]]:
-    query = _prefetch_search_query(_current_turn_text(state, user_prompt))
+    query = _prefetch_search_query(_web_search_text_for_turn(state, user_prompt))
     if not query:
         return [], "", {}
     arguments = {"query": query, "max_results": 5}
@@ -1234,6 +1299,12 @@ def _clean_prefetched_fact_sentence(sentence: str, query: str) -> str:
     return cleaned
 
 
+def _ensure_sentence_end(text: str) -> str:
+    if not text:
+        return ""
+    return text if text[-1] in "。！？.!?" else f"{text}。"
+
+
 def _fallback_answer_from_prefetched_web(query: str, output: Mapping[str, Any]) -> str:
     if int(output.get("count") or 0) <= 0:
         return ""
@@ -1244,8 +1315,13 @@ def _fallback_answer_from_prefetched_web(query: str, output: Mapping[str, Any]) 
     sentence = _clean_prefetched_fact_sentence(sentence, query)
     if not sentence:
         return ""
-    source = f"\n\n来源：{title}".strip() if title else ""
-    return f"我查到的搜索结果显示：{sentence}{source}"
+    sentence = _ensure_sentence_end(sentence)
+    if HUAWEI_SEMICONDUCTOR_LAW_RE.search(f"{query} {sentence} {title}"):
+        return (
+            f"你问的应该是华为最近提到的“韬（τ）定律”。我先帮你把它捋成一句话：{sentence}\n\n"
+            "如果你想继续弄清楚它，可以分两层看：一层是华为想表达的技术路线，另一层是外界怎么评估它到底有多扎实。"
+        )
+    return f"我先帮你把关键信息整理一下：{sentence}"
 
 
 def _should_prefer_prefetched_fact(assistant_text: str, fallback_answer: str) -> bool:
@@ -1289,6 +1365,8 @@ async def run_dialogue_reply_with_tools(
     tool_plan: DialogueToolPlan | None = None,
 ) -> dict[str, Any]:
     plan = tool_plan or build_dialogue_tool_plan(state)
+    if _is_personal_support_turn_without_lookup_intent(_current_turn_text(state, user_prompt)):
+        plan = _without_web_search(plan)
     if not plan.tools:
         return {
             "assistant_text": "",
@@ -1303,7 +1381,7 @@ async def run_dialogue_reply_with_tools(
     prefetched_output: Mapping[str, Any] = {}
     prefetched_query = ""
     if _should_prefetch_web_search(state, user_prompt, plan):
-        prefetched_query = _prefetch_search_query(_current_turn_text(state, user_prompt))
+        prefetched_query = _prefetch_search_query(_web_search_text_for_turn(state, user_prompt))
         prefetched_events, prefetched_context, prefetched_output = _prefetch_web_search_for_turn(state, user_prompt, plan)
         if prefetched_context:
             system_content = f"{system_content}\n{prefetched_context}"

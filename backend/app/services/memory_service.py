@@ -145,6 +145,10 @@ def _aware(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _utcnow_aware() -> datetime:
+    return _aware(utcnow())
+
+
 def _normalize_memory_type(memory_type: object) -> str:
     raw = str(memory_type or "session_summary").strip()
     aliases = {
@@ -176,7 +180,7 @@ def _freshness_warning(memory: UserMemory) -> str:
     updated_at = memory.updated_at or memory.created_at
     if not updated_at:
         return ""
-    age_days = max((utcnow() - _aware(updated_at)).days, 0)
+    age_days = max((_utcnow_aware() - _aware(updated_at)).days, 0)
     if age_days <= 1:
         return ""
     return f"这条记忆已有 {age_days} 天，使用前应轻量验证。"
@@ -457,7 +461,7 @@ def _score_memory(
     similarity = _term_similarity(query_text, document)
     importance_score = max(min(memory.importance, 5), 1) / 5
     updated_at = memory.updated_at or memory.created_at
-    age_days = max((utcnow() - _aware(updated_at)).days, 0) if updated_at else 365
+    age_days = max((_utcnow_aware() - _aware(updated_at)).days, 0) if updated_at else 365
     freshness_score = max(0.0, 1.0 - min(age_days, 90) / 90)
     access_score = min(memory.access_count or 0, 10) / 10
     score = (
@@ -497,7 +501,7 @@ def _vector_score_memory(
 ) -> tuple[float, str]:
     importance_score = max(min(memory.importance, 5), 1) / 5
     updated_at = memory.updated_at or memory.created_at
-    age_days = max((utcnow() - _aware(updated_at)).days, 0) if updated_at else 365
+    age_days = max((_utcnow_aware() - _aware(updated_at)).days, 0) if updated_at else 365
     freshness_score = max(0.0, 1.0 - min(age_days, 90) / 90)
     access_score = min(memory.access_count or 0, 10) / 10
     normalized_vector_score = max(0.0, min(float(vector_score or 0.0), 1.0))
@@ -1363,8 +1367,8 @@ def maybe_auto_consolidate_user_memories(db: Session, *, user_id: str) -> dict[s
         )
         .order_by(desc(MemoryConsolidationRun.completed_at))
     )
-    since = _aware(last_completed.completed_at) if last_completed and last_completed.completed_at else utcnow() - timedelta(days=365)
-    if last_completed and last_completed.completed_at and utcnow() - _aware(last_completed.completed_at) < timedelta(hours=24):
+    since = _aware(last_completed.completed_at) if last_completed and last_completed.completed_at else _utcnow_aware() - timedelta(days=365)
+    if last_completed and last_completed.completed_at and _utcnow_aware() - _aware(last_completed.completed_at) < timedelta(hours=24):
         return None
     sessions_since = db.scalar(
         select(func.count(ConversationThread.id)).where(
