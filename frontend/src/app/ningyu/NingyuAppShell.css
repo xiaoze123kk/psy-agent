@@ -63,19 +63,19 @@
   left: 0;
   right: 0;
   z-index: 3;
-  min-height: 76px;
+  min-height: 68px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid rgba(153, 246, 228, 0.42);
-  background: linear-gradient(180deg, rgba(255, 251, 235, 0.84), rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.68));
-  box-shadow: 0 4px 24px -4px rgba(20, 184, 166, 0.12);
+  padding: 10px 24px;
+  border-bottom: 1px solid rgba(153, 246, 228, 0.24);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0.24));
+  box-shadow: 0 10px 34px -26px rgba(15, 118, 110, 0.3);
   opacity: 0;
   pointer-events: none;
   transition: opacity 300ms ease, background 1000ms ease-in-out, border-color 1000ms ease-in-out;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(10px) saturate(1.04);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
 }
 
 .ningyu-shell:hover .ningyu-header,
@@ -85,8 +85,8 @@
 }
 
 .ningyu-shell.is-night .ningyu-header {
-  border-bottom-color: rgba(51, 65, 85, 0.62);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.84), rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.72));
+  border-bottom-color: rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(8, 18, 30, 0.58), rgba(8, 18, 30, 0.26));
 }
 
 .ningyu-brand,
@@ -1565,12 +1565,10 @@
 }
 
 .ningyu-chat {
-  --ningyu-chat-stage-bg: linear-gradient(135deg, rgba(255, 253, 246, 0.76), rgba(235, 251, 247, 0.42) 54%, rgba(255, 255, 255, 0.24));
-  --ningyu-chat-stage-bg-night: linear-gradient(135deg, rgba(9, 20, 31, 0.9), rgba(15, 33, 47, 0.78) 56%, rgba(9, 18, 29, 0.68));
-  --ningyu-chat-stage-border: rgba(88, 126, 115, 0.3);
-  --ningyu-chat-stage-border-night: rgba(125, 159, 181, 0.2);
-  --ningyu-chat-line: rgba(38, 82, 74, 0.08);
-  --ningyu-chat-line-night: rgba(173, 194, 216, 0.075);
+  --ningyu-chat-stage-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(221, 252, 245, 0.07) 58%, rgba(255, 255, 255, 0.03));
+  --ningyu-chat-stage-bg-night: linear-gradient(135deg, rgba(9, 20, 31, 0.42), rgba(15, 33, 47, 0.28) 58%, rgba(9, 18, 29, 0.2));
+  --ningyu-chat-stage-border: rgba(88, 126, 115, 0.1);
+  --ningyu-chat-stage-border-night: rgba(125, 159, 181, 0.1);
   flex: 1;
   min-width: 0;
   display: flex;
@@ -1582,28 +1580,26 @@
 .ningyu-chat::before {
   content: "";
   position: absolute;
-  inset: 22px 18px 18px;
+  inset: 88px 18px 18px;
   z-index: -1;
-  border-inline: 1px solid rgba(255, 255, 255, 0.24);
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.24), transparent 48%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(240, 253, 250, 0.08) 52%, transparent);
-  opacity: 0.82;
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.22), transparent 42%),
+    radial-gradient(circle at 18% 44%, rgba(45, 212, 191, 0.08), transparent 36%);
+  opacity: 0.62;
   pointer-events: none;
 }
 
 .ningyu-shell.is-night .ningyu-chat::before {
-  border-inline-color: rgba(148, 163, 184, 0.16);
   background:
-    radial-gradient(circle at 50% 0%, rgba(52, 211, 153, 0.11), transparent 48%),
-    linear-gradient(180deg, rgba(15, 23, 42, 0.2), rgba(30, 41, 59, 0.1) 52%, transparent);
+    radial-gradient(circle at 50% 0%, rgba(52, 211, 153, 0.09), transparent 42%),
+    radial-gradient(circle at 18% 44%, rgba(125, 211, 252, 0.06), transparent 36%);
 }
 
 .ningyu-chat__scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 32px clamp(20px, 4vw, 54px) 18px;
+  padding: 96px clamp(20px, 4vw, 54px) 18px;
 }
 
 .ningyu-chat__inner {
@@ -1614,13 +1610,13 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--ningyu-chat-stage-border);
-  border-radius: 14px;
+  border-radius: 18px;
   background: var(--ningyu-chat-stage-bg);
   box-shadow:
-    0 18px 52px rgba(15, 78, 71, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+    0 18px 48px rgba(15, 78, 71, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(3px) saturate(1.02);
+  -webkit-backdrop-filter: blur(3px) saturate(1.02);
   overflow: hidden;
 }
 
@@ -1632,24 +1628,11 @@
   color-scheme: dark;
 }
 
-.ningyu-chat__inner::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background:
-    linear-gradient(var(--ningyu-chat-line) 1px, transparent 1px),
-    radial-gradient(circle at 50% -10%, rgba(255, 255, 255, 0.44), transparent 40%),
-    radial-gradient(circle at 16% 12%, rgba(20, 184, 166, 0.09), transparent 28%);
-  background-size: 100% 34px, auto;
-  pointer-events: none;
-}
-
 .ningyu-chat-header {
   position: relative;
   z-index: 1;
-  padding: 22px 28px 18px;
-  border-bottom: 1px solid rgba(90, 130, 118, 0.16);
+  padding: 20px 28px 14px;
+  border-bottom: 1px solid rgba(90, 130, 118, 0.08);
   text-align: center;
 }
 
@@ -1682,41 +1665,7 @@
   text-transform: uppercase;
 }
 
-.ningyu-chat-corner {
-  position: absolute;
-  z-index: 2;
-  top: 18px;
-  left: 22px;
-  width: 46px;
-  height: 18px;
-  opacity: 0.34;
-  pointer-events: none;
-}
-
-.ningyu-chat-corner::before,
-.ningyu-chat-corner::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  border-radius: 999px;
-  background: rgba(15, 118, 110, 0.22);
-}
-
-.ningyu-chat-corner::before {
-  top: 0;
-  width: 42px;
-  height: 1px;
-  box-shadow: 0 8px 0 rgba(15, 118, 110, 0.14);
-}
-
-.ningyu-chat-corner::after {
-  top: 0;
-  width: 1px;
-  height: 18px;
-  box-shadow: 8px 0 0 rgba(15, 118, 110, 0.14);
-}
-
-.ningyu-chat-paper__body {
+.ningyu-chat-stage__body {
   position: relative;
   z-index: 1;
   flex: 1;
@@ -1730,20 +1679,12 @@
   border-color: var(--ningyu-chat-stage-border-night);
   background: var(--ningyu-chat-stage-bg-night);
   box-shadow:
-    0 20px 58px rgba(2, 6, 23, 0.38),
+    0 20px 58px rgba(2, 6, 23, 0.26),
     inset 0 1px 0 rgba(148, 163, 184, 0.11);
 }
 
-.ningyu-shell.is-night .ningyu-chat__inner::before {
-  background:
-    linear-gradient(var(--ningyu-chat-line-night) 1px, transparent 1px),
-    radial-gradient(circle at 50% -10%, rgba(52, 211, 153, 0.1), transparent 42%),
-    radial-gradient(circle at 18% 8%, rgba(125, 211, 252, 0.055), transparent 28%);
-  background-size: 100% 34px, auto;
-}
-
 .ningyu-shell.is-night .ningyu-chat-header {
-  border-bottom-color: rgba(148, 163, 184, 0.14);
+  border-bottom-color: rgba(148, 163, 184, 0.08);
 }
 
 .ningyu-shell.is-night .ningyu-chat-title {
@@ -1752,11 +1693,6 @@
 
 .ningyu-shell.is-night .ningyu-chat-date {
   color: rgba(203, 213, 225, 0.62);
-}
-
-.ningyu-shell.is-night .ningyu-chat-corner::before,
-.ningyu-shell.is-night .ningyu-chat-corner::after {
-  background: rgba(52, 211, 153, 0.2);
 }
 
 .ningyu-chat__messages {
@@ -3846,6 +3782,11 @@
     padding-right: 12px;
   }
 
+  .ningyu-chat__scroll {
+    padding-top: 24px;
+    padding-bottom: 12px;
+  }
+
   .ningyu-chat::before {
     inset: 14px 10px 10px;
   }
@@ -3863,14 +3804,7 @@
     font-size: 20px;
   }
 
-  .ningyu-chat-corner {
-    top: 15px;
-    left: 14px;
-    transform: scale(0.72);
-    transform-origin: left top;
-  }
-
-  .ningyu-chat-paper__body {
+  .ningyu-chat-stage__body {
     padding: 18px 14px;
   }
 

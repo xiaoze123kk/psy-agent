@@ -299,3 +299,25 @@
 ### 后续事项
 
 - 图运行轨迹目前仍是展开态；后续如需要更接近产品体验，可单独设计折叠/展开策略。
+
+## 2026-05-26 主聊天透明舞台微调
+
+### 背景
+
+用户反馈主聊天顶栏会遮挡“宁语手记”，且当前主聊天区域仍像一整张书页，希望不要继续使用书页形式，并让界面更透明。
+
+### 本次改动
+
+- 扩展 `frontend/tests/chat-shell-css.test.cjs`，约束主聊天区不再出现 `paper` wrapper、角标装饰或横线纸纹变量。
+- 更新 `NingyuAppShell.tsx`，移除聊天舞台左上角装饰，并把内容容器从 `paper` 命名改为 `stage` 命名。
+- 更新 `NingyuAppShell.css`，降低全局顶栏背景不透明度和高度，并为桌面聊天区增加顶部留白，避免顶栏显示时压住“宁语手记”。
+- 移除主聊天大面板的横线纸纹，改为更透明的玻璃式舞台；日间/夜间舞台背景、边框和阴影整体降存在感。
+- 移动端单独收回顶部留白，保持标题不被挡，同时避免小屏首屏过空。
+
+### 验证
+
+- TDD RED：新增 CSS/markup 合同测试后，`npm run test:unit` 因仍存在 `ningyu-chat-paper`/`ningyu-chat-corner` 失败。
+- 修复后：`npm run test:unit` 通过，`3 passed`。
+- `npm run check`：通过，`tsc --noEmit` exit 0。
+- `npm run build`：通过，Vite build exit 0，仅保留 `module.register()` 的上游弃用提示。
+- 浏览器验证：桌面 `1600x1200` 下日间主题标题距离顶栏底部约 68px，`hasPaperOrCorner=false`，无横向溢出；夜间主题同样无横向溢出并应用更透明的夜间舞台背景；移动端 `390x844` 下标题距离顶栏底部约 66px，无横向溢出。
