@@ -108,3 +108,31 @@
 ### 后续事项
 
 - 前端当前仍把后端具体错误折叠成通用失败提示；后续可单独改善错误提示，让验证码错误、密码错误和服务端异常更容易区分。
+
+## 2026-05-26 七天免登录刷新 500 修复
+
+### 背景/问题
+
+- 用户勾选“7天自动登录”后刷新页面仍回到登录页。
+- 浏览器网络记录显示 `POST /api/v1/auth/refresh` 返回 `500 Internal Server Error`，并非前端忘记勾选状态。
+- 后端栈显示 `_validate_refresh_token()` 中 `token_record.expires_at <= now` 抛出 `TypeError: can't compare offset-naive and offset-aware datetimes`。
+- 根因为 PostgreSQL `TIMESTAMPTZ` 返回的 refresh token 过期时间可能带时区，而项目当前 `utcnow()` 返回无时区 datetime。
+
+### 关键改动
+
+- 在 `backend/app/api/v1/endpoints/auth.py` 中新增认证局部的 UTC aware 时间比较 helper。
+- `refresh` token 过期判断改为统一转成 UTC aware 后比较，避免带/不带时区混用导致 500。
+- 保持双 token 流程不变：refresh token 继续走 HttpOnly cookie，刷新接口继续返回新的 access token 并轮换 refresh token。
+- 密码重置 token 的 Python 侧过期判断也复用同一 helper，避免相同类型问题。
+- 扩展 `backend/tests/test_auth_register.py`，新增带时区 `expires_at` 的 refresh token 校验回归测试。
+
+### 验证结果
+
+- TDD RED：新增测试先失败，复现 `can't compare offset-naive and offset-aware datetimes`。
+- 修复后：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py -q` 通过，`3 passed, 22 warnings`。
+- 认证相关回归：`backend/.venv/Scripts/python.exe -m pytest tests/test_auth_register.py tests/test_auth_dev_session.py -q` 通过，`5 passed, 30 warnings`。
+- 本地浏览器验证：使用同一浏览器上下文完成 `auto_login=true` 登录后刷新 `http://127.0.0.1:5173/`，`POST /api/v1/auth/refresh` 返回 200；页面恢复到已登录账号的 onboarding 流程，而不是回到登录页。
+
+### 后续事项
+
+- 可后续单独把 `app.db.models.utcnow()` 迁移为 timezone-aware UTC，并评估数据库迁移影响；本次只修复认证刷新路径。

@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import auth
 from app.core.security import hash_password
-from app.db.models import Base, User, UserProfile, UserSettings
+from app.db.models import Base, RefreshToken, User, UserProfile, UserSettings
 from app.db.session import get_db_session
 
 
@@ -114,3 +115,42 @@ class AuthRegisterTests(unittest.TestCase):
         self.assertEqual(payload["token_type"], "Bearer")
         self.assertTrue(payload["access_token"])
         self.assertIn("rt=", response.headers.get("set-cookie", ""))
+
+    def test_refresh_validation_accepts_timezone_aware_expiration_from_database(self) -> None:
+        user_id = str(uuid4())
+        user = User(
+            id=user_id,
+            username="refreshuser",
+            email="refreshuser@local.invalid",
+            password_hash=hash_password("Aa123456!"),
+        )
+        self.db.add_all(
+            [
+                user,
+                UserProfile(
+                    user_id=user_id,
+                    nickname="刷新用户",
+                    age_range="18_plus",
+                    user_mode="adult",
+                    usage_goals=[],
+                    onboarding_completed=True,
+                ),
+                UserSettings(
+                    user_id=user_id,
+                    memory_mode="summary_only",
+                    companion_style="",
+                    crisis_resource_region="CN",
+                ),
+            ]
+        )
+        self.db.flush()
+        _, refresh_token = auth._issue_token_pair(self.db, user, auto_login=True)
+        self.db.flush()
+        token_record = self.db.scalar(select(RefreshToken).where(RefreshToken.user_id == user_id))
+        self.assertIsNotNone(token_record)
+        token_record.expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+
+        validated_record, validated_user = auth._validate_refresh_token(self.db, refresh_token)
+
+        self.assertEqual(validated_record.id, token_record.id)
+        self.assertEqual(validated_user.username, "refreshuser")
