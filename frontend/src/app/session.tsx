@@ -13,6 +13,22 @@ import type { CurrentUserResponse, LoginRequest, RegisterRequest } from "../type
 
 const REMEMBERED_USERNAME_KEY = "warp_te.remembered_username";
 const REMEMBERED_AUTO_LOGIN_KEY = "warp_te.remembered_auto_login";
+const LOCAL_DEBUG_ACCESS_TOKEN = "local-debug-access-token";
+
+const LOCAL_DEBUG_USER: CurrentUserResponse = {
+  user_id: "local-debug-user",
+  username: "local_debug_user",
+  email: null,
+  nickname: "本地调试用户",
+  age_range: "18_plus",
+  user_mode: "adult",
+  usage_goals: ["local_debug"],
+  onboarding_completed: true,
+  memory_mode: "summary_only",
+  companion_style: "warm",
+  save_transcript: false,
+};
+const SHOULD_RESTORE_SESSION_ON_MOUNT = !import.meta.env.DEV;
 
 let _restoringPromise: Promise<void> | null = null;
 
@@ -89,7 +105,7 @@ function getErrorMessage(error: unknown): string {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SessionState>({
-    status: "checking",
+    status: SHOULD_RESTORE_SESSION_ON_MOUNT ? "checking" : "anonymous",
     currentUser: null,
     error: null,
   });
@@ -214,6 +230,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       error: null,
     }));
 
+    tokenStore.setAccessToken(LOCAL_DEBUG_ACCESS_TOKEN);
+    setSession({
+      status: "authenticated",
+      currentUser: LOCAL_DEBUG_USER,
+      error: null,
+    });
+    return;
+
     try {
       const response = await api.devSession();
       tokenStore.setAccessToken(response.access_token);
@@ -234,6 +258,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!SHOULD_RESTORE_SESSION_ON_MOUNT) return;
     void restoreSession();
   }, [restoreSession]);
 
