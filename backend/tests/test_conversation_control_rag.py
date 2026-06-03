@@ -622,7 +622,12 @@ class ConversationControlRagTests(unittest.TestCase):
                 new=AsyncMock(side_effect=slow_retrieval),
                 create=True,
             ),
-            patch.object(rag_nodes, "settings", SimpleNamespace(rag_retrieval_timeout_seconds=0.01), create=True),
+            patch.object(
+                rag_nodes,
+                "settings",
+                SimpleNamespace(rag_retrieval_timeout_seconds=0.01, chat_turn_timeout_seconds=120),
+                create=True,
+            ),
         ):
             result = _run(example_retriever(state))
 
@@ -632,6 +637,14 @@ class ConversationControlRagTests(unittest.TestCase):
         self.assertEqual(result["rag_trace_summary"]["status"], "timeout")
         self.assertEqual(result["rag_trace_summary"]["timeout_ms"], 10)
         self.assertIn("rag_timeout", result["audit_tags"])
+
+    def test_rag_timeout_keeps_response_budget_before_chat_timeout(self) -> None:
+        timeout = rag_nodes.effective_rag_timeout_seconds(
+            rag_timeout_seconds=120,
+            chat_timeout_seconds=90,
+        )
+
+        self.assertEqual(timeout, 60)
 
     def test_agent_state_declares_rag_trace_summary(self) -> None:
         self.assertIn("rag_trace_summary", AgentState.__annotations__)

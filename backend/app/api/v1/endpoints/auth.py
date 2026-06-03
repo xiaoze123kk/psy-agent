@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -208,10 +208,10 @@ def _validate_refresh_token(db: Session, refresh_token: str) -> tuple[RefreshTok
     if token_record is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not found.")
 
-    now = utcnow()
+    now = _as_utc_aware(utcnow())
     if token_record.status != "active" or token_record.revoked_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is no longer active.")
-    if token_record.expires_at <= now:
+    if _is_expired(token_record.expires_at, now):
         token_record.status = "revoked"
         token_record.revoked_at = now
         db.commit()
@@ -322,6 +322,16 @@ def _read_refresh_token_from_cookie(rt: str | None) -> str:
     return rt
 
 
+def _as_utc_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _is_expired(expires_at: datetime, now: datetime | None = None) -> bool:
+    return _as_utc_aware(expires_at) <= _as_utc_aware(now or utcnow())
+
+
 @router.get("/captcha", response_model=CaptchaResponse)
 async def captcha() -> CaptchaResponse:
     return CaptchaResponse(**captcha_store.create())
@@ -372,6 +382,7 @@ async def register(
         crisis_resource_region="CN",
     )
     db.add_all([user, profile, user_settings])
+    db.flush()
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=False)
     db.commit()
     db.refresh(user)
@@ -415,6 +426,13 @@ async def login(
     access_token, refresh_token = _issue_token_pair(db, user, auto_login=payload.auto_login)
     db.commit()
     db.refresh(user)
+    response_body = _session_user_response(user, access_token)
+    response = Response(
+        content=LoginResponse(**response_body).model_dump_json(),
+        media_type="application/json",
+    )
+    _set_refresh_cookie(response, refresh_token, auto_login=payload.auto_login)
+    return response
 
 @router.post("/dev-session", response_model=LoginResponse)
 async def dev_session(
@@ -578,7 +596,7 @@ async def password_reset(
     reset_record = db.scalar(select(PasswordResetToken).where(PasswordResetToken.id == token_id))
     if reset_record is None or reset_record.status != "active":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="重置链接无效或已过期。")
-    if reset_record.expires_at <= utcnow():
+    if _is_expired(reset_record.expires_at):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="重置链接无效或已过期。")
 
     try:
