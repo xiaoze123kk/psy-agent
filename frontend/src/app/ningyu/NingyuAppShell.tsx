@@ -186,6 +186,7 @@ type ActiveConversation = SendConversationState;
 type SendMessageHandler = (content: string) => boolean | Promise<boolean>;
 type DraftInputSeed = { id: string; text: string };
 type EdgePanel = "history" | "tools" | null;
+type ToolSurface = "launcher" | "journey" | "actions" | "knowledge" | "tests" | "settings" | "safety";
 
 const focusableSelector =
   'button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
@@ -501,6 +502,7 @@ export function NingyuAppShell() {
   const [draftInputSeed, setDraftInputSeed] = useState<DraftInputSeed | null>(null);
   const [highRiskSafety, setHighRiskSafety] = useState<HighRiskSafetyState | null>(null);
   const [activeEdgePanel, setActiveEdgePanel] = useState<EdgePanel>(null);
+  const [activeToolSurface, setActiveToolSurface] = useState<ToolSurface>("launcher");
   const shouldReduceMotion = Boolean(useReducedMotion());
 
   useEffect(() => {
@@ -1779,6 +1781,29 @@ export function NingyuAppShell() {
     activateDraft();
   };
 
+  const handleOpenToolSurface = useCallback((surface: ToolSurface) => {
+    setActiveToolSurface(surface);
+    setActiveEdgePanel("tools");
+  }, []);
+
+  const handleSupportResourceClick = useCallback((resource: HomeSupportResource) => {
+    window.alert(
+      resource.id === "hotline"
+        ? `本地调试提示：请直接拨打 ${resource.title}。`
+        : "本地调试提示：紧急聊天入口还没有接入后端或第三方服务。",
+    );
+  }, []);
+
+  const handleWeeklySuggestedAction = useCallback(
+    (action: string) => {
+      if (chatStreamStatus === "streaming" || createThreadStatus === "loading" || draftCreationRef.current) return;
+      activateDraft();
+      setDraftInputSeed({ id: crypto.randomUUID(), text: action });
+      setActiveEdgePanel(null);
+    },
+    [activateDraft, chatStreamStatus, createThreadStatus],
+  );
+
   const handleMoodTagToggle = (tagId: string) => {
     setMoodStatus("idle");
     setMoodError(null);
@@ -1815,6 +1840,7 @@ export function NingyuAppShell() {
     <div className={`ningyu-transition ${isNight ? "is-night" : "is-day"}`}>
       <div className={`ningyu-shell ${isNight ? "is-night" : "is-day"}`}>
         <Background isNight={isNight} />
+        <div className="ningyu-header-trigger" aria-hidden="true" />
         <Header
           isNight={isNight}
           displayName={displayName}
@@ -1825,15 +1851,6 @@ export function NingyuAppShell() {
           isSafetyEntryOpen={isSafetyEntryOpen}
         />
         <main className="ningyu-shell__body">
-          <FloatingEdgeControls
-            activePanel={activeEdgePanel}
-            createThreadStatus={createThreadStatus}
-            isSafetyEntryOpen={isSafetyEntryOpen}
-            shouldReduceMotion={shouldReduceMotion}
-            onPanelChange={handleEdgePanelChange}
-            onStartNewThread={handleStartNewThread}
-            onToggleSafetyEntry={handleToggleSafetyEntry}
-          />
           <AnimatePresence>
             {activeEdgePanel === "history" ? (
               <AccessibleLayer
@@ -1862,28 +1879,51 @@ export function NingyuAppShell() {
                   memoryModeLabel={memoryModeLabels[memoryMode]}
                   onSelectEntry={handleSelectConversationEntry}
                   onStartNewThread={handleStartNewThread}
+                  onOpenToolSurface={handleOpenToolSurface}
                 />
               </AccessibleLayer>
             ) : null}
           </AnimatePresence>
-          <ChatWorkspace
-            isNight={isNight}
-            shouldReduceMotion={shouldReduceMotion}
-            primarySuggestion={homeSuggestions[0]?.label ?? ""}
-            primarySupportLabel={supportResources[1].title}
-            messages={messages}
-            messageListStatus={messageListStatus}
-            messageListError={messageListError}
-            activeThreadId={activeThreadId}
-            isInputDisabled={chatStreamStatus === "streaming" || createThreadStatus === "loading"}
-            chatStreamStatus={chatStreamStatus}
-            chatStreamError={chatStreamError}
-            graphUpdates={graphUpdates}
-            streamStatusDetail={streamStatusDetail}
-            draftInputSeed={draftInputSeed}
-            onSend={handleSend}
-            onMessageFeedback={handleMessageFeedback}
-          />
+          <div className="ningyu-paper-container">
+            <FloatingEdgeControls
+              side="left"
+              activePanel={activeEdgePanel}
+              createThreadStatus={createThreadStatus}
+              isSafetyEntryOpen={isSafetyEntryOpen}
+              shouldReduceMotion={shouldReduceMotion}
+              onPanelChange={handleEdgePanelChange}
+              onStartNewThread={handleStartNewThread}
+              onToggleSafetyEntry={handleToggleSafetyEntry}
+            />
+            <ChatWorkspace
+              isNight={isNight}
+              shouldReduceMotion={shouldReduceMotion}
+              primarySuggestion={homeSuggestions[0]?.label ?? ""}
+              primarySupportLabel={supportResources[1].title}
+              messages={messages}
+              messageListStatus={messageListStatus}
+              messageListError={messageListError}
+              activeThreadId={activeThreadId}
+              isInputDisabled={chatStreamStatus === "streaming" || createThreadStatus === "loading"}
+              chatStreamStatus={chatStreamStatus}
+              chatStreamError={chatStreamError}
+              graphUpdates={graphUpdates}
+              streamStatusDetail={streamStatusDetail}
+              draftInputSeed={draftInputSeed}
+              onSend={handleSend}
+              onMessageFeedback={handleMessageFeedback}
+            />
+            <FloatingEdgeControls
+              side="right"
+              activePanel={activeEdgePanel}
+              createThreadStatus={createThreadStatus}
+              isSafetyEntryOpen={isSafetyEntryOpen}
+              shouldReduceMotion={shouldReduceMotion}
+              onPanelChange={handleEdgePanelChange}
+              onStartNewThread={handleStartNewThread}
+              onToggleSafetyEntry={handleToggleSafetyEntry}
+            />
+          </div>
           <AnimatePresence>
             {activeEdgePanel === "tools" ? (
               <AccessibleLayer
@@ -1900,6 +1940,8 @@ export function NingyuAppShell() {
                 </button>
                 <RightPanel
                   isNight={isNight}
+                  activeToolSurface={activeToolSurface}
+                  setActiveToolSurface={setActiveToolSurface}
                   currentUserLabel={displayName}
                   userMode={userMode}
                   statusTags={statusTags}
@@ -1995,7 +2037,9 @@ export function NingyuAppShell() {
                   onMoodNoteChange={setMoodNote}
                   onMoodSubmit={handleMoodSubmit}
                   onMoodTrendRangeChange={setMoodTrendRange}
+                  onWeeklySuggestedAction={handleWeeklySuggestedAction}
                   onQuickAction={handleQuickAction}
+                  onSupportResourceClick={handleSupportResourceClick}
                   onKnowledgeQueryChange={setKnowledgeQuery}
                   onKnowledgeCategoryChange={setKnowledgeCategory}
                   onKnowledgeAudienceChange={setKnowledgeAudience}
@@ -2044,6 +2088,7 @@ export function NingyuAppShell() {
                 highRiskSafety={highRiskSafety}
                 supportResources={supportResources}
                 shouldReduceMotion={shouldReduceMotion}
+                onSupportResourceClick={handleSupportResourceClick}
                 onClose={closeSafetyLayer}
                 onRetrySafetyState={handleRetrySafetyState}
               />
@@ -2111,6 +2156,7 @@ function SafetySupportLayer({
   highRiskSafety,
   supportResources,
   shouldReduceMotion,
+  onSupportResourceClick,
   onClose,
   onRetrySafetyState,
 }: {
@@ -2119,6 +2165,7 @@ function SafetySupportLayer({
   highRiskSafety: HighRiskSafetyState | null;
   supportResources: HomeSupportResource[];
   shouldReduceMotion: boolean;
+  onSupportResourceClick: (resource: HomeSupportResource) => void;
   onClose: () => void;
   onRetrySafetyState: () => void;
 }) {
@@ -2188,7 +2235,7 @@ function SafetySupportLayer({
 
         <div className="ningyu-safety-layer__resources" aria-label="安全资源">
           {supportResources.map((resource) => (
-            <button className="ningyu-support-card" key={resource.id} type="button">
+            <button className="ningyu-support-card" key={resource.id} type="button" onClick={() => onSupportResourceClick(resource)}>
               <Icon name={resource.icon} />
               <span>
                 <small>{resource.label}</small>
@@ -2296,6 +2343,7 @@ function Header({
 }
 
 function FloatingEdgeControls({
+  side,
   activePanel,
   createThreadStatus,
   isSafetyEntryOpen,
@@ -2304,6 +2352,7 @@ function FloatingEdgeControls({
   onStartNewThread,
   onToggleSafetyEntry,
 }: {
+  side: "left" | "right";
   activePanel: EdgePanel;
   createThreadStatus: CreateThreadStatus;
   isSafetyEntryOpen: boolean;
@@ -2315,16 +2364,25 @@ function FloatingEdgeControls({
   const openPanel = (panel: Exclude<EdgePanel, null>) => {
     onPanelChange(activePanel === panel ? null : panel);
   };
+  const enterOffset = side === "left" ? -16 : 16;
+  const buttonOffset = side === "left" ? -8 : 8;
+  const enterDelay = side === "left" ? 0.55 : 0.65;
+  const motionButtonProps = (index: number) => ({
+    initial: shouldReduceMotion ? false : { opacity: 0, x: buttonOffset },
+    animate: { opacity: 1, x: 0 },
+    transition: { duration: 0.15, delay: enterDelay + index * 0.05, ease: "easeOut" as const },
+  });
 
-  return (
-    <>
+  if (side === "left") {
+    return (
       <motion.div
-        className="ningyu-floating-controls ningyu-floating-controls--left"
-        initial={shouldReduceMotion ? false : { opacity: 0, x: -16 }}
+        className="ningyu-paper-controls ningyu-paper-controls--left ningyu-floating-controls ningyu-floating-controls--left"
+        initial={shouldReduceMotion ? false : { opacity: 0, x: enterOffset }}
         animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.38, delay: 0.2, ease: "easeOut" }}
+        transition={{ duration: 0.15, delay: enterDelay, ease: "easeOut" }}
       >
-        <button
+        <motion.button
+          {...motionButtonProps(0)}
           id="ningyu-history-trigger"
           className={activePanel === "history" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
           type="button"
@@ -2335,44 +2393,55 @@ function FloatingEdgeControls({
         >
           <Icon name="clock" />
           <span>历史</span>
-        </button>
-        <button className="ningyu-edge-button" type="button" onClick={onStartNewThread} disabled={createThreadStatus === "loading"} aria-label="开始新对话">
+        </motion.button>
+        <motion.button
+          {...motionButtonProps(1)}
+          className="ningyu-edge-button"
+          type="button"
+          onClick={onStartNewThread}
+          disabled={createThreadStatus === "loading"}
+          aria-label="开始新对话"
+        >
           <Icon name="plus" />
           <span>新对话</span>
-        </button>
+        </motion.button>
       </motion.div>
+    );
+  }
 
-      <motion.div
-        className="ningyu-floating-controls ningyu-floating-controls--right"
-        initial={shouldReduceMotion ? false : { opacity: 0, x: 16 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.38, delay: 0.28, ease: "easeOut" }}
+  return (
+    <motion.div
+      className="ningyu-paper-controls ningyu-paper-controls--right ningyu-floating-controls ningyu-floating-controls--right"
+      initial={shouldReduceMotion ? false : { opacity: 0, x: enterOffset }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.15, delay: enterDelay, ease: "easeOut" }}
+    >
+      <motion.button
+        {...motionButtonProps(0)}
+        id="ningyu-tools-trigger"
+        className={activePanel === "tools" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
+        type="button"
+        onClick={() => openPanel("tools")}
+        aria-expanded={activePanel === "tools"}
+        aria-controls="ningyu-tools-panel"
+        aria-label="打开工具面板"
       >
-        <button
-          id="ningyu-tools-trigger"
-          className={activePanel === "tools" ? "ningyu-edge-button is-active" : "ningyu-edge-button"}
-          type="button"
-          onClick={() => openPanel("tools")}
-          aria-expanded={activePanel === "tools"}
-          aria-controls="ningyu-tools-panel"
-          aria-label="打开工具面板"
-        >
-          <Icon name="spark" />
-          <span>工具</span>
-        </button>
-        <button
-          id="ningyu-safety-trigger"
-          className={isSafetyEntryOpen ? "ningyu-edge-button ningyu-edge-button--safety is-active" : "ningyu-edge-button ningyu-edge-button--safety"}
-          type="button"
-          onClick={onToggleSafetyEntry}
-          aria-expanded={isSafetyEntryOpen}
-          aria-label="打开安全支持"
-        >
-          <Icon name="shield" />
-          <span>求助</span>
-        </button>
-      </motion.div>
-    </>
+        <Icon name="spark" />
+        <span>工具</span>
+      </motion.button>
+      <motion.button
+        {...motionButtonProps(1)}
+        id="ningyu-safety-trigger"
+        className={isSafetyEntryOpen ? "ningyu-edge-button ningyu-edge-button--safety is-active" : "ningyu-edge-button ningyu-edge-button--safety"}
+        type="button"
+        onClick={onToggleSafetyEntry}
+        aria-expanded={isSafetyEntryOpen}
+        aria-label="打开安全支持"
+      >
+        <Icon name="shield" />
+        <span>求助</span>
+      </motion.button>
+    </motion.div>
   );
 }
 
@@ -2390,6 +2459,7 @@ function LeftSidebar({
   memoryModeLabel,
   onSelectEntry,
   onStartNewThread,
+  onOpenToolSurface,
 }: {
   isNight: boolean;
   sections: ConversationListSection[];
@@ -2404,6 +2474,7 @@ function LeftSidebar({
   memoryModeLabel: string;
   onSelectEntry: (entry: ConversationListEntry) => void;
   onStartNewThread: () => void;
+  onOpenToolSurface: (surface: ToolSurface) => void;
 }) {
   return (
     <aside className="ningyu-sidebar ningyu-sidebar--left" aria-label="会话与功能入口">
@@ -2482,11 +2553,11 @@ function LeftSidebar({
 
       <div className="ningyu-sidebar__bottom">
         <span className="ningyu-sidebar__caption">工具入口</span>
-        <button type="button">
+        <button type="button" onClick={() => onOpenToolSurface("journey")}>
           <Icon name="spark" />
           情绪记录
         </button>
-        <button type="button">
+        <button type="button" onClick={() => onOpenToolSurface("settings")}>
           <Icon name="settings" />
           设置
         </button>
@@ -2550,7 +2621,7 @@ function ChatWorkspace({
           className="ningyu-chat__inner ningyu-chat-stage ningyu-chat__stage-token"
           initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.48, delay: 0.12, ease: "easeOut" }}
+          transition={{ duration: 0.32, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
         >
           <header className="ningyu-chat-header">
             <img className="ningyu-chat-seal" src={logo} alt="" aria-hidden="true" />
@@ -2838,6 +2909,8 @@ function GraphUpdateTrail({
 
 function RightPanel({
   isNight,
+  activeToolSurface,
+  setActiveToolSurface,
   currentUserLabel,
   userMode,
   statusTags,
@@ -2933,7 +3006,9 @@ function RightPanel({
   onMoodNoteChange,
   onMoodSubmit,
   onMoodTrendRangeChange,
+  onWeeklySuggestedAction,
   onQuickAction,
+  onSupportResourceClick,
   onKnowledgeQueryChange,
   onKnowledgeCategoryChange,
   onKnowledgeAudienceChange,
@@ -2971,6 +3046,8 @@ function RightPanel({
   onLogout,
 }: {
   isNight: boolean;
+  activeToolSurface: ToolSurface;
+  setActiveToolSurface: (surface: ToolSurface) => void;
   currentUserLabel: string;
   userMode: UserMode;
   statusTags: string[];
@@ -3066,7 +3143,9 @@ function RightPanel({
   onMoodNoteChange: (note: string) => void;
   onMoodSubmit: () => void;
   onMoodTrendRangeChange: (range: MoodTrendRange) => void;
+  onWeeklySuggestedAction: (action: string) => void;
   onQuickAction: (action: QuickAction) => void;
+  onSupportResourceClick: (resource: HomeSupportResource) => void;
   onKnowledgeQueryChange: (query: string) => void;
   onKnowledgeCategoryChange: (category: string) => void;
   onKnowledgeAudienceChange: (audience: string) => void;
@@ -3103,7 +3182,6 @@ function RightPanel({
   onRetrySafetyState: () => void;
   onLogout: () => void;
 }) {
-  const [activeToolSurface, setActiveToolSurface] = useState<"launcher" | "journey" | "actions" | "knowledge" | "tests" | "settings" | "safety">("launcher");
   const shouldShowGuidance = isSafetyEntryOpen || Boolean(highRiskSafety);
 
   useEffect(() => {
@@ -3200,7 +3278,12 @@ function RightPanel({
             trend={moodTrend}
             onRangeChange={onMoodTrendRangeChange}
           />
-          <WeeklySummaryCard status={weeklySummaryStatus} error={weeklySummaryError} summary={weeklySummary} />
+          <WeeklySummaryCard
+            status={weeklySummaryStatus}
+            error={weeklySummaryError}
+            summary={weeklySummary}
+            onSuggestedAction={onWeeklySuggestedAction}
+          />
         </section>
       </aside>
     );
@@ -3440,7 +3523,12 @@ function RightPanel({
           trend={moodTrend}
           onRangeChange={onMoodTrendRangeChange}
         />
-        <WeeklySummaryCard status={weeklySummaryStatus} error={weeklySummaryError} summary={weeklySummary} />
+        <WeeklySummaryCard
+          status={weeklySummaryStatus}
+          error={weeklySummaryError}
+          summary={weeklySummary}
+          onSuggestedAction={onWeeklySuggestedAction}
+        />
       </section>
 
       <section className="ningyu-panel-section">
@@ -3450,7 +3538,7 @@ function RightPanel({
           安全支持
         </h2>
         {supportResources.map((resource) => (
-          <button className="ningyu-support-card" key={resource.id} type="button">
+          <button className="ningyu-support-card" key={resource.id} type="button" onClick={() => onSupportResourceClick(resource)}>
             <Icon name={resource.icon} />
             <span>
               <small>{resource.label}</small>
@@ -4523,10 +4611,12 @@ function WeeklySummaryCard({
   status,
   error,
   summary,
+  onSuggestedAction,
 }: {
   status: WeeklySummaryStatus;
   error: string | null;
   summary: WeeklySummaryResponse | null;
+  onSuggestedAction: (action: string) => void;
 }) {
   const hasSummary = Boolean(summary?.summary);
 
@@ -4558,7 +4648,7 @@ function WeeklySummaryCard({
           {summary.suggested_actions.length ? (
             <div className="ningyu-weekly-summary__actions" aria-label="本周建议行动">
               {summary.suggested_actions.map((action) => (
-                <button key={action} type="button">
+                <button key={action} type="button" onClick={() => onSuggestedAction(action)}>
                   {action}
                 </button>
               ))}

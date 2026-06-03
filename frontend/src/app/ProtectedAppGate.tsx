@@ -63,7 +63,15 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   }
 
   if (session.status !== "authenticated") {
-    return <AuthGate initialError={session.error} />;
+    return (
+      <AuthGate
+        initialError={session.error}
+        onDebugEnteredMain={() => {
+          markEntryTransitionSeenToday();
+          setHasPlayedEntryTransition(true);
+        }}
+      />
+    );
   }
 
   if (session.currentUser?.onboarding_completed === false && !hasEnteredAppLocally) {
@@ -93,7 +101,13 @@ export function ProtectedAppGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AuthGate({ initialError }: { initialError: string | null }) {
+function AuthGate({
+  initialError,
+  onDebugEnteredMain,
+}: {
+  initialError: string | null;
+  onDebugEnteredMain?: () => void;
+}) {
   const session = useSession();
   const [isDebugOnboarding, setIsDebugOnboarding] = useState(false);
   const [isPasswordReset, setIsPasswordReset] = useState(false);
@@ -245,6 +259,7 @@ function AuthGate({ initialError }: { initialError: string | null }) {
     setError(null);
     try {
       await session.startDebugSession();
+      onDebugEnteredMain?.();
     } catch (debugError) {
       setError("本地调试登录失败，请先用账号登录或注册。");
     } finally {

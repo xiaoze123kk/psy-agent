@@ -398,6 +398,11 @@
   transform: scale(1.08);
 }
 
+.loading-auth__moods button.is-selected {
+  color: #2f4d3d;
+  transform: scale(1.12);
+}
+
 .loading-auth__moods svg {
   width: 20px;
   height: 20px;

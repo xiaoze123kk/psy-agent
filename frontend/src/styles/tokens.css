@@ -148,4 +148,13 @@
   --ningyu-z-floating: 24;
   --ningyu-z-drawer: 32;
   --ningyu-z-safety: 42;
+
+  /* Night mode surface tokens. */
+  --ningyu-night-bg: #060e17;
+  --ningyu-night-surface: #0f172a;
+  --ningyu-night-surface-raised: rgba(30, 41, 59, 0.84);
+  --ningyu-night-text: #e2e8f0;
+  --ningyu-night-text-muted: #cbd5e1;
+  --ningyu-night-text-dim: #94a3b8;
+  --ningyu-night-border: rgba(51, 65, 85, 0.62);
 }

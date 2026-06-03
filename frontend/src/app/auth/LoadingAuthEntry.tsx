@@ -1,5 +1,6 @@
 ﻿import { Frown, Leaf, Lock, Meh, RefreshCw, Shield, Smile, User } from "lucide-react";
 import type { FormEvent } from "react";
+import { useState } from "react";
 
 import loginBack from "../../imports/login_back.png";
 import wcbg from "../../imports/wcbg.png";
@@ -84,6 +85,7 @@ export function LoadingAuthEntry({
   onDebugEnterOnboarding,
 }: LoadingAuthEntryProps) {
   const isLogin = authMode === "login";
+  const [selectedMoodId, setSelectedMoodId] = useState<(typeof moods)[number]["id"] | null>(null);
 
   return (
     <main className="loading-auth" aria-labelledby="loading-auth-title">
@@ -253,7 +255,14 @@ export function LoadingAuthEntry({
                   {moods.map((mood) => {
                     const Icon = mood.icon;
                     return (
-                      <button key={mood.id} type="button" aria-label={mood.label}>
+                      <button
+                        key={mood.id}
+                        className={selectedMoodId === mood.id ? "is-selected" : ""}
+                        type="button"
+                        aria-label={mood.label}
+                        aria-pressed={selectedMoodId === mood.id}
+                        onClick={() => setSelectedMoodId(mood.id)}
+                      >
                         <Icon aria-hidden="true" />
                       </button>
                     );
